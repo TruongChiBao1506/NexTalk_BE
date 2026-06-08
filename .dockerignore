@@ -1,0 +1,13 @@
+target/
+.mvn/
+.git/
+.env
+Dockerfile
+.dockerignore
+*.iml
+.idea/
+mvnw
+mvnw.cmd
+HELP.md
+NexTalk_API_Collection.json
+guideline.md

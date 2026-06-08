@@ -1,0 +1,49 @@
+package iuh.fit.se.nextalk_be.conversation;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import iuh.fit.se.nextalk_be.common.ApiResponse;
+import iuh.fit.se.nextalk_be.conversation.dto.ConversationResponse;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/api/conversations")
+@RequiredArgsConstructor
+@Tag(name = "Conversation Management", description = "APIs for creating and listing chat conversations")
+public class ConversationController {
+
+    private final ConversationService conversationService;
+
+    @PostMapping("/private/{friendId}")
+    @Operation(summary = "Get or create a private conversation with a friend")
+    public ResponseEntity<ApiResponse<ConversationResponse>> getOrCreatePrivateConversation(@PathVariable("friendId") UUID friendId) {
+        ConversationResponse response = conversationService.getOrCreatePrivateConversation(friendId);
+        return ResponseEntity.ok(ApiResponse.success(response, "Private conversation resolved successfully"));
+    }
+
+    @GetMapping
+    @Operation(summary = "Get all conversations of the currently logged-in user")
+    public ResponseEntity<ApiResponse<List<ConversationResponse>>> getUserConversations() {
+        List<ConversationResponse> response = conversationService.getUserConversations();
+        return ResponseEntity.ok(ApiResponse.success(response, "User conversations retrieved successfully"));
+    }
+
+    @GetMapping("/{id}")
+    @Operation(summary = "Get conversation details by ID")
+    public ResponseEntity<ApiResponse<ConversationResponse>> getConversationById(@PathVariable("id") UUID id) {
+        ConversationResponse response = conversationService.getConversationById(id);
+        return ResponseEntity.ok(ApiResponse.success(response, "Conversation retrieved successfully"));
+    }
+
+    @GetMapping("/search")
+    @Operation(summary = "Search conversations by name or username (partial match)")
+    public ResponseEntity<ApiResponse<List<ConversationResponse>>> searchConversations(@RequestParam("query") String query) {
+        List<ConversationResponse> response = conversationService.searchConversations(query);
+        return ResponseEntity.ok(ApiResponse.success(response, "Conversations retrieved successfully"));
+    }
+}
