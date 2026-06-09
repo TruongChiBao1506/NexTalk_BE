@@ -16,10 +16,10 @@ import org.springframework.data.mongodb.core.mapping.DocumentReference;
 @CompoundIndex(name = "message_user_idx", def = "{'message': 1, 'user': 1}", unique = true)
 public class MessageStatus extends BaseEntity {
 
-    @DocumentReference
+    @DocumentReference(lazy = true)
     private Message message;
 
-    @DocumentReference
+    @DocumentReference(lazy = true)
     private User user;
 
     private String status; // SENT, DELIVERED, SEEN

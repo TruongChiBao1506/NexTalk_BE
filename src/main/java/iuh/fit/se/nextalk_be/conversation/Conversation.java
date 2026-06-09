@@ -21,10 +21,10 @@ public class Conversation extends BaseEntity {
 
     private String name;
 
-    @DocumentReference
+    @DocumentReference(lazy = true)
     private User owner;
 
-    @DocumentReference
+    @DocumentReference(lazy = true)
     @Builder.Default
     private Set<User> members = new HashSet<>();
 }

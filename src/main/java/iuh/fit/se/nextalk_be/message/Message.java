@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.common.BaseEntity;
 import iuh.fit.se.nextalk_be.conversation.Conversation;
 import iuh.fit.se.nextalk_be.user.User;
 import lombok.*;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.DocumentReference;
 
@@ -18,12 +19,13 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Document(collection = "messages")
+@CompoundIndex(name = "msg_conv_created_idx", def = "{'conversation': 1, 'createdAt': -1}")
 public class Message extends BaseEntity {
 
-    @DocumentReference
+    @DocumentReference(lazy = true)
     private Conversation conversation;
 
-    @DocumentReference
+    @DocumentReference(lazy = true)
     private User sender;
 
     private String content;
