@@ -48,7 +48,7 @@ public class UserService {
         return mapToProfileResponse(user);
     }
 
-    public UserProfileResponse getUserProfileById(UUID id) {
+    public UserProfileResponse getUserProfileById(String id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + id));
         return mapToProfileResponse(user);
@@ -65,7 +65,7 @@ public class UserService {
                 .toList();
     }
 
-    @Transactional
+    // @Transactional
     public UserProfileResponse updateProfile(UpdateProfileRequest request) {
         User currentUser = getCurrentAuthenticatedUser();
 
@@ -91,7 +91,7 @@ public class UserService {
         return mapToProfileResponse(savedUser);
     }
 
-    @Transactional
+    // @Transactional
     public UserProfileResponse updatePresenceStatus(String statusStr) {
         String status = statusStr.trim().toUpperCase();
         if (!"ONLINE".equals(status) && !"AWAY".equals(status) && !"OFFLINE".equals(status)) {

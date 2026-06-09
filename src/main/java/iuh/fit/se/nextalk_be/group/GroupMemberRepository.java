@@ -5,18 +5,17 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 @Repository
-public interface GroupMemberRepository extends MongoRepository<GroupMember, UUID> {
+public interface GroupMemberRepository extends MongoRepository<GroupMember, String> {
 
-    List<GroupMember> findAllByGroupId(UUID groupId);
+    List<GroupMember> findAllByGroupId(String groupId);
 
-    List<GroupMember> findAllByUserId(UUID userId);
+    List<GroupMember> findAllByUserId(String userId);
 
-    Optional<GroupMember> findByGroupIdAndUserId(UUID groupId, UUID userId);
+    Optional<GroupMember> findByGroupIdAndUserId(String groupId, String userId);
 
-    boolean existsByGroupIdAndUserId(UUID groupId, UUID userId);
+    boolean existsByGroupIdAndUserId(String groupId, String userId);
 
-    void deleteByGroupIdAndUserId(UUID groupId, UUID userId);
+    void deleteByGroupIdAndUserId(String groupId, String userId);
 }

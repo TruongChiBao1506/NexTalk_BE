@@ -26,7 +26,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc(addFilters = false)
 @ActiveProfiles("test")
-@Transactional
+// @Transactional
 public class ConversationControllerTest {
 
     @Autowired
@@ -72,6 +72,20 @@ public class ConversationControllerTest {
                 .andExpect(jsonPath("$.success", is(true)))
                 .andExpect(jsonPath("$.data.type", is("PRIVATE")))
                 .andExpect(jsonPath("$.data.members", hasSize(2)));
+    }
+
+    @Test
+    @WithMockUser(username = "current@gmail.com")
+    void getOrCreatePrivateConversation_Twice_ReturnsSameConversation() throws Exception {
+        mockMvc.perform(post("/api/conversations/private/" + friendUser.getId())
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/conversations/private/" + friendUser.getId())
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        org.junit.jupiter.api.Assertions.assertEquals(1, conversationRepository.count());
     }
 
     @Test

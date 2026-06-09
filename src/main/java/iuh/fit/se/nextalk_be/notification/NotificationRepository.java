@@ -4,14 +4,13 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
-import java.util.UUID;
 
 @Repository
-public interface NotificationRepository extends MongoRepository<Notification, UUID> {
+public interface NotificationRepository extends MongoRepository<Notification, String> {
 
-    List<Notification> findByRecipientIdOrderByCreatedAtDesc(UUID recipientId);
+    List<Notification> findByRecipientIdOrderByCreatedAtDesc(String recipientId);
 
-    List<Notification> findByRecipientIdAndIsReadFalse(UUID recipientId);
+    List<Notification> findByRecipientIdAndIsReadFalse(String recipientId);
 
-    long countByRecipientIdAndIsReadFalse(UUID recipientId);
+    long countByRecipientIdAndIsReadFalse(String recipientId);
 }

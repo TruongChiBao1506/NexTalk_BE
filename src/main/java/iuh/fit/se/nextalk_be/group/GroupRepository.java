@@ -5,10 +5,9 @@ import org.springframework.stereotype.Repository;
 
 import java.util.Collection;
 import java.util.List;
-import java.util.UUID;
 
 @Repository
-public interface GroupRepository extends MongoRepository<Group, UUID> {
+public interface GroupRepository extends MongoRepository<Group, String> {
 
-    List<Group> findAllByOwnerIdOrIdIn(UUID ownerId, Collection<UUID> ids);
+    List<Group> findAllByOwnerIdOrIdIn(String ownerId, Collection<String> ids);
 }

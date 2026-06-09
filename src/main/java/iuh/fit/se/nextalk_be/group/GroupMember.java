@@ -7,8 +7,6 @@ import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.DocumentReference;
 
-import java.util.UUID;
-
 @Getter
 @Setter
 @Builder
@@ -19,8 +17,7 @@ import java.util.UUID;
 public class GroupMember {
 
     @Id
-    @Builder.Default
-    private UUID id = UUID.randomUUID();
+    private String id;
 
     @DocumentReference
     private Group group;

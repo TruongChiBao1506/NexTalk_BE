@@ -21,7 +21,7 @@ public class PresenceService {
     private static final String STATUS_KEY_PREFIX = "nextalk:presence:status:";
     private static final String LAST_SEEN_KEY_PREFIX = "nextalk:presence:last_seen:";
 
-    public void addSession(UUID userId, String sessionId) {
+    public void addSession(String userId, String sessionId) {
         String sessionsKey = SESSIONS_KEY_PREFIX + userId;
         redisTemplate.opsForSet().add(sessionsKey, sessionId);
 
@@ -31,7 +31,7 @@ public class PresenceService {
         }
     }
 
-    public void removeSession(UUID userId, String sessionId) {
+    public void removeSession(String userId, String sessionId) {
         String sessionsKey = SESSIONS_KEY_PREFIX + userId;
         redisTemplate.opsForSet().remove(sessionsKey, sessionId);
 
@@ -42,7 +42,7 @@ public class PresenceService {
         }
     }
 
-    public void setUserStatus(UUID userId, String status) {
+    public void setUserStatus(String userId, String status) {
         String statusKey = STATUS_KEY_PREFIX + userId;
         redisTemplate.opsForValue().set(statusKey, status);
 
@@ -53,7 +53,7 @@ public class PresenceService {
         });
     }
 
-    public String getUserStatus(UUID userId) {
+    public String getUserStatus(String userId) {
         String statusKey = STATUS_KEY_PREFIX + userId;
         String status = redisTemplate.opsForValue().get(statusKey);
         if (status != null) {
@@ -65,12 +65,12 @@ public class PresenceService {
                 .orElse("OFFLINE");
     }
 
-    public void setLastSeen(UUID userId, LocalDateTime lastSeenTime) {
+    public void setLastSeen(String userId, LocalDateTime lastSeenTime) {
         String lastSeenKey = LAST_SEEN_KEY_PREFIX + userId;
         redisTemplate.opsForValue().set(lastSeenKey, lastSeenTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
     }
 
-    public LocalDateTime getUserLastSeen(UUID userId) {
+    public LocalDateTime getUserLastSeen(String userId) {
         String lastSeenKey = LAST_SEEN_KEY_PREFIX + userId;
         String val = redisTemplate.opsForValue().get(lastSeenKey);
         if (val == null) {

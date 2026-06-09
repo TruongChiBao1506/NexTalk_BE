@@ -14,7 +14,7 @@ import java.util.UUID;
 public abstract class BaseEntity {
 
     @Id
-    private UUID id = UUID.randomUUID();
+    private String id;
 
     @CreatedDate
     private LocalDateTime createdAt = LocalDateTime.now();

@@ -9,7 +9,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/notifications")
@@ -28,7 +27,7 @@ public class NotificationController {
 
     @PutMapping("/{id}/read")
     @Operation(summary = "Mark a notification as read")
-    public ResponseEntity<ApiResponse<NotificationResponse>> markAsRead(@PathVariable("id") UUID id) {
+    public ResponseEntity<ApiResponse<NotificationResponse>> markAsRead(@PathVariable("id") String id) {
         NotificationResponse response = notificationService.markAsRead(id);
         return ResponseEntity.ok(ApiResponse.success(response, "Notification marked as read"));
     }

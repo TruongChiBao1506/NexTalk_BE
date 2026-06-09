@@ -11,10 +11,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
+import org.bson.types.ObjectId;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -25,8 +23,8 @@ public class ConversationService {
     private final UserService userService;
     private final UserRepository userRepository;
 
-    @Transactional
-    public ConversationResponse getOrCreatePrivateConversation(UUID friendId) {
+    // @Transactional
+    public ConversationResponse getOrCreatePrivateConversation(String friendId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
         if (currentUser.getId().equals(friendId)) {
@@ -36,7 +34,10 @@ public class ConversationService {
         User friend = userRepository.findById(friendId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + friendId));
 
-        Optional<Conversation> existing = conversationRepository.findPrivateConversationBetweenUsers(currentUser.getId(), friendId);
+        Optional<Conversation> existing = conversationRepository.findPrivateConversationBetweenUsers(
+                new ObjectId(currentUser.getId()),
+                new ObjectId(friendId)
+        );
 
         if (existing.isPresent()) {
             return mapToConversationResponse(existing.get());
@@ -51,19 +52,47 @@ public class ConversationService {
         return mapToConversationResponse(savedConversation);
     }
 
-    @Transactional(readOnly = true)
+    // @Transactional(readOnly = true)
     public List<ConversationResponse> getUserConversations() {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
-        List<Conversation> conversations = conversationRepository.findAllByUserIdOrderByUpdatedAtDesc(currentUser.getId());
+        List<Conversation> conversations = conversationRepository.findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId());
+        List<Conversation> deduplicated = deduplicateConversations(conversations, currentUser.getId());
 
-        return conversations.stream()
+        return deduplicated.stream()
                 .map(this::mapToConversationResponse)
                 .collect(Collectors.toList());
     }
 
-    @Transactional(readOnly = true)
-    public ConversationResponse getConversationById(UUID id) {
+    private List<Conversation> deduplicateConversations(List<Conversation> conversations, String currentUserId) {
+        Map<String, Conversation> latestPrivateConvs = new LinkedHashMap<>();
+        List<Conversation> result = new ArrayList<>();
+
+        for (Conversation conv : conversations) {
+            if (conv.getType() == ConversationType.PRIVATE) {
+                String otherMemberId = conv.getMembers().stream()
+                        .map(User::getId)
+                        .filter(id -> !id.equals(currentUserId))
+                        .findFirst()
+                        .orElse(null);
+
+                if (otherMemberId != null) {
+                    if (!latestPrivateConvs.containsKey(otherMemberId)) {
+                        latestPrivateConvs.put(otherMemberId, conv);
+                        result.add(conv);
+                    }
+                } else {
+                    result.add(conv);
+                }
+            } else {
+                result.add(conv);
+            }
+        }
+        return result;
+    }
+
+    // @Transactional(readOnly = true)
+    public ConversationResponse getConversationById(String id) {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
         Conversation conversation = conversationRepository.findById(id)
@@ -104,7 +133,7 @@ public class ConversationService {
                 .build();
     }
 
-    @Transactional(readOnly = true)
+    // @Transactional(readOnly = true)
     public List<ConversationResponse> searchConversations(String query) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         String trimmedQuery = query.trim().toLowerCase();
@@ -112,9 +141,10 @@ public class ConversationService {
             return java.util.Collections.emptyList();
         }
 
-        List<Conversation> conversations = conversationRepository.findAllByUserIdOrderByUpdatedAtDesc(currentUser.getId());
+        List<Conversation> conversations = conversationRepository.findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId());
+        List<Conversation> deduplicated = deduplicateConversations(conversations, currentUser.getId());
 
-        return conversations.stream()
+        return deduplicated.stream()
                 .filter(c -> {
                     if (c.getType() == ConversationType.GROUP) {
                         return c.getName() != null && c.getName().toLowerCase().contains(trimmedQuery);

@@ -36,7 +36,7 @@ public class AuthService {
     @Value("${server.port:8080}")
     private String serverPort;
 
-    @Transactional
+    // @Transactional
     public RegisterResponse register(RegisterRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new BadRequestException("Email is already registered");
@@ -78,7 +78,7 @@ public class AuthService {
                 .build();
     }
 
-    @Transactional
+    // @Transactional
     public void verifyEmail(String token) {
         EmailVerification verification = emailVerificationRepository.findByToken(token)
                 .orElseThrow(() -> new ResourceNotFoundException("Verification token not found"));
@@ -99,7 +99,7 @@ public class AuthService {
         emailVerificationRepository.save(verification);
     }
 
-    @Transactional
+    // @Transactional
     public LoginResponse login(LoginRequest request) {
         // Authenticate user
         authenticationManager.authenticate(
@@ -136,7 +136,7 @@ public class AuthService {
                 .build();
     }
 
-    @Transactional
+    // @Transactional
     public TokenRefreshResponse refreshToken(TokenRefreshRequest request) {
         String requestRefreshToken = request.getRefreshToken();
 
@@ -168,7 +168,7 @@ public class AuthService {
                 .build();
     }
 
-    @Transactional
+    // @Transactional
     public void logout(TokenRefreshRequest request) {
         if (request != null && request.getRefreshToken() != null) {
             refreshTokenRepository.findByToken(request.getRefreshToken())

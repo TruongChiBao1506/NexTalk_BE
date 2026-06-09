@@ -6,20 +6,19 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
-import java.util.UUID;
 
 @Repository
-public interface MessageRepository extends MongoRepository<Message, UUID> {
+public interface MessageRepository extends MongoRepository<Message, String> {
 
-    Page<Message> findByConversationIdOrderByCreatedAtDesc(UUID conversationId, Pageable pageable);
+    Page<Message> findByConversationIdOrderByCreatedAtDesc(String conversationId, Pageable pageable);
 
-    Page<Message> findByConversationIdAndDeletedByUsersNotContainingOrderByCreatedAtDesc(UUID conversationId, UUID userId, Pageable pageable);
+    Page<Message> findByConversationIdAndDeletedByUsersNotContainingOrderByCreatedAtDesc(String conversationId, String userId, Pageable pageable);
 
-    List<Message> findAllByConversationId(UUID conversationId);
+    List<Message> findAllByConversationId(String conversationId);
 
-    List<Message> findByConversationIdAndIsPinnedTrue(UUID conversationId);
+    List<Message> findByConversationIdAndIsPinnedTrue(String conversationId);
 
-    List<Message> findByConversationIdAndContentContainingIgnoreCaseAndMessageTypeAndIsRecalledFalse(UUID conversationId, String content, MessageType messageType);
+    List<Message> findByConversationIdAndContentContainingIgnoreCaseAndMessageTypeAndIsRecalledFalse(String conversationId, String content, MessageType messageType);
 
-    List<Message> findByConversationIdInAndContentContainingIgnoreCaseAndMessageTypeAndIsRecalledFalse(List<UUID> conversationIds, String content, MessageType messageType);
+    List<Message> findByConversationIdInAndContentContainingIgnoreCaseAndMessageTypeAndIsRecalledFalse(List<String> conversationIds, String content, MessageType messageType);
 }

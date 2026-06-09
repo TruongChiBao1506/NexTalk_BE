@@ -6,23 +6,29 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 @Repository
-public interface FriendshipRepository extends MongoRepository<Friendship, UUID> {
+public interface FriendshipRepository extends MongoRepository<Friendship, String> {
 
-    @Query("{ '$or': [ { 'sender': ?0, 'receiver': ?1 }, { 'sender': ?1, 'receiver': ?0 } ] }")
-    Optional<Friendship> findFriendshipBetweenUsers(UUID user1Id, UUID user2Id);
+    Optional<Friendship> findBySenderIdAndReceiverIdOrSenderIdAndReceiverId(String senderId1, String receiverId1, String senderId2, String receiverId2);
 
-    @Query("{ '$or': [ { 'sender': ?0, 'receiver': ?1 }, { 'sender': ?1, 'receiver': ?0 } ] }")
-    Optional<Friendship> findRelation(UUID userId, UUID friendId);
+    default Optional<Friendship> findFriendshipBetweenUsers(String user1Id, String user2Id) {
+        return findBySenderIdAndReceiverIdOrSenderIdAndReceiverId(user1Id, user2Id, user2Id, user1Id);
+    }
 
-    List<Friendship> findByReceiverIdAndStatus(UUID receiverId, FriendshipStatus status);
+    default Optional<Friendship> findRelation(String userId, String friendId) {
+        return findBySenderIdAndReceiverIdOrSenderIdAndReceiverId(userId, friendId, friendId, userId);
+    }
 
-    List<Friendship> findBySenderIdAndStatus(UUID senderId, FriendshipStatus status);
+    List<Friendship> findByReceiverIdAndStatus(String receiverId, FriendshipStatus status);
 
-    @Query("{ '$or': [ { 'sender': ?0 }, { 'receiver': ?0 } ], 'status': ?1 }")
-    List<Friendship> findAllByUserIdAndStatus(UUID userId, FriendshipStatus status);
+    List<Friendship> findBySenderIdAndStatus(String senderId, FriendshipStatus status);
 
-    Optional<Friendship> findBySenderIdAndReceiverIdAndStatus(UUID senderId, UUID receiverId, FriendshipStatus status);
+    List<Friendship> findBySenderIdAndStatusOrReceiverIdAndStatus(String senderId, FriendshipStatus status1, String receiverId, FriendshipStatus status2);
+
+    default List<Friendship> findAllByUserIdAndStatus(String userId, FriendshipStatus status) {
+        return findBySenderIdAndStatusOrReceiverIdAndStatus(userId, status, userId, status);
+    }
+
+    Optional<Friendship> findBySenderIdAndReceiverIdAndStatus(String senderId, String receiverId, FriendshipStatus status);
 }

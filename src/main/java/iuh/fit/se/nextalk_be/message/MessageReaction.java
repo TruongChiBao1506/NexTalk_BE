@@ -1,7 +1,6 @@
 package iuh.fit.se.nextalk_be.message;
 
 import lombok.*;
-import java.util.UUID;
 
 @Getter
 @Setter
@@ -9,7 +8,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 public class MessageReaction {
-    private UUID userId;
+    private String userId;
     private String username;
     private String emoji;
 }

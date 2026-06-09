@@ -35,13 +35,13 @@ public class MessageService {
     private final MessageStatusRepository messageStatusRepository;
     private final NotificationService notificationService;
 
-    @Transactional
+    // @Transactional
     public MessageResponse sendMessage(MessageRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         return sendMessageWithUser(request, currentUser);
     }
 
-    @Transactional
+    // @Transactional
     public MessageResponse sendMessage(MessageRequest request, String senderEmail) {
         User currentUser = userRepository.findByEmail(senderEmail)
                 .or(() -> userRepository.findByUsername(senderEmail))
@@ -69,7 +69,7 @@ public class MessageService {
             }
         }
 
-        UUID parentId = request.getParentId();
+        String parentId = request.getParentId();
         if (parentId != null) {
             Message parent = messageRepository.findById(parentId)
                     .orElseThrow(() -> new ResourceNotFoundException("Parent message not found with ID: " + parentId));
@@ -147,8 +147,8 @@ public class MessageService {
         return response;
     }
 
-    @Transactional(readOnly = true)
-    public Page<MessageResponse> getConversationMessages(UUID conversationId, Pageable pageable) {
+    // @Transactional(readOnly = true)
+    public Page<MessageResponse> getConversationMessages(String conversationId, Pageable pageable) {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
         Conversation conversation = conversationRepository.findById(conversationId)
@@ -168,8 +168,8 @@ public class MessageService {
         return new PageImpl<>(content, pageable, messages.getTotalElements());
     }
 
-    @Transactional
-    public void markConversationMessagesAsDelivered(UUID conversationId, String username) {
+    // @Transactional
+    public void markConversationMessagesAsDelivered(String conversationId, String username) {
         User user = userRepository.findByEmail(username)
                 .or(() -> userRepository.findByUsername(username))
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -188,7 +188,7 @@ public class MessageService {
             return;
         }
 
-        List<UUID> messageIds = messages.stream().map(Message::getId).toList();
+        List<String> messageIds = messages.stream().map(Message::getId).toList();
 
         List<MessageStatus> statusesToUpdate = messageStatusRepository.findAllByUserIdAndMessageIdInAndStatusIn(
                 user.getId(), messageIds, List.of("SENT")
@@ -220,8 +220,8 @@ public class MessageService {
         }
     }
 
-    @Transactional
-    public void markConversationMessagesAsSeen(UUID conversationId, String username) {
+    // @Transactional
+    public void markConversationMessagesAsSeen(String conversationId, String username) {
         User user = userRepository.findByEmail(username)
                 .or(() -> userRepository.findByUsername(username))
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -240,7 +240,7 @@ public class MessageService {
             return;
         }
 
-        List<UUID> messageIds = messages.stream().map(Message::getId).toList();
+        List<String> messageIds = messages.stream().map(Message::getId).toList();
 
         List<MessageStatus> statusesToUpdate = messageStatusRepository.findAllByUserIdAndMessageIdInAndStatusIn(
                 user.getId(), messageIds, List.of("SENT", "DELIVERED")
@@ -308,11 +308,11 @@ public class MessageService {
     private MessageResponse mapToMessageResponseOptimized(
             Message message,
             List<MessageStatus> statusRecords,
-            Map<UUID, String> usernameMap
+            Map<String, String> usernameMap
     ) {
         List<MessageStatusResponse> statusResponses = statusRecords.stream()
                 .map(status -> {
-                    UUID userId = status.getUser().getId();
+                    String userId = status.getUser().getId();
                     String username = usernameMap.getOrDefault(userId, "unknown");
                     return MessageStatusResponse.builder()
                             .userId(userId)
@@ -323,7 +323,7 @@ public class MessageService {
                 })
                 .toList();
 
-        UUID senderId = message.getSender().getId();
+        String senderId = message.getSender().getId();
         String senderUsername = usernameMap.getOrDefault(senderId, "unknown");
 
         return MessageResponse.builder()
@@ -349,11 +349,11 @@ public class MessageService {
             return Collections.emptyList();
         }
 
-        List<UUID> messageIds = messageList.stream().map(Message::getId).toList();
+        List<String> messageIds = messageList.stream().map(Message::getId).toList();
         List<MessageStatus> allStatuses = messageStatusRepository.findAllByMessageIdIn(messageIds);
 
         // Collect all user IDs to batch fetch usernames
-        Set<UUID> userIds = new HashSet<>();
+        Set<String> userIds = new HashSet<>();
         for (Message msg : messageList) {
             if (msg.getSender() != null) {
                 userIds.add(msg.getSender().getId());
@@ -366,13 +366,13 @@ public class MessageService {
         }
 
         List<User> users = userRepository.findAllById(userIds);
-        Map<UUID, String> usernameMap = new HashMap<>();
+        Map<String, String> usernameMap = new HashMap<>();
         for (User u : users) {
             usernameMap.put(u.getId(), u.getUsername());
         }
 
         // Group statuses by Message ID
-        Map<UUID, List<MessageStatus>> statusMap = new HashMap<>();
+        Map<String, List<MessageStatus>> statusMap = new HashMap<>();
         for (MessageStatus status : allStatuses) {
             if (status.getMessage() != null) {
                 statusMap.computeIfAbsent(status.getMessage().getId(), k -> new ArrayList<>()).add(status);
@@ -400,8 +400,8 @@ public class MessageService {
         }
     }
 
-    @Transactional
-    public MessageResponse editMessage(UUID messageId, EditMessageRequest request) {
+    // @Transactional
+    public MessageResponse editMessage(String messageId, EditMessageRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Message message = messageRepository.findById(messageId)
                 .orElseThrow(() -> new ResourceNotFoundException("Message not found with ID: " + messageId));
@@ -423,8 +423,8 @@ public class MessageService {
         return response;
     }
 
-    @Transactional
-    public MessageResponse recallMessage(UUID messageId) {
+    // @Transactional
+    public MessageResponse recallMessage(String messageId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Message message = messageRepository.findById(messageId)
                 .orElseThrow(() -> new ResourceNotFoundException("Message not found with ID: " + messageId));
@@ -442,8 +442,8 @@ public class MessageService {
         return response;
     }
 
-    @Transactional
-    public void deleteMessageForMe(UUID messageId) {
+    // @Transactional
+    public void deleteMessageForMe(String messageId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Message message = messageRepository.findById(messageId)
                 .orElseThrow(() -> new ResourceNotFoundException("Message not found with ID: " + messageId));
@@ -463,8 +463,8 @@ public class MessageService {
         }
     }
 
-    @Transactional
-    public MessageResponse pinMessage(UUID messageId, boolean pin) {
+    // @Transactional
+    public MessageResponse pinMessage(String messageId, boolean pin) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Message message = messageRepository.findById(messageId)
                 .orElseThrow(() -> new ResourceNotFoundException("Message not found with ID: " + messageId));
@@ -486,8 +486,8 @@ public class MessageService {
         return response;
     }
 
-    @Transactional(readOnly = true)
-    public List<MessageResponse> getPinnedMessages(UUID conversationId) {
+    // @Transactional(readOnly = true)
+    public List<MessageResponse> getPinnedMessages(String conversationId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Conversation conversation = conversationRepository.findById(conversationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + conversationId));
@@ -505,8 +505,8 @@ public class MessageService {
         return mapMessagesToResponses(filtered);
     }
 
-    @Transactional
-    public MessageResponse reactToMessage(UUID messageId, ReactMessageRequest request) {
+    // @Transactional
+    public MessageResponse reactToMessage(String messageId, ReactMessageRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Message message = messageRepository.findById(messageId)
                 .orElseThrow(() -> new ResourceNotFoundException("Message not found with ID: " + messageId));
@@ -546,8 +546,8 @@ public class MessageService {
         return response;
     }
 
-    @Transactional(readOnly = true)
-    public List<MessageResponse> searchMessages(String query, UUID conversationId) {
+    // @Transactional(readOnly = true)
+    public List<MessageResponse> searchMessages(String query, String conversationId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         String trimmedQuery = query.trim();
         if (trimmedQuery.isEmpty()) {
@@ -567,8 +567,8 @@ public class MessageService {
                     conversationId, trimmedQuery, MessageType.TEXT
             );
         } else {
-            List<Conversation> userConversations = conversationRepository.findAllByUserIdOrderByUpdatedAtDesc(currentUser.getId());
-            List<UUID> conversationIds = userConversations.stream().map(Conversation::getId).toList();
+            List<Conversation> userConversations = conversationRepository.findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId());
+            List<String> conversationIds = userConversations.stream().map(Conversation::getId).toList();
             if (conversationIds.isEmpty()) {
                 return Collections.emptyList();
             }

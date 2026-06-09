@@ -3,7 +3,6 @@ package iuh.fit.se.nextalk_be.presence.dto;
 import lombok.*;
 
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 @Getter
 @Setter
@@ -11,7 +10,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 public class PresenceUpdateResponse {
-    private UUID userId;
+    private String userId;
     private String username;
     private String status; // ONLINE, AWAY, OFFLINE
     private LocalDateTime lastSeen;

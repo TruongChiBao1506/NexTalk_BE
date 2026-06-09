@@ -12,7 +12,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/friends")
@@ -45,7 +44,7 @@ public class FriendController {
 
     @DeleteMapping("/remove")
     @Operation(summary = "Remove an existing friend relationship")
-    public ResponseEntity<ApiResponse<Void>> removeFriend(@RequestParam("friendId") UUID friendId) {
+    public ResponseEntity<ApiResponse<Void>> removeFriend(@RequestParam("friendId") String friendId) {
         friendService.removeFriend(friendId);
         return ResponseEntity.ok(ApiResponse.success(null, "Friend removed successfully"));
     }

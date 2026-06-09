@@ -16,7 +16,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
 import java.util.List;
-import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
@@ -35,7 +34,7 @@ public class MessageController {
     @GetMapping("/api/messages/{conversationId}")
     @Operation(summary = "Get paginated messages of a conversation")
     public ResponseEntity<ApiResponse<List<MessageResponse>>> getConversationMessages(
-            @PathVariable("conversationId") UUID conversationId,
+            @PathVariable("conversationId") String conversationId,
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "10") int size
     ) {
@@ -69,7 +68,7 @@ public class MessageController {
     @PutMapping("/api/messages/{id}")
     @Operation(summary = "Edit a message")
     public ResponseEntity<ApiResponse<MessageResponse>> editMessage(
-            @PathVariable("id") UUID id,
+            @PathVariable("id") String id,
             @Valid @RequestBody EditMessageRequest request
     ) {
         MessageResponse response = messageService.editMessage(id, request);
@@ -78,35 +77,35 @@ public class MessageController {
 
     @PostMapping("/api/messages/{id}/recall")
     @Operation(summary = "Recall a message for everyone")
-    public ResponseEntity<ApiResponse<MessageResponse>> recallMessage(@PathVariable("id") UUID id) {
+    public ResponseEntity<ApiResponse<MessageResponse>> recallMessage(@PathVariable("id") String id) {
         MessageResponse response = messageService.recallMessage(id);
         return ResponseEntity.ok(ApiResponse.success(response, "Message recalled successfully"));
     }
 
     @DeleteMapping("/api/messages/{id}")
     @Operation(summary = "Delete a message for current user")
-    public ResponseEntity<ApiResponse<Void>> deleteMessageForMe(@PathVariable("id") UUID id) {
+    public ResponseEntity<ApiResponse<Void>> deleteMessageForMe(@PathVariable("id") String id) {
         messageService.deleteMessageForMe(id);
         return ResponseEntity.ok(ApiResponse.success(null, "Message deleted for me successfully"));
     }
 
     @PostMapping("/api/messages/{id}/pin")
     @Operation(summary = "Pin a message in conversation")
-    public ResponseEntity<ApiResponse<MessageResponse>> pinMessage(@PathVariable("id") UUID id) {
+    public ResponseEntity<ApiResponse<MessageResponse>> pinMessage(@PathVariable("id") String id) {
         MessageResponse response = messageService.pinMessage(id, true);
         return ResponseEntity.ok(ApiResponse.success(response, "Message pinned successfully"));
     }
 
     @DeleteMapping("/api/messages/{id}/pin")
     @Operation(summary = "Unpin a message in conversation")
-    public ResponseEntity<ApiResponse<MessageResponse>> unpinMessage(@PathVariable("id") UUID id) {
+    public ResponseEntity<ApiResponse<MessageResponse>> unpinMessage(@PathVariable("id") String id) {
         MessageResponse response = messageService.pinMessage(id, false);
         return ResponseEntity.ok(ApiResponse.success(response, "Message unpinned successfully"));
     }
 
     @GetMapping("/api/conversations/{conversationId}/pinned")
     @Operation(summary = "Get all pinned messages in a conversation")
-    public ResponseEntity<ApiResponse<List<MessageResponse>>> getPinnedMessages(@PathVariable("conversationId") UUID conversationId) {
+    public ResponseEntity<ApiResponse<List<MessageResponse>>> getPinnedMessages(@PathVariable("conversationId") String conversationId) {
         List<MessageResponse> response = messageService.getPinnedMessages(conversationId);
         return ResponseEntity.ok(ApiResponse.success(response, "Pinned messages retrieved successfully"));
     }
@@ -114,7 +113,7 @@ public class MessageController {
     @PostMapping("/api/messages/{id}/react")
     @Operation(summary = "Add/remove reaction on a message")
     public ResponseEntity<ApiResponse<MessageResponse>> reactToMessage(
-            @PathVariable("id") UUID id,
+            @PathVariable("id") String id,
             @Valid @RequestBody ReactMessageRequest request
     ) {
         MessageResponse response = messageService.reactToMessage(id, request);
@@ -125,7 +124,7 @@ public class MessageController {
     @Operation(summary = "Search messages by content (partial match)")
     public ResponseEntity<ApiResponse<List<MessageResponse>>> searchMessages(
             @RequestParam("query") String query,
-            @RequestParam(value = "conversationId", required = false) UUID conversationId
+            @RequestParam(value = "conversationId", required = false) String conversationId
     ) {
         List<MessageResponse> response = messageService.searchMessages(query, conversationId);
         return ResponseEntity.ok(ApiResponse.success(response, "Messages search completed successfully"));

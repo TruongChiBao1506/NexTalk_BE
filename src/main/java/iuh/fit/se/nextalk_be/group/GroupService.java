@@ -30,7 +30,7 @@ public class GroupService {
     private final UserService userService;
     private final NotificationService notificationService;
 
-    @Transactional
+    // @Transactional
     public GroupResponse createGroup(iuh.fit.se.nextalk_be.group.dto.CreateGroupRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
@@ -60,7 +60,7 @@ public class GroupService {
                 .build());
 
         if (request.getMemberIds() != null) {
-            for (UUID memberId : request.getMemberIds()) {
+            for (String memberId : request.getMemberIds()) {
                 if (memberId.equals(currentUser.getId())) continue;
                 User member = userRepository.findById(memberId)
                         .orElseThrow(() -> new ResourceNotFoundException("User not found: " + memberId));
@@ -83,7 +83,7 @@ public class GroupService {
 
         // Notify all added members (except the owner/creator)
         if (request.getMemberIds() != null) {
-            for (UUID memberId : request.getMemberIds()) {
+            for (String memberId : request.getMemberIds()) {
                 if (memberId.equals(currentUser.getId())) continue;
                 userRepository.findById(memberId).ifPresent(member ->
                         notificationService.createAndSend(
@@ -99,8 +99,8 @@ public class GroupService {
         return mapToGroupResponse(savedGroup, groupMembers);
     }
 
-    @Transactional
-    public GroupResponse updateGroup(UUID groupId, UpdateGroupRequest request) {
+    // @Transactional
+    public GroupResponse updateGroup(String groupId, UpdateGroupRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Group group = getGroupOrThrow(groupId);
 
@@ -120,8 +120,8 @@ public class GroupService {
         return mapToGroupResponse(saved, members);
     }
 
-    @Transactional
-    public void deleteGroup(UUID groupId) {
+    // @Transactional
+    public void deleteGroup(String groupId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Group group = getGroupOrThrow(groupId);
 
@@ -136,8 +136,8 @@ public class GroupService {
         groupRepository.delete(group);
     }
 
-    @Transactional
-    public GroupResponse addMember(UUID groupId, AddMemberRequest request) {
+    // @Transactional
+    public GroupResponse addMember(String groupId, AddMemberRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Group group = getGroupOrThrow(groupId);
 
@@ -175,8 +175,8 @@ public class GroupService {
         return mapToGroupResponse(group, members);
     }
 
-    @Transactional
-    public void removeMember(UUID groupId, UUID userId) {
+    // @Transactional
+    public void removeMember(String groupId, String userId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Group group = getGroupOrThrow(groupId);
 
@@ -203,18 +203,18 @@ public class GroupService {
         }
     }
 
-    @Transactional(readOnly = true)
-    public GroupResponse getGroupById(UUID groupId) {
+    // @Transactional(readOnly = true)
+    public GroupResponse getGroupById(String groupId) {
         Group group = getGroupOrThrow(groupId);
         List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
         return mapToGroupResponse(group, members);
     }
 
-    @Transactional(readOnly = true)
+    // @Transactional(readOnly = true)
     public List<GroupResponse> getMyGroups() {
         User currentUser = userService.getCurrentAuthenticatedUser();
         List<GroupMember> memberships = groupMemberRepository.findAllByUserId(currentUser.getId());
-        Set<UUID> groupIds = memberships.stream()
+        Set<String> groupIds = memberships.stream()
                 .map(m -> m.getGroup().getId())
                 .collect(Collectors.toSet());
         List<Group> groups = groupRepository.findAllByOwnerIdOrIdIn(currentUser.getId(), groupIds);
@@ -226,7 +226,7 @@ public class GroupService {
 
     // --- Private helpers ---
 
-    private Group getGroupOrThrow(UUID groupId) {
+    private Group getGroupOrThrow(String groupId) {
         return groupRepository.findById(groupId)
                 .orElseThrow(() -> new ResourceNotFoundException("Group not found: " + groupId));
     }

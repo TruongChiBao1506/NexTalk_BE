@@ -1,7 +1,6 @@
 package iuh.fit.se.nextalk_be.message.dto;
 
 import lombok.*;
-import java.util.UUID;
 
 @Getter
 @Setter
@@ -9,9 +8,9 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 public class CallSignal {
-    private UUID conversationId;
-    private UUID callerId;
-    private UUID receiverId;
+    private String conversationId;
+    private String callerId;
+    private String receiverId;
     private String callerName;
     private String callerAvatar;
     private String type; // VOICE, VIDEO

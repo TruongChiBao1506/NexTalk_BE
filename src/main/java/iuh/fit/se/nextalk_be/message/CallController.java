@@ -25,7 +25,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.security.Principal;
-import java.util.UUID;
 
 @Slf4j
 @RestController
@@ -46,7 +45,7 @@ public class CallController {
 
     @GetMapping("/token")
     public ResponseEntity<ApiResponse<CallTokenResponse>> getCallToken(
-            @RequestParam("conversationId") UUID conversationId
+            @RequestParam("conversationId") String conversationId
     ) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Conversation conversation = conversationRepository.findById(conversationId)
@@ -60,7 +59,7 @@ public class CallController {
         }
 
         int uid = currentUser.getId().hashCode() & 0x7FFFFFFF;
-        String channelName = conversationId.toString();
+        String channelName = conversationId;
 
         RtcTokenBuilder2 tokenBuilder = new RtcTokenBuilder2();
         // Expiration times (in seconds): 2 hours = 7200s
@@ -157,7 +156,7 @@ public class CallController {
         }
     }
 
-    private void forwardCallSignal(CallSignal signal, UUID senderId) {
+    private void forwardCallSignal(CallSignal signal, String senderId) {
         Conversation conversation = conversationRepository.findById(signal.getConversationId()).orElse(null);
         if (conversation == null) return;
 

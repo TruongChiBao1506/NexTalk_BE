@@ -11,7 +11,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -24,7 +23,7 @@ public class NotificationService {
     /**
      * Create, persist, and push a notification to a specific recipient via WebSocket.
      */
-    @Transactional
+    // @Transactional
     public NotificationResponse createAndSend(User recipient, NotificationType type, String content, String referenceId) {
         Notification notification = Notification.builder()
                 .recipient(recipient)
@@ -50,7 +49,7 @@ public class NotificationService {
     /**
      * Get all notifications for the currently authenticated user, newest first.
      */
-    @Transactional(readOnly = true)
+    // @Transactional(readOnly = true)
     public List<NotificationResponse> getMyNotifications() {
         User currentUser = userService.getCurrentAuthenticatedUser();
         return notificationRepository.findByRecipientIdOrderByCreatedAtDesc(currentUser.getId())
@@ -62,8 +61,8 @@ public class NotificationService {
     /**
      * Mark a single notification as read. Only the owner may mark their own notifications.
      */
-    @Transactional
-    public NotificationResponse markAsRead(UUID notificationId) {
+    // @Transactional
+    public NotificationResponse markAsRead(String notificationId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
         Notification notification = notificationRepository.findById(notificationId)
@@ -82,7 +81,7 @@ public class NotificationService {
     /**
      * Count unread notifications for the currently authenticated user.
      */
-    @Transactional(readOnly = true)
+    // @Transactional(readOnly = true)
     public long countUnread() {
         User currentUser = userService.getCurrentAuthenticatedUser();
         return notificationRepository.countByRecipientIdAndIsReadFalse(currentUser.getId());

@@ -3,8 +3,6 @@ package iuh.fit.se.nextalk_be.friend.dto;
 import jakarta.validation.constraints.NotNull;
 import lombok.*;
 
-import java.util.UUID;
-
 @Getter
 @Setter
 @Builder
@@ -13,5 +11,5 @@ import java.util.UUID;
 public class FriendshipRequest {
 
     @NotNull(message = "Receiver ID is required")
-    private UUID receiverId;
+    private String receiverId;
 }

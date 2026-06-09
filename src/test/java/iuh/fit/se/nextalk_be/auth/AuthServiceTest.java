@@ -74,7 +74,7 @@ public class AuthServiceTest {
                 .status("OFFLINE")
                 .isVerified(false)
                 .build();
-        user.setId(UUID.randomUUID());
+        user.setId(UUID.randomUUID().toString());
     }
 
     @Test

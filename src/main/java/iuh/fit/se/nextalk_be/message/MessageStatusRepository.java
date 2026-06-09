@@ -5,16 +5,15 @@ import org.springframework.stereotype.Repository;
 
 import java.util.Collection;
 import java.util.List;
-import java.util.UUID;
 
 @Repository
-public interface MessageStatusRepository extends MongoRepository<MessageStatus, UUID> {
+public interface MessageStatusRepository extends MongoRepository<MessageStatus, String> {
 
-    List<MessageStatus> findAllByMessageId(UUID messageId);
+    List<MessageStatus> findAllByMessageId(String messageId);
 
-    List<MessageStatus> findAllByMessageIdIn(Collection<UUID> messageIds);
+    List<MessageStatus> findAllByMessageIdIn(Collection<String> messageIds);
 
-    List<MessageStatus> findAllByUserIdAndMessageIdIn(UUID userId, Collection<UUID> messageIds);
+    List<MessageStatus> findAllByUserIdAndMessageIdIn(String userId, Collection<String> messageIds);
 
-    List<MessageStatus> findAllByUserIdAndMessageIdInAndStatusIn(UUID userId, Collection<UUID> messageIds, Collection<String> statuses);
+    List<MessageStatus> findAllByUserIdAndMessageIdInAndStatusIn(String userId, Collection<String> messageIds, Collection<String> statuses);
 }

@@ -11,7 +11,6 @@ import org.springframework.data.mongodb.core.mapping.DocumentReference;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 @Getter
 @Setter
@@ -32,7 +31,7 @@ public class Message extends BaseEntity {
 
     private MessageType messageType;
 
-    private UUID parentId;
+    private String parentId;
 
     @Builder.Default
     private boolean isEdited = false;
@@ -49,5 +48,5 @@ public class Message extends BaseEntity {
     private List<MessageReaction> reactions = new ArrayList<>();
 
     @Builder.Default
-    private List<UUID> deletedByUsers = new ArrayList<>();
+    private List<String> deletedByUsers = new ArrayList<>();
 }

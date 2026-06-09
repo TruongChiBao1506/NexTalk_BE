@@ -10,8 +10,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.UUID;
-
 @RestController
 @RequestMapping("/api/users")
 @RequiredArgsConstructor
@@ -43,7 +41,7 @@ public class UserController {
 
     @GetMapping("/{id}")
     @Operation(summary = "Get profile of a user by their ID")
-    public ResponseEntity<ApiResponse<UserProfileResponse>> getUserProfileById(@PathVariable("id") UUID id) {
+    public ResponseEntity<ApiResponse<UserProfileResponse>> getUserProfileById(@PathVariable("id") String id) {
         UserProfileResponse response = userService.getUserProfileById(id);
         return ResponseEntity.ok(ApiResponse.success(response, "User profile retrieved successfully"));
     }

@@ -3,7 +3,6 @@ package iuh.fit.se.nextalk_be.notification.dto;
 import lombok.*;
 
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 @Getter
 @Setter
@@ -12,7 +11,7 @@ import java.util.UUID;
 @AllArgsConstructor
 public class NotificationResponse {
 
-    private UUID id;
+    private String id;
     private String type;
     private String content;
     private String referenceId;

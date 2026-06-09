@@ -4,7 +4,6 @@ import lombok.*;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
 
 @Getter
 @Setter
@@ -12,11 +11,11 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 public class GroupResponse {
-    private UUID id;
+    private String id;
     private String name;
-    private UUID ownerId;
+    private String ownerId;
     private String ownerUsername;
-    private UUID conversationId;
+    private String conversationId;
     private List<GroupMemberResponse> members;
     private int memberCount;
     private LocalDateTime createdAt;

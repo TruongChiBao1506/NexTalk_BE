@@ -15,7 +15,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -29,7 +28,7 @@ public class FriendService {
     private final PresenceService presenceService;
 
     @Transactional
-    public void sendFriendRequest(UUID receiverId) {
+    public void sendFriendRequest(String receiverId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
         if (currentUser.getId().equals(receiverId)) {
@@ -85,7 +84,7 @@ public class FriendService {
     }
 
     @Transactional
-    public void acceptFriendRequest(UUID senderId) {
+    public void acceptFriendRequest(String senderId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
         Friendship friendship = friendshipRepository.findBySenderIdAndReceiverIdAndStatus(senderId, currentUser.getId(), FriendshipStatus.PENDING)
@@ -96,7 +95,7 @@ public class FriendService {
     }
 
     @Transactional
-    public void rejectFriendRequest(UUID senderId) {
+    public void rejectFriendRequest(String senderId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
         Friendship friendship = friendshipRepository.findBySenderIdAndReceiverIdAndStatus(senderId, currentUser.getId(), FriendshipStatus.PENDING)
@@ -107,7 +106,7 @@ public class FriendService {
     }
 
     @Transactional
-    public void removeFriend(UUID friendId) {
+    public void removeFriend(String friendId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
         Friendship friendship = friendshipRepository.findRelation(currentUser.getId(), friendId)

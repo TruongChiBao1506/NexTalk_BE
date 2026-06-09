@@ -5,7 +5,6 @@ import lombok.*;
 
 import java.time.LocalDateTime;
 import java.util.Set;
-import java.util.UUID;
 
 @Getter
 @Setter
@@ -13,7 +12,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ConversationResponse {
-    private UUID id;
+    private String id;
     private String type;
     private String name;
     private Set<UserProfileResponse> members;
