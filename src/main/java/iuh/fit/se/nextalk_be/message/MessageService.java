@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.message;
 
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
+import iuh.fit.se.nextalk_be.block.UserBlockRepository;
 import iuh.fit.se.nextalk_be.chatrequest.ChatRequestRepository;
 import iuh.fit.se.nextalk_be.chatrequest.ChatRequestStatus;
 import iuh.fit.se.nextalk_be.conversation.Conversation;
@@ -41,6 +42,7 @@ public class MessageService {
     private final NotificationService notificationService;
     private final FriendshipRepository friendshipRepository;
     private final ChatRequestRepository chatRequestRepository;
+    private final UserBlockRepository userBlockRepository;
 
     // @Transactional
     public MessageResponse sendMessage(MessageRequest request) {
@@ -199,6 +201,10 @@ public class MessageService {
                 .filter(member -> !member.getId().equals(currentUser.getId()))
                 .findFirst()
                 .orElseThrow(() -> new BadRequestException("Private conversation must have another member"));
+
+        if (userBlockRepository.existsBetweenUsers(currentUser.getId(), otherMember.getId())) {
+            throw new BadRequestException("You cannot message this user because one of you has blocked the other.");
+        }
 
         boolean areFriends = friendshipRepository.findRelation(currentUser.getId(), otherMember.getId())
                 .map(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)

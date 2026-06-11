@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.chatrequest.ChatRequestRepository;
 import iuh.fit.se.nextalk_be.chatrequest.ChatRequestStatus;
+import iuh.fit.se.nextalk_be.block.UserBlockRepository;
 import iuh.fit.se.nextalk_be.conversation.dto.ConversationResponse;
 import iuh.fit.se.nextalk_be.friend.FriendshipRepository;
 import iuh.fit.se.nextalk_be.friend.FriendshipStatus;
@@ -27,6 +28,7 @@ public class ConversationService {
     private final UserRepository userRepository;
     private final FriendshipRepository friendshipRepository;
     private final ChatRequestRepository chatRequestRepository;
+    private final UserBlockRepository userBlockRepository;
 
     @Transactional
     public ConversationResponse getOrCreatePrivateConversation(String friendId) {
@@ -38,6 +40,10 @@ public class ConversationService {
 
         User friend = userRepository.findById(friendId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + friendId));
+
+        if (userBlockRepository.existsBetweenUsers(currentUser.getId(), friendId)) {
+            throw new BadRequestException("Cannot create a private conversation because one of you has blocked the other");
+        }
 
         Optional<Conversation> existing = conversationRepository
                 .findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId())
@@ -132,15 +138,35 @@ public class ConversationService {
                         .build())
                 .collect(Collectors.toSet());
 
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        String otherMemberId = getPrivateOtherMemberId(conversation, currentUser.getId());
+        boolean blockedByMe = otherMemberId != null
+                && userBlockRepository.existsByBlockerIdAndBlockedId(currentUser.getId(), otherMemberId);
+        boolean blockedMe = otherMemberId != null
+                && userBlockRepository.existsByBlockerIdAndBlockedId(otherMemberId, currentUser.getId());
+
         return ConversationResponse.builder()
                 .id(conversation.getId())
                 .type(conversation.getType().name())
                 .name(conversation.getName())
                 .canSendMessages(canSendMessages(conversation))
+                .blockedByMe(blockedByMe)
+                .blockedMe(blockedMe)
                 .members(memberResponses)
                 .createdAt(conversation.getCreatedAt())
                 .updatedAt(conversation.getUpdatedAt())
                 .build();
+    }
+
+    private String getPrivateOtherMemberId(Conversation conversation, String currentUserId) {
+        if (conversation.getType() != ConversationType.PRIVATE) {
+            return null;
+        }
+        return conversation.getMembers().stream()
+                .map(User::getId)
+                .filter(id -> !id.equals(currentUserId))
+                .findFirst()
+                .orElse(null);
     }
 
     private boolean canSendMessages(Conversation conversation) {
@@ -149,13 +175,13 @@ public class ConversationService {
         }
 
         User currentUser = userService.getCurrentAuthenticatedUser();
-        String otherMemberId = conversation.getMembers().stream()
-                .map(User::getId)
-                .filter(id -> !id.equals(currentUser.getId()))
-                .findFirst()
-                .orElse(null);
+        String otherMemberId = getPrivateOtherMemberId(conversation, currentUser.getId());
 
         if (otherMemberId == null) {
+            return false;
+        }
+
+        if (userBlockRepository.existsBetweenUsers(currentUser.getId(), otherMemberId)) {
             return false;
         }
 

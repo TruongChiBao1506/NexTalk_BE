@@ -1,5 +1,6 @@
 package iuh.fit.se.nextalk_be.friend;
 
+import iuh.fit.se.nextalk_be.block.UserBlockRepository;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.chatrequest.ChatRequestRepository;
 import iuh.fit.se.nextalk_be.chatrequest.ChatRequestStatus;
@@ -42,6 +43,7 @@ public class FriendService {
     private final MessageRepository messageRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final ChatRequestRepository chatRequestRepository;
+    private final UserBlockRepository userBlockRepository;
 
     @Transactional
     public void sendFriendRequest(String receiverId) {
@@ -53,6 +55,10 @@ public class FriendService {
 
         User receiver = userRepository.findById(receiverId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + receiverId));
+
+        if (userBlockRepository.existsBetweenUsers(currentUser.getId(), receiverId)) {
+            throw new BadRequestException("Cannot send friend request because one of you has blocked the other");
+        }
 
         Optional<Friendship> existing = friendshipRepository.findFriendshipBetweenUsers(currentUser.getId(), receiverId);
 

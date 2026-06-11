@@ -16,6 +16,8 @@ public class ConversationResponse {
     private String type;
     private String name;
     private boolean canSendMessages;
+    private boolean blockedByMe;
+    private boolean blockedMe;
     private Set<UserProfileResponse> members;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

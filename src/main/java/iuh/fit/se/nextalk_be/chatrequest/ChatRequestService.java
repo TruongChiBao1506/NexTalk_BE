@@ -1,5 +1,6 @@
 package iuh.fit.se.nextalk_be.chatrequest;
 
+import iuh.fit.se.nextalk_be.block.UserBlockRepository;
 import iuh.fit.se.nextalk_be.chatrequest.dto.ChatRequestResponse;
 import iuh.fit.se.nextalk_be.chatrequest.dto.CreateChatRequest;
 import iuh.fit.se.nextalk_be.conversation.Conversation;
@@ -40,6 +41,7 @@ public class ChatRequestService {
     private final MessageRepository messageRepository;
     private final MessageStatusRepository messageStatusRepository;
     private final NotificationService notificationService;
+    private final UserBlockRepository userBlockRepository;
 
     public ChatRequestResponse create(CreateChatRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
@@ -49,6 +51,10 @@ public class ChatRequestService {
 
         User receiver = userRepository.findById(request.getReceiverId())
                 .orElseThrow(() -> new ResourceNotFoundException("Receiver not found"));
+
+        if (userBlockRepository.existsBetweenUsers(currentUser.getId(), receiver.getId())) {
+            throw new BadRequestException("Cannot send a chat request because one of you has blocked the other");
+        }
 
         boolean alreadyFriends = friendshipRepository
                 .findBySenderIdAndReceiverIdAndStatus(currentUser.getId(), receiver.getId(), FriendshipStatus.ACCEPTED)
