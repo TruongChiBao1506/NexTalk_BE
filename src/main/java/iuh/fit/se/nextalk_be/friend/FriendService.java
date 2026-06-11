@@ -1,8 +1,17 @@
 package iuh.fit.se.nextalk_be.friend;
 
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
+import iuh.fit.se.nextalk_be.chatrequest.ChatRequestRepository;
+import iuh.fit.se.nextalk_be.chatrequest.ChatRequestStatus;
+import iuh.fit.se.nextalk_be.conversation.Conversation;
+import iuh.fit.se.nextalk_be.conversation.ConversationRepository;
+import iuh.fit.se.nextalk_be.conversation.ConversationType;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.friend.dto.FriendResponse;
+import iuh.fit.se.nextalk_be.friend.dto.FriendshipAcceptResponse;
+import iuh.fit.se.nextalk_be.message.Message;
+import iuh.fit.se.nextalk_be.message.MessageRepository;
+import iuh.fit.se.nextalk_be.message.MessageType;
 import iuh.fit.se.nextalk_be.notification.NotificationService;
 import iuh.fit.se.nextalk_be.notification.NotificationType;
 import iuh.fit.se.nextalk_be.user.User;
@@ -12,9 +21,12 @@ import iuh.fit.se.nextalk_be.presence.PresenceService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.bson.types.ObjectId;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -26,6 +38,10 @@ public class FriendService {
     private final UserRepository userRepository;
     private final NotificationService notificationService;
     private final PresenceService presenceService;
+    private final ConversationRepository conversationRepository;
+    private final MessageRepository messageRepository;
+    private final SimpMessagingTemplate messagingTemplate;
+    private final ChatRequestRepository chatRequestRepository;
 
     @Transactional
     public void sendFriendRequest(String receiverId) {
@@ -84,7 +100,7 @@ public class FriendService {
     }
 
     @Transactional
-    public void acceptFriendRequest(String senderId) {
+    public FriendshipAcceptResponse acceptFriendRequest(String senderId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
         Friendship friendship = friendshipRepository.findBySenderIdAndReceiverIdAndStatus(senderId, currentUser.getId(), FriendshipStatus.PENDING)
@@ -92,6 +108,29 @@ public class FriendService {
 
         friendship.setStatus(FriendshipStatus.ACCEPTED);
         friendshipRepository.save(friendship);
+
+        User sender = friendship.getSender();
+        Conversation conversation = conversationRepository.findPrivateConversationBetweenUsers(
+                        new ObjectId(sender.getId()),
+                        new ObjectId(currentUser.getId())
+                )
+                .orElseGet(() -> conversationRepository.save(Conversation.builder()
+                        .type(ConversationType.PRIVATE)
+                        .members(Set.of(sender, currentUser))
+                        .build()));
+
+        Message systemMessage = messageRepository.save(Message.builder()
+                .conversation(conversation)
+                .sender(currentUser)
+                .content("đã trở thành bạn bè.")
+                .messageType(MessageType.SYSTEM)
+                .build());
+
+        broadcastSystemMessage(conversation, systemMessage, currentUser);
+
+        return FriendshipAcceptResponse.builder()
+                .conversationId(conversation.getId())
+                .build();
     }
 
     @Transactional
@@ -117,6 +156,12 @@ public class FriendService {
         }
 
         friendshipRepository.delete(friendship);
+        chatRequestRepository
+                .findBySenderIdAndReceiverIdAndStatus(currentUser.getId(), friendId, ChatRequestStatus.ACCEPTED)
+                .ifPresent(chatRequestRepository::delete);
+        chatRequestRepository
+                .findBySenderIdAndReceiverIdAndStatus(friendId, currentUser.getId(), ChatRequestStatus.ACCEPTED)
+                .ifPresent(chatRequestRepository::delete);
     }
 
     @Transactional(readOnly = true)
@@ -155,5 +200,23 @@ public class FriendService {
                 .lastSeen(presenceService.getUserLastSeen(user.getId()))
                 .createdAt(user.getCreatedAt())
                 .build();
+    }
+
+    private void broadcastSystemMessage(Conversation conversation, Message message, User actor) {
+        java.util.Map<String, Object> response = new java.util.HashMap<>();
+        response.put("id", message.getId());
+        response.put("conversationId", conversation.getId());
+        response.put("senderId", actor.getId());
+        response.put("senderUsername", actor.getUsername());
+        response.put("content", message.getContent());
+        response.put("messageType", message.getMessageType().name());
+        response.put("attachments", java.util.List.of());
+        response.put("statuses", java.util.List.of());
+        response.put("createdAt", message.getCreatedAt());
+        response.put("reactions", java.util.List.of());
+
+        for (User member : conversation.getMembers()) {
+            messagingTemplate.convertAndSendToUser(member.getUsername(), "/queue/private", response);
+        }
     }
 }

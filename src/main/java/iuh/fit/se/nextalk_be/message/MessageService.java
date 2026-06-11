@@ -2,8 +2,13 @@ package iuh.fit.se.nextalk_be.message;
 
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
+import iuh.fit.se.nextalk_be.chatrequest.ChatRequestRepository;
+import iuh.fit.se.nextalk_be.chatrequest.ChatRequestStatus;
 import iuh.fit.se.nextalk_be.conversation.Conversation;
 import iuh.fit.se.nextalk_be.conversation.ConversationRepository;
+import iuh.fit.se.nextalk_be.conversation.ConversationType;
+import iuh.fit.se.nextalk_be.friend.FriendshipRepository;
+import iuh.fit.se.nextalk_be.friend.FriendshipStatus;
 import iuh.fit.se.nextalk_be.message.dto.*;
 import iuh.fit.se.nextalk_be.user.User;
 import iuh.fit.se.nextalk_be.user.UserRepository;
@@ -34,6 +39,8 @@ public class MessageService {
     private final SimpMessagingTemplate messagingTemplate;
     private final MessageStatusRepository messageStatusRepository;
     private final NotificationService notificationService;
+    private final FriendshipRepository friendshipRepository;
+    private final ChatRequestRepository chatRequestRepository;
 
     // @Transactional
     public MessageResponse sendMessage(MessageRequest request) {
@@ -50,6 +57,15 @@ public class MessageService {
     }
 
     private MessageResponse sendMessageWithUser(MessageRequest request, User currentUser) {
+        return sendMessageWithUser(request, currentUser, null, null);
+    }
+
+    private MessageResponse sendMessageWithUser(
+            MessageRequest request,
+            User currentUser,
+            String forwardedFromMessageId,
+            String forwardedFromSenderUsername
+    ) {
         Conversation conversation = conversationRepository.findById(request.getConversationId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + request.getConversationId()));
 
@@ -60,12 +76,36 @@ public class MessageService {
             throw new BadRequestException("You are not a member of this conversation");
         }
 
-        MessageType type = MessageType.TEXT;
+        ensurePrivateMessageAllowed(conversation, currentUser);
+
+        List<MessageAttachment> attachments = request.getAttachments() != null
+                ? request.getAttachments().stream()
+                .filter(attachment -> attachment != null && attachment.getUrl() != null && !attachment.getUrl().trim().isEmpty())
+                .map(attachment -> MessageAttachment.builder()
+                        .url(attachment.getUrl().trim())
+                        .type(attachment.getType() != null ? attachment.getType().toUpperCase() : "FILE")
+                        .name(attachment.getName())
+                        .build())
+                .toList()
+                : List.of();
+
+        String content = request.getContent() != null ? request.getContent().trim() : "";
+        if (content.isEmpty() && attachments.isEmpty()) {
+            throw new BadRequestException("Message content or attachments are required");
+        }
+
+        MessageType type = attachments.size() > 1 ? MessageType.ALBUM : MessageType.TEXT;
         if (request.getMessageType() != null) {
             try {
                 type = MessageType.valueOf(request.getMessageType().toUpperCase());
             } catch (IllegalArgumentException e) {
                 throw new BadRequestException("Invalid message type: " + request.getMessageType());
+            }
+        } else if (attachments.size() == 1) {
+            try {
+                type = MessageType.valueOf(attachments.get(0).getType());
+            } catch (IllegalArgumentException e) {
+                type = MessageType.FILE;
             }
         }
 
@@ -81,9 +121,12 @@ public class MessageService {
         Message message = Message.builder()
                 .conversation(conversation)
                 .sender(currentUser)
-                .content(request.getContent())
+                .content(content)
                 .messageType(type)
+                .attachments(attachments)
                 .parentId(parentId)
+                .forwardedFromMessageId(forwardedFromMessageId)
+                .forwardedFromSenderUsername(forwardedFromSenderUsername)
                 .build();
 
         Message savedMessage = messageRepository.save(message);
@@ -145,6 +188,32 @@ public class MessageService {
         }
 
         return response;
+    }
+
+    private void ensurePrivateMessageAllowed(Conversation conversation, User currentUser) {
+        if (conversation.getType() != ConversationType.PRIVATE) {
+            return;
+        }
+
+        User otherMember = conversation.getMembers().stream()
+                .filter(member -> !member.getId().equals(currentUser.getId()))
+                .findFirst()
+                .orElseThrow(() -> new BadRequestException("Private conversation must have another member"));
+
+        boolean areFriends = friendshipRepository.findRelation(currentUser.getId(), otherMember.getId())
+                .map(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
+                .orElse(false);
+
+        boolean hasAcceptedChatRequest = chatRequestRepository
+                .findBySenderIdAndReceiverIdAndStatus(currentUser.getId(), otherMember.getId(), ChatRequestStatus.ACCEPTED)
+                .isPresent()
+                || chatRequestRepository
+                .findBySenderIdAndReceiverIdAndStatus(otherMember.getId(), currentUser.getId(), ChatRequestStatus.ACCEPTED)
+                .isPresent();
+
+        if (!areFriends && !hasAcceptedChatRequest) {
+            throw new BadRequestException("You are no longer friends. Send a chat request to continue messaging.");
+        }
     }
 
     // @Transactional(readOnly = true)
@@ -294,13 +363,17 @@ public class MessageService {
                 .senderUsername(message.getSender().getUsername())
                 .content(message.getContent())
                 .messageType(message.getMessageType().name())
+                .attachments(message.getAttachments() != null ? message.getAttachments() : new ArrayList<>())
                 .createdAt(message.getCreatedAt() != null ? message.getCreatedAt() : LocalDateTime.now())
                 .statuses(statusResponses)
                 .parentId(message.getParentId())
+                .forwardedFromMessageId(message.getForwardedFromMessageId())
+                .forwardedFromSenderUsername(message.getForwardedFromSenderUsername())
                 .isEdited(message.isEdited())
                 .editedAt(message.getEditedAt())
                 .isRecalled(message.isRecalled())
                 .isPinned(message.isPinned())
+                .pinnedAt(message.getPinnedAt())
                 .reactions(message.getReactions() != null ? message.getReactions() : new ArrayList<>())
                 .build();
     }
@@ -333,13 +406,17 @@ public class MessageService {
                 .senderUsername(senderUsername)
                 .content(message.getContent())
                 .messageType(message.getMessageType().name())
+                .attachments(message.getAttachments() != null ? message.getAttachments() : new ArrayList<>())
                 .createdAt(message.getCreatedAt() != null ? message.getCreatedAt() : LocalDateTime.now())
                 .statuses(statusResponses)
                 .parentId(message.getParentId())
+                .forwardedFromMessageId(message.getForwardedFromMessageId())
+                .forwardedFromSenderUsername(message.getForwardedFromSenderUsername())
                 .isEdited(message.isEdited())
                 .editedAt(message.getEditedAt())
                 .isRecalled(message.isRecalled())
                 .isPinned(message.isPinned())
+                .pinnedAt(message.getPinnedAt())
                 .reactions(message.getReactions() != null ? message.getReactions() : new ArrayList<>())
                 .build();
     }
@@ -398,6 +475,48 @@ public class MessageService {
                     response
             );
         }
+    }
+
+    private void createAndBroadcastSystemMessage(Conversation conversation, User actor, String content) {
+        Message systemMessage = Message.builder()
+                .conversation(conversation)
+                .sender(actor)
+                .content(content)
+                .messageType(MessageType.SYSTEM)
+                .build();
+
+        Message savedSystemMessage = messageRepository.save(systemMessage);
+        conversation.setUpdatedAt(LocalDateTime.now());
+        conversationRepository.save(conversation);
+        broadcastMessageUpdate(conversation, mapToMessageResponse(savedSystemMessage));
+    }
+
+    private String buildPinSystemContent(Message message, boolean pin) {
+        if (!pin) {
+            return "đã bỏ ghim tin nhắn.";
+        }
+
+        if (message.getAttachments() != null && !message.getAttachments().isEmpty()) {
+            boolean hasImage = message.getAttachments().stream()
+                    .anyMatch(attachment -> "IMAGE".equalsIgnoreCase(attachment.getType()));
+            if (hasImage) {
+                return "đã ghim 1 tin nhắn hình ảnh.";
+            }
+            return "đã ghim 1 tin nhắn tệp.";
+        }
+
+        if (message.getMessageType() == MessageType.IMAGE) {
+            return "đã ghim 1 tin nhắn hình ảnh.";
+        }
+        if (message.getMessageType() == MessageType.FILE) {
+            return "đã ghim 1 tin nhắn tệp.";
+        }
+
+        String preview = message.getContent() != null ? message.getContent().trim() : "";
+        if (preview.length() > 40) {
+            preview = preview.substring(0, 37) + "...";
+        }
+        return preview.isEmpty() ? "đã ghim tin nhắn." : "đã ghim tin nhắn " + preview;
     }
 
     // @Transactional
@@ -479,10 +598,12 @@ public class MessageService {
         }
 
         message.setPinned(pin);
+        message.setPinnedAt(pin ? LocalDateTime.now() : null);
         Message savedMessage = messageRepository.save(message);
 
         MessageResponse response = mapToMessageResponse(savedMessage);
         broadcastMessageUpdate(message.getConversation(), response);
+        createAndBroadcastSystemMessage(message.getConversation(), currentUser, buildPinSystemContent(savedMessage, pin));
         return response;
     }
 
@@ -544,6 +665,56 @@ public class MessageService {
         MessageResponse response = mapToMessageResponse(savedMessage);
         broadcastMessageUpdate(message.getConversation(), response);
         return response;
+    }
+
+    // @Transactional
+    public List<MessageResponse> shareMessage(String messageId, ShareMessageRequest request) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Message sourceMessage = messageRepository.findById(messageId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message not found with ID: " + messageId));
+
+        Conversation sourceConversation = sourceMessage.getConversation();
+        boolean canReadSource = sourceConversation.getMembers().stream()
+                .anyMatch(m -> m.getId().equals(currentUser.getId()));
+        if (!canReadSource) {
+            throw new BadRequestException("You are not a member of the source conversation");
+        }
+        if (sourceMessage.isRecalled()) {
+            throw new BadRequestException("Cannot share a recalled message");
+        }
+        if (sourceMessage.getDeletedByUsers() != null && sourceMessage.getDeletedByUsers().contains(currentUser.getId())) {
+            throw new BadRequestException("Cannot share a message that was deleted for you");
+        }
+
+        List<String> targetConversationIds = request.getTargetConversationIds().stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(id -> !id.isEmpty())
+                .distinct()
+                .toList();
+
+        if (targetConversationIds.isEmpty()) {
+            throw new BadRequestException("Target conversation IDs are required");
+        }
+
+        List<MessageResponse> sharedMessages = new ArrayList<>();
+        for (String targetConversationId : targetConversationIds) {
+            MessageRequest messageRequest = MessageRequest.builder()
+                    .conversationId(targetConversationId)
+                    .content(sourceMessage.getContent())
+                    .messageType(sourceMessage.getMessageType().name())
+                    .attachments(sourceMessage.getAttachments())
+                    .build();
+
+            sharedMessages.add(sendMessageWithUser(
+                    messageRequest,
+                    currentUser,
+                    sourceMessage.getId(),
+                    sourceMessage.getSender().getUsername()
+            ));
+        }
+
+        return sharedMessages;
     }
 
     // @Transactional(readOnly = true)

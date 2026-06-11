@@ -31,7 +31,14 @@ public class Message extends BaseEntity {
 
     private MessageType messageType;
 
+    @Builder.Default
+    private List<MessageAttachment> attachments = new ArrayList<>();
+
     private String parentId;
+
+    private String forwardedFromMessageId;
+
+    private String forwardedFromSenderUsername;
 
     @Builder.Default
     private boolean isEdited = false;
@@ -43,6 +50,8 @@ public class Message extends BaseEntity {
 
     @Builder.Default
     private boolean isPinned = false;
+
+    private LocalDateTime pinnedAt;
 
     @Builder.Default
     private List<MessageReaction> reactions = new ArrayList<>();

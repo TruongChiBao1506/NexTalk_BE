@@ -120,6 +120,16 @@ public class MessageController {
         return ResponseEntity.ok(ApiResponse.success(response, "Reaction updated successfully"));
     }
 
+    @PostMapping("/api/messages/{id}/share")
+    @Operation(summary = "Share a message to one or more conversations")
+    public ResponseEntity<ApiResponse<List<MessageResponse>>> shareMessage(
+            @PathVariable("id") String id,
+            @Valid @RequestBody ShareMessageRequest request
+    ) {
+        List<MessageResponse> response = messageService.shareMessage(id, request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Message shared successfully"));
+    }
+
     @GetMapping("/api/messages/search")
     @Operation(summary = "Search messages by content (partial match)")
     public ResponseEntity<ApiResponse<List<MessageResponse>>> searchMessages(

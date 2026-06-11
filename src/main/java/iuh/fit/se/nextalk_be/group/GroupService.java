@@ -7,12 +7,17 @@ import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
 import iuh.fit.se.nextalk_be.group.dto.*;
+import iuh.fit.se.nextalk_be.message.Message;
+import iuh.fit.se.nextalk_be.message.MessageRepository;
+import iuh.fit.se.nextalk_be.message.MessageType;
+import iuh.fit.se.nextalk_be.message.dto.MessageResponse;
 import iuh.fit.se.nextalk_be.notification.NotificationService;
 import iuh.fit.se.nextalk_be.notification.NotificationType;
 import iuh.fit.se.nextalk_be.user.User;
 import iuh.fit.se.nextalk_be.user.UserRepository;
 import iuh.fit.se.nextalk_be.user.UserService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +34,8 @@ public class GroupService {
     private final UserRepository userRepository;
     private final UserService userService;
     private final NotificationService notificationService;
+    private final MessageRepository messageRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
     // @Transactional
     public GroupResponse createGroup(iuh.fit.se.nextalk_be.group.dto.CreateGroupRequest request) {
@@ -161,6 +168,11 @@ public class GroupService {
         if (group.getConversation() != null) {
             group.getConversation().getMembers().add(newMember);
             conversationRepository.save(group.getConversation());
+            createAndBroadcastSystemMessage(
+                    group.getConversation(),
+                    currentUser,
+                    "đã mời " + newMember.getUsername() + " vào nhóm."
+            );
         }
 
         // Notify the newly added member
@@ -263,5 +275,36 @@ public class GroupService {
                 .createdAt(group.getCreatedAt())
                 .updatedAt(group.getUpdatedAt())
                 .build();
+    }
+
+    private void createAndBroadcastSystemMessage(Conversation conversation, User actor, String content) {
+        Message systemMessage = Message.builder()
+                .conversation(conversation)
+                .sender(actor)
+                .content(content)
+                .messageType(MessageType.SYSTEM)
+                .build();
+
+        Message savedSystemMessage = messageRepository.save(systemMessage);
+        MessageResponse response = MessageResponse.builder()
+                .id(savedSystemMessage.getId())
+                .conversationId(conversation.getId())
+                .senderId(actor.getId())
+                .senderUsername(actor.getUsername())
+                .content(savedSystemMessage.getContent())
+                .messageType(savedSystemMessage.getMessageType().name())
+                .attachments(List.of())
+                .createdAt(savedSystemMessage.getCreatedAt())
+                .statuses(List.of())
+                .reactions(List.of())
+                .build();
+
+        for (User member : conversation.getMembers()) {
+            messagingTemplate.convertAndSendToUser(
+                    member.getUsername(),
+                    "/queue/private",
+                    response
+            );
+        }
     }
 }

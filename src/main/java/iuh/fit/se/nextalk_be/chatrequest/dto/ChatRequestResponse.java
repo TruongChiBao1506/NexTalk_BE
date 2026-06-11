@@ -1,22 +1,22 @@
-package iuh.fit.se.nextalk_be.conversation.dto;
+package iuh.fit.se.nextalk_be.chatrequest.dto;
 
 import iuh.fit.se.nextalk_be.user.dto.UserProfileResponse;
 import lombok.*;
 
 import java.time.LocalDateTime;
-import java.util.Set;
 
 @Getter
 @Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class ConversationResponse {
+public class ChatRequestResponse {
     private String id;
-    private String type;
-    private String name;
-    private boolean canSendMessages;
-    private Set<UserProfileResponse> members;
+    private UserProfileResponse sender;
+    private UserProfileResponse receiver;
+    private String message;
+    private String status;
+    private String conversationId;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

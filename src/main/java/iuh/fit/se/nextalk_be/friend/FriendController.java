@@ -5,6 +5,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import iuh.fit.se.nextalk_be.common.ApiResponse;
 import iuh.fit.se.nextalk_be.friend.dto.FriendResponse;
 import iuh.fit.se.nextalk_be.friend.dto.FriendshipAcceptRequest;
+import iuh.fit.se.nextalk_be.friend.dto.FriendshipAcceptResponse;
 import iuh.fit.se.nextalk_be.friend.dto.FriendshipRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -30,9 +31,9 @@ public class FriendController {
 
     @PutMapping("/accept")
     @Operation(summary = "Accept a pending friend request")
-    public ResponseEntity<ApiResponse<Void>> acceptFriendRequest(@Valid @RequestBody FriendshipAcceptRequest request) {
-        friendService.acceptFriendRequest(request.getSenderId());
-        return ResponseEntity.ok(ApiResponse.success(null, "Friend request accepted successfully"));
+    public ResponseEntity<ApiResponse<FriendshipAcceptResponse>> acceptFriendRequest(@Valid @RequestBody FriendshipAcceptRequest request) {
+        FriendshipAcceptResponse response = friendService.acceptFriendRequest(request.getSenderId());
+        return ResponseEntity.ok(ApiResponse.success(response, "Friend request accepted successfully"));
     }
 
     @PutMapping("/reject")

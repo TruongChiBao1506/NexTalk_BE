@@ -17,9 +17,12 @@ public class MessageResponse {
     private String senderUsername;
     private String content;
     private String messageType;
+    private List<iuh.fit.se.nextalk_be.message.MessageAttachment> attachments;
     private LocalDateTime createdAt;
     private List<MessageStatusResponse> statuses;
     private String parentId;
+    private String forwardedFromMessageId;
+    private String forwardedFromSenderUsername;
     @com.fasterxml.jackson.annotation.JsonProperty("isEdited")
     private boolean isEdited;
     private LocalDateTime editedAt;
@@ -27,5 +30,6 @@ public class MessageResponse {
     private boolean isRecalled;
     @com.fasterxml.jackson.annotation.JsonProperty("isPinned")
     private boolean isPinned;
+    private LocalDateTime pinnedAt;
     private List<iuh.fit.se.nextalk_be.message.MessageReaction> reactions;
 }

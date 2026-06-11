@@ -2,7 +2,11 @@ package iuh.fit.se.nextalk_be.conversation;
 
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
+import iuh.fit.se.nextalk_be.chatrequest.ChatRequestRepository;
+import iuh.fit.se.nextalk_be.chatrequest.ChatRequestStatus;
 import iuh.fit.se.nextalk_be.conversation.dto.ConversationResponse;
+import iuh.fit.se.nextalk_be.friend.FriendshipRepository;
+import iuh.fit.se.nextalk_be.friend.FriendshipStatus;
 import iuh.fit.se.nextalk_be.user.User;
 import iuh.fit.se.nextalk_be.user.UserRepository;
 import iuh.fit.se.nextalk_be.user.UserService;
@@ -11,7 +15,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import org.bson.types.ObjectId;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -22,8 +25,10 @@ public class ConversationService {
     private final ConversationRepository conversationRepository;
     private final UserService userService;
     private final UserRepository userRepository;
+    private final FriendshipRepository friendshipRepository;
+    private final ChatRequestRepository chatRequestRepository;
 
-    // @Transactional
+    @Transactional
     public ConversationResponse getOrCreatePrivateConversation(String friendId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
@@ -34,10 +39,14 @@ public class ConversationService {
         User friend = userRepository.findById(friendId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + friendId));
 
-        Optional<Conversation> existing = conversationRepository.findPrivateConversationBetweenUsers(
-                new ObjectId(currentUser.getId()),
-                new ObjectId(friendId)
-        );
+        Optional<Conversation> existing = conversationRepository
+                .findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId())
+                .stream()
+                .filter(conversation -> conversation.getType() == ConversationType.PRIVATE)
+                .filter(conversation -> conversation.getMembers().stream()
+                        .map(User::getId)
+                        .anyMatch(friendId::equals))
+                .findFirst();
 
         if (existing.isPresent()) {
             return mapToConversationResponse(existing.get());
@@ -45,7 +54,7 @@ public class ConversationService {
 
         Conversation conversation = Conversation.builder()
                 .type(ConversationType.PRIVATE)
-                .members(Set.of(currentUser, friend))
+                .members(new HashSet<>(Arrays.asList(currentUser, friend)))
                 .build();
 
         Conversation savedConversation = conversationRepository.save(conversation);
@@ -127,10 +136,41 @@ public class ConversationService {
                 .id(conversation.getId())
                 .type(conversation.getType().name())
                 .name(conversation.getName())
+                .canSendMessages(canSendMessages(conversation))
                 .members(memberResponses)
                 .createdAt(conversation.getCreatedAt())
                 .updatedAt(conversation.getUpdatedAt())
                 .build();
+    }
+
+    private boolean canSendMessages(Conversation conversation) {
+        if (conversation.getType() == ConversationType.GROUP) {
+            return true;
+        }
+
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        String otherMemberId = conversation.getMembers().stream()
+                .map(User::getId)
+                .filter(id -> !id.equals(currentUser.getId()))
+                .findFirst()
+                .orElse(null);
+
+        if (otherMemberId == null) {
+            return false;
+        }
+
+        boolean areFriends = friendshipRepository.findRelation(currentUser.getId(), otherMemberId)
+                .map(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
+                .orElse(false);
+
+        boolean hasAcceptedChatRequest = chatRequestRepository
+                .findBySenderIdAndReceiverIdAndStatus(currentUser.getId(), otherMemberId, ChatRequestStatus.ACCEPTED)
+                .isPresent()
+                || chatRequestRepository
+                .findBySenderIdAndReceiverIdAndStatus(otherMemberId, currentUser.getId(), ChatRequestStatus.ACCEPTED)
+                .isPresent();
+
+        return areFriends || hasAcceptedChatRequest;
     }
 
     // @Transactional(readOnly = true)
