@@ -5,9 +5,12 @@ import org.springframework.stereotype.Repository;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface GroupRepository extends MongoRepository<Group, String> {
 
     List<Group> findAllByOwnerIdOrIdIn(String ownerId, Collection<String> ids);
+
+    Optional<Group> findByConversationId(String conversationId);
 }

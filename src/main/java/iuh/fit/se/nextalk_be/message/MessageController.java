@@ -130,6 +130,47 @@ public class MessageController {
         return ResponseEntity.ok(ApiResponse.success(response, "Message shared successfully"));
     }
 
+    @PostMapping("/api/messages/polls")
+    @Operation(summary = "Create a poll message in a group conversation")
+    public ResponseEntity<ApiResponse<MessageResponse>> createPoll(@Valid @RequestBody CreatePollRequest request) {
+        MessageResponse response = messageService.createPoll(request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Poll created successfully"));
+    }
+
+    @PostMapping("/api/messages/{id}/poll/vote")
+    @Operation(summary = "Vote or unvote an option in a poll")
+    public ResponseEntity<ApiResponse<MessageResponse>> votePoll(
+            @PathVariable("id") String id,
+            @Valid @RequestBody PollVoteRequest request
+    ) {
+        MessageResponse response = messageService.votePoll(id, request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Poll vote updated successfully"));
+    }
+
+    @PostMapping("/api/messages/{id}/poll/options")
+    @Operation(summary = "Add a new option to a poll")
+    public ResponseEntity<ApiResponse<MessageResponse>> addPollOption(
+            @PathVariable("id") String id,
+            @Valid @RequestBody AddPollOptionRequest request
+    ) {
+        MessageResponse response = messageService.addPollOption(id, request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Poll option added successfully"));
+    }
+
+    @PostMapping("/api/messages/{id}/poll/lock")
+    @Operation(summary = "Lock a poll")
+    public ResponseEntity<ApiResponse<MessageResponse>> lockPoll(@PathVariable("id") String id) {
+        MessageResponse response = messageService.lockPoll(id);
+        return ResponseEntity.ok(ApiResponse.success(response, "Poll locked successfully"));
+    }
+
+    @DeleteMapping("/api/messages/{id}/poll")
+    @Operation(summary = "Delete a poll")
+    public ResponseEntity<ApiResponse<MessageResponse>> deletePoll(@PathVariable("id") String id) {
+        MessageResponse response = messageService.deletePoll(id);
+        return ResponseEntity.ok(ApiResponse.success(response, "Poll deleted successfully"));
+    }
+
     @GetMapping("/api/messages/search")
     @Operation(summary = "Search messages by content (partial match)")
     public ResponseEntity<ApiResponse<List<MessageResponse>>> searchMessages(

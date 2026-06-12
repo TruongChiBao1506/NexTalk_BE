@@ -10,6 +10,10 @@ import iuh.fit.se.nextalk_be.conversation.ConversationRepository;
 import iuh.fit.se.nextalk_be.conversation.ConversationType;
 import iuh.fit.se.nextalk_be.friend.FriendshipRepository;
 import iuh.fit.se.nextalk_be.friend.FriendshipStatus;
+import iuh.fit.se.nextalk_be.group.Group;
+import iuh.fit.se.nextalk_be.group.GroupMemberRepository;
+import iuh.fit.se.nextalk_be.group.GroupRepository;
+import iuh.fit.se.nextalk_be.group.GroupRole;
 import iuh.fit.se.nextalk_be.message.dto.*;
 import iuh.fit.se.nextalk_be.user.User;
 import iuh.fit.se.nextalk_be.user.UserRepository;
@@ -43,6 +47,8 @@ public class MessageService {
     private final FriendshipRepository friendshipRepository;
     private final ChatRequestRepository chatRequestRepository;
     private final UserBlockRepository userBlockRepository;
+    private final GroupRepository groupRepository;
+    private final GroupMemberRepository groupMemberRepository;
 
     // @Transactional
     public MessageResponse sendMessage(MessageRequest request) {
@@ -111,6 +117,10 @@ public class MessageService {
             }
         }
 
+        if (type == MessageType.SYSTEM || type == MessageType.POLL) {
+            throw new BadRequestException("This message type must be created by its dedicated system flow");
+        }
+
         String parentId = request.getParentId();
         if (parentId != null) {
             Message parent = messageRepository.findById(parentId)
@@ -118,8 +128,8 @@ public class MessageService {
             if (!parent.getConversation().getId().equals(conversation.getId())) {
                 throw new BadRequestException("Parent message must be in the same conversation");
             }
-            if (parent.getMessageType() == MessageType.SYSTEM) {
-                throw new BadRequestException("Cannot reply to a system message");
+            if (parent.getMessageType() == MessageType.SYSTEM || parent.getMessageType() == MessageType.POLL) {
+                throw new BadRequestException("Cannot reply to this message type");
             }
         }
 
@@ -522,6 +532,288 @@ public class MessageService {
         broadcastMessageUpdate(conversation, mapToMessageResponse(savedSystemMessage));
     }
 
+    public MessageResponse createPoll(CreatePollRequest request) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Conversation conversation = conversationRepository.findById(request.getConversationId())
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + request.getConversationId()));
+
+        if (conversation.getType() != ConversationType.GROUP) {
+            throw new BadRequestException("Polls can only be created in group conversations");
+        }
+        ensureConversationMember(conversation, currentUser);
+
+        List<String> optionTexts = request.getOptions().stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(text -> !text.isEmpty())
+                .distinct()
+                .toList();
+
+        if (optionTexts.size() < 2) {
+            throw new BadRequestException("A poll must have at least two options");
+        }
+
+        List<Map<String, Object>> options = optionTexts.stream()
+                .map(text -> createPollOptionMetadata(text, currentUser))
+                .toList();
+
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("systemType", "POLL");
+        metadata.put("question", request.getQuestion().trim());
+        metadata.put("allowMultiple", request.isAllowMultiple());
+        metadata.put("allowAddOptions", request.isAllowAddOptions());
+        metadata.put("anonymous", request.isAnonymous());
+        metadata.put("locked", false);
+        metadata.put("expiresAt", request.getExpiresAt() != null ? request.getExpiresAt().toString() : null);
+        metadata.put("creatorId", currentUser.getId());
+        metadata.put("creatorName", currentUser.getUsername());
+        metadata.put("options", options);
+
+        Message poll = Message.builder()
+                .conversation(conversation)
+                .sender(currentUser)
+                .content(request.getQuestion().trim())
+                .messageType(MessageType.POLL)
+                .metadata(metadata)
+                .isPinned(true)
+                .pinnedAt(LocalDateTime.now())
+                .build();
+
+        Message savedPoll = messageRepository.save(poll);
+        conversation.setUpdatedAt(LocalDateTime.now());
+        conversationRepository.save(conversation);
+
+        MessageResponse response = mapToMessageResponse(savedPoll);
+        broadcastMessageUpdate(conversation, response);
+        return response;
+    }
+
+    public MessageResponse votePoll(String messageId, PollVoteRequest request) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Message poll = getPollMessageForMember(messageId, currentUser);
+        Map<String, Object> metadata = mutableMetadata(poll);
+        ensurePollOpen(metadata);
+
+        boolean allowMultiple = Boolean.TRUE.equals(metadata.get("allowMultiple"));
+        List<Map<String, Object>> options = mutablePollOptions(metadata);
+        Map<String, Object> targetOption = options.stream()
+                .filter(option -> request.getOptionId().equals(option.get("id")))
+                .findFirst()
+                .orElseThrow(() -> new ResourceNotFoundException("Poll option not found"));
+
+        boolean alreadyVoted = getVoterIds(targetOption).contains(currentUser.getId());
+        if (!allowMultiple && !alreadyVoted) {
+            for (Map<String, Object> option : options) {
+                removeVoter(option, currentUser.getId());
+            }
+        }
+
+        if (alreadyVoted) {
+            removeVoter(targetOption, currentUser.getId());
+        } else {
+            addVoter(targetOption, currentUser);
+        }
+
+        metadata.put("options", options);
+        poll.setMetadata(metadata);
+        Message savedPoll = messageRepository.save(poll);
+        MessageResponse response = mapToMessageResponse(savedPoll);
+        broadcastMessageUpdate(poll.getConversation(), response);
+        return response;
+    }
+
+    public MessageResponse addPollOption(String messageId, AddPollOptionRequest request) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Message poll = getPollMessageForMember(messageId, currentUser);
+        Map<String, Object> metadata = mutableMetadata(poll);
+        ensurePollOpen(metadata);
+
+        if (!Boolean.TRUE.equals(metadata.get("allowAddOptions")) && !canManagePoll(poll, currentUser)) {
+            throw new BadRequestException("This poll does not allow members to add options");
+        }
+
+        String text = request.getText() != null ? request.getText().trim() : "";
+        if (text.isEmpty()) {
+            throw new BadRequestException("Option text is required");
+        }
+
+        List<Map<String, Object>> options = mutablePollOptions(metadata);
+        boolean exists = options.stream().anyMatch(option -> text.equalsIgnoreCase(String.valueOf(option.get("text"))));
+        if (exists) {
+            throw new BadRequestException("Poll option already exists");
+        }
+
+        options.add(createPollOptionMetadata(text, currentUser));
+        metadata.put("options", options);
+        poll.setMetadata(metadata);
+        Message savedPoll = messageRepository.save(poll);
+        MessageResponse response = mapToMessageResponse(savedPoll);
+        broadcastMessageUpdate(poll.getConversation(), response);
+        return response;
+    }
+
+    public MessageResponse lockPoll(String messageId) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Message poll = getPollMessageForMember(messageId, currentUser);
+        if (!canManagePoll(poll, currentUser)) {
+            throw new BadRequestException("Only the poll creator or group admins can lock this poll");
+        }
+
+        Map<String, Object> metadata = mutableMetadata(poll);
+        metadata.put("locked", true);
+        metadata.put("lockedAt", LocalDateTime.now().toString());
+        poll.setMetadata(metadata);
+        Message savedPoll = messageRepository.save(poll);
+        MessageResponse response = mapToMessageResponse(savedPoll);
+        broadcastMessageUpdate(poll.getConversation(), response);
+        return response;
+    }
+
+    public MessageResponse deletePoll(String messageId) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Message poll = getPollMessageForMember(messageId, currentUser);
+        if (!canManagePoll(poll, currentUser)) {
+            throw new BadRequestException("Only the poll creator or group admins can delete this poll");
+        }
+
+        poll.setRecalled(true);
+        poll.setPinned(false);
+        poll.setPinnedAt(null);
+        poll.setContent("Binh chon da bi xoa");
+        Message savedPoll = messageRepository.save(poll);
+        MessageResponse response = mapToMessageResponse(savedPoll);
+        broadcastMessageUpdate(poll.getConversation(), response);
+        return response;
+    }
+
+    private Map<String, Object> createPollOptionMetadata(String text, User creator) {
+        Map<String, Object> option = new HashMap<>();
+        option.put("id", UUID.randomUUID().toString());
+        option.put("text", text);
+        option.put("createdById", creator.getId());
+        option.put("createdByName", creator.getUsername());
+        option.put("voterIds", new ArrayList<String>());
+        option.put("voters", new ArrayList<Map<String, Object>>());
+        return option;
+    }
+
+    private Message getPollMessageForMember(String messageId, User currentUser) {
+        Message message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message not found with ID: " + messageId));
+        if (message.getMessageType() != MessageType.POLL) {
+            throw new BadRequestException("Message is not a poll");
+        }
+        ensureConversationMember(message.getConversation(), currentUser);
+        return message;
+    }
+
+    private void ensureConversationMember(Conversation conversation, User currentUser) {
+        boolean isMember = conversation.getMembers().stream()
+                .anyMatch(member -> member.getId().equals(currentUser.getId()));
+        if (!isMember) {
+            throw new BadRequestException("You are not a member of this conversation");
+        }
+    }
+
+    private void ensurePollOpen(Map<String, Object> metadata) {
+        if (Boolean.TRUE.equals(metadata.get("locked"))) {
+            throw new BadRequestException("Poll is locked");
+        }
+        Object expiresAtValue = metadata.get("expiresAt");
+        if (expiresAtValue instanceof String expiresAtString && !expiresAtString.isBlank()) {
+            LocalDateTime expiresAt = LocalDateTime.parse(expiresAtString);
+            if (LocalDateTime.now().isAfter(expiresAt)) {
+                metadata.put("locked", true);
+                throw new BadRequestException("Poll has expired");
+            }
+        }
+    }
+
+    private boolean canManagePoll(Message poll, User currentUser) {
+        if (poll.getSender() != null && poll.getSender().getId().equals(currentUser.getId())) {
+            return true;
+        }
+        Group group = groupRepository.findByConversationId(poll.getConversation().getId()).orElse(null);
+        if (group == null) return false;
+        return groupMemberRepository.findByGroupIdAndUserId(group.getId(), currentUser.getId())
+                .map(member -> member.getRole() == GroupRole.OWNER || member.getRole() == GroupRole.ADMIN)
+                .orElse(false);
+    }
+
+    private Map<String, Object> mutableMetadata(Message message) {
+        return new HashMap<>(message.getMetadata() != null ? message.getMetadata() : Map.of());
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> mutablePollOptions(Map<String, Object> metadata) {
+        Object rawOptions = metadata.get("options");
+        if (!(rawOptions instanceof List<?> rawList)) {
+            return new ArrayList<>();
+        }
+        List<Map<String, Object>> options = new ArrayList<>();
+        for (Object rawOption : rawList) {
+            if (rawOption instanceof Map<?, ?> rawMap) {
+                options.add(new HashMap<>((Map<String, Object>) rawMap));
+            }
+        }
+        return options;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> getVoterIds(Map<String, Object> option) {
+        Object rawVoterIds = option.get("voterIds");
+        if (rawVoterIds instanceof List<?> rawList) {
+            return rawList.stream().map(String::valueOf).collect(Collectors.toCollection(ArrayList::new));
+        }
+        List<String> voterIds = new ArrayList<>();
+        option.put("voterIds", voterIds);
+        return voterIds;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> getVoters(Map<String, Object> option) {
+        Object rawVoters = option.get("voters");
+        if (rawVoters instanceof List<?> rawList) {
+            List<Map<String, Object>> voters = new ArrayList<>();
+            for (Object rawVoter : rawList) {
+                if (rawVoter instanceof Map<?, ?> rawMap) {
+                    voters.add(new HashMap<>((Map<String, Object>) rawMap));
+                }
+            }
+            return voters;
+        }
+        List<Map<String, Object>> voters = new ArrayList<>();
+        option.put("voters", voters);
+        return voters;
+    }
+
+    private void addVoter(Map<String, Object> option, User user) {
+        List<String> voterIds = getVoterIds(option);
+        if (!voterIds.contains(user.getId())) {
+            voterIds.add(user.getId());
+        }
+
+        List<Map<String, Object>> voters = getVoters(option);
+        voters.removeIf(voter -> user.getId().equals(voter.get("id")));
+        Map<String, Object> voter = new HashMap<>();
+        voter.put("id", user.getId());
+        voter.put("username", user.getUsername());
+        voter.put("avatarUrl", user.getAvatarUrl());
+        voters.add(voter);
+
+        option.put("voterIds", voterIds);
+        option.put("voters", voters);
+    }
+
+    private void removeVoter(Map<String, Object> option, String userId) {
+        List<String> voterIds = getVoterIds(option);
+        voterIds.removeIf(id -> id.equals(userId));
+        List<Map<String, Object>> voters = getVoters(option);
+        voters.removeIf(voter -> userId.equals(voter.get("id")));
+        option.put("voterIds", voterIds);
+        option.put("voters", voters);
+    }
+
     private String buildPinSystemContent(Message message, boolean pin) {
         if (!pin) {
             return "đã bỏ ghim tin nhắn.";
@@ -562,8 +854,8 @@ public class MessageService {
         if (message.isRecalled()) {
             throw new BadRequestException("Cannot edit a recalled message");
         }
-        if (message.getMessageType() == MessageType.SYSTEM) {
-            throw new BadRequestException("Cannot edit a system message");
+        if (message.getMessageType() == MessageType.SYSTEM || message.getMessageType() == MessageType.POLL) {
+            throw new BadRequestException("Cannot edit this message type");
         }
 
         message.setContent(request.getContent());
@@ -585,8 +877,8 @@ public class MessageService {
         if (!message.getSender().getId().equals(currentUser.getId())) {
             throw new BadRequestException("You can only recall your own messages");
         }
-        if (message.getMessageType() == MessageType.SYSTEM) {
-            throw new BadRequestException("Cannot recall a system message");
+        if (message.getMessageType() == MessageType.SYSTEM || message.getMessageType() == MessageType.POLL) {
+            throw new BadRequestException("Cannot recall this message type");
         }
 
         message.setRecalled(true);
@@ -633,8 +925,8 @@ public class MessageService {
         if (message.isRecalled()) {
             throw new BadRequestException("Cannot pin a recalled message");
         }
-        if (message.getMessageType() == MessageType.SYSTEM) {
-            throw new BadRequestException("Cannot pin a system message");
+        if (message.getMessageType() == MessageType.SYSTEM || message.getMessageType() == MessageType.POLL) {
+            throw new BadRequestException("Cannot pin this message type");
         }
 
         message.setPinned(pin);
@@ -680,8 +972,8 @@ public class MessageService {
         if (message.isRecalled()) {
             throw new BadRequestException("Cannot react to a recalled message");
         }
-        if (message.getMessageType() == MessageType.SYSTEM) {
-            throw new BadRequestException("Cannot react to a system message");
+        if (message.getMessageType() == MessageType.SYSTEM || message.getMessageType() == MessageType.POLL) {
+            throw new BadRequestException("Cannot react to this message type");
         }
 
         if (message.getReactions() == null) {
@@ -725,8 +1017,8 @@ public class MessageService {
         if (sourceMessage.isRecalled()) {
             throw new BadRequestException("Cannot share a recalled message");
         }
-        if (sourceMessage.getMessageType() == MessageType.SYSTEM) {
-            throw new BadRequestException("Cannot share a system message");
+        if (sourceMessage.getMessageType() == MessageType.SYSTEM || sourceMessage.getMessageType() == MessageType.POLL) {
+            throw new BadRequestException("Cannot share this message type");
         }
         if (sourceMessage.getDeletedByUsers() != null && sourceMessage.getDeletedByUsers().contains(currentUser.getId())) {
             throw new BadRequestException("Cannot share a message that was deleted for you");
