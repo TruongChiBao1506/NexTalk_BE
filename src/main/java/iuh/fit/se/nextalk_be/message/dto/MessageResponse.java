@@ -4,6 +4,7 @@ import lombok.*;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Getter
 @Setter
@@ -32,4 +33,5 @@ public class MessageResponse {
     private boolean isPinned;
     private LocalDateTime pinnedAt;
     private List<iuh.fit.se.nextalk_be.message.MessageReaction> reactions;
+    private Map<String, Object> metadata;
 }

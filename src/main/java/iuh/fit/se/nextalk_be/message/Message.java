@@ -11,6 +11,7 @@ import org.springframework.data.mongodb.core.mapping.DocumentReference;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Getter
 @Setter
@@ -55,6 +56,9 @@ public class Message extends BaseEntity {
 
     @Builder.Default
     private List<MessageReaction> reactions = new ArrayList<>();
+
+    @Builder.Default
+    private Map<String, Object> metadata = Map.of();
 
     @Builder.Default
     private List<String> deletedByUsers = new ArrayList<>();

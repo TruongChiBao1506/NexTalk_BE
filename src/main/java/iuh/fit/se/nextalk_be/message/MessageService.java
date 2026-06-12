@@ -118,6 +118,9 @@ public class MessageService {
             if (!parent.getConversation().getId().equals(conversation.getId())) {
                 throw new BadRequestException("Parent message must be in the same conversation");
             }
+            if (parent.getMessageType() == MessageType.SYSTEM) {
+                throw new BadRequestException("Cannot reply to a system message");
+            }
         }
 
         Message message = Message.builder()
@@ -381,6 +384,7 @@ public class MessageService {
                 .isPinned(message.isPinned())
                 .pinnedAt(message.getPinnedAt())
                 .reactions(message.getReactions() != null ? message.getReactions() : new ArrayList<>())
+                .metadata(message.getMetadata() != null ? message.getMetadata() : Map.of())
                 .build();
     }
 
@@ -424,6 +428,7 @@ public class MessageService {
                 .isPinned(message.isPinned())
                 .pinnedAt(message.getPinnedAt())
                 .reactions(message.getReactions() != null ? message.getReactions() : new ArrayList<>())
+                .metadata(message.getMetadata() != null ? message.getMetadata() : Map.of())
                 .build();
     }
 
@@ -497,6 +502,26 @@ public class MessageService {
         broadcastMessageUpdate(conversation, mapToMessageResponse(savedSystemMessage));
     }
 
+    public void createAndBroadcastCallHistoryMessage(
+            Conversation conversation,
+            User actor,
+            String content,
+            Map<String, Object> metadata
+    ) {
+        Message systemMessage = Message.builder()
+                .conversation(conversation)
+                .sender(actor)
+                .content(content)
+                .messageType(MessageType.SYSTEM)
+                .metadata(metadata != null ? metadata : Map.of())
+                .build();
+
+        Message savedSystemMessage = messageRepository.save(systemMessage);
+        conversation.setUpdatedAt(LocalDateTime.now());
+        conversationRepository.save(conversation);
+        broadcastMessageUpdate(conversation, mapToMessageResponse(savedSystemMessage));
+    }
+
     private String buildPinSystemContent(Message message, boolean pin) {
         if (!pin) {
             return "đã bỏ ghim tin nhắn.";
@@ -537,6 +562,9 @@ public class MessageService {
         if (message.isRecalled()) {
             throw new BadRequestException("Cannot edit a recalled message");
         }
+        if (message.getMessageType() == MessageType.SYSTEM) {
+            throw new BadRequestException("Cannot edit a system message");
+        }
 
         message.setContent(request.getContent());
         message.setEdited(true);
@@ -556,6 +584,9 @@ public class MessageService {
 
         if (!message.getSender().getId().equals(currentUser.getId())) {
             throw new BadRequestException("You can only recall your own messages");
+        }
+        if (message.getMessageType() == MessageType.SYSTEM) {
+            throw new BadRequestException("Cannot recall a system message");
         }
 
         message.setRecalled(true);
@@ -602,6 +633,9 @@ public class MessageService {
         if (message.isRecalled()) {
             throw new BadRequestException("Cannot pin a recalled message");
         }
+        if (message.getMessageType() == MessageType.SYSTEM) {
+            throw new BadRequestException("Cannot pin a system message");
+        }
 
         message.setPinned(pin);
         message.setPinnedAt(pin ? LocalDateTime.now() : null);
@@ -646,6 +680,9 @@ public class MessageService {
         if (message.isRecalled()) {
             throw new BadRequestException("Cannot react to a recalled message");
         }
+        if (message.getMessageType() == MessageType.SYSTEM) {
+            throw new BadRequestException("Cannot react to a system message");
+        }
 
         if (message.getReactions() == null) {
             message.setReactions(new ArrayList<>());
@@ -687,6 +724,9 @@ public class MessageService {
         }
         if (sourceMessage.isRecalled()) {
             throw new BadRequestException("Cannot share a recalled message");
+        }
+        if (sourceMessage.getMessageType() == MessageType.SYSTEM) {
+            throw new BadRequestException("Cannot share a system message");
         }
         if (sourceMessage.getDeletedByUsers() != null && sourceMessage.getDeletedByUsers().contains(currentUser.getId())) {
             throw new BadRequestException("Cannot share a message that was deleted for you");
