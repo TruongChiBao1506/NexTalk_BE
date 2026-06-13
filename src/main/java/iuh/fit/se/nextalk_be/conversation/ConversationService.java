@@ -13,6 +13,7 @@ import iuh.fit.se.nextalk_be.user.UserRepository;
 import iuh.fit.se.nextalk_be.user.UserService;
 import iuh.fit.se.nextalk_be.user.dto.UserProfileResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +30,7 @@ public class ConversationService {
     private final FriendshipRepository friendshipRepository;
     private final ChatRequestRepository chatRequestRepository;
     private final UserBlockRepository userBlockRepository;
+    private final PasswordEncoder passwordEncoder;
 
     @Transactional
     public ConversationResponse getOrCreatePrivateConversation(String friendId) {
@@ -81,6 +83,8 @@ public class ConversationService {
         return deduplicated.stream()
                 .filter(conversation -> conversation.getDeletedByUsers() == null
                         || !conversation.getDeletedByUsers().contains(currentUser.getId()))
+                .filter(conversation -> conversation.getHiddenByUsers() == null
+                        || !conversation.getHiddenByUsers().contains(currentUser.getId()))
                 .map(this::mapToConversationResponse)
                 .collect(Collectors.toList());
     }
@@ -159,6 +163,7 @@ public class ConversationService {
                 .blockedByMe(blockedByMe)
                 .blockedMe(blockedMe)
                 .pinned(conversation.getPinnedByUsers() != null && conversation.getPinnedByUsers().contains(currentUser.getId()))
+                .hidden(conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(currentUser.getId()))
                 .selfDestructSeconds(conversation.getSelfDestructSeconds())
                 .members(memberResponses)
                 .createdAt(conversation.getCreatedAt())
@@ -271,26 +276,65 @@ public class ConversationService {
     // @Transactional(readOnly = true)
     public List<ConversationResponse> searchConversations(String query) {
         User currentUser = userService.getCurrentAuthenticatedUser();
-        String trimmedQuery = query.trim().toLowerCase();
+        String trimmedQuery = query.trim();
         if (trimmedQuery.isEmpty()) {
             return java.util.Collections.emptyList();
+        }
+
+        // Check if query is a PIN match
+        boolean isPinMatch = false;
+        if (currentUser.getChatPin() != null && trimmedQuery.length() == 4) {
+            if (trimmedQuery.matches("\\d{4}") && passwordEncoder.matches(trimmedQuery, currentUser.getChatPin())) {
+                isPinMatch = true;
+            }
         }
 
         List<Conversation> conversations = conversationRepository.findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId());
         List<Conversation> deduplicated = deduplicateConversations(conversations, currentUser.getId());
 
-        return deduplicated.stream()
-                .filter(c -> c.getDeletedByUsers() == null || !c.getDeletedByUsers().contains(currentUser.getId()))
-                .filter(c -> {
-                    if (c.getType() == ConversationType.GROUP) {
-                        return c.getName() != null && c.getName().toLowerCase().contains(trimmedQuery);
-                    } else {
-                        return c.getMembers().stream()
-                                .filter(m -> !m.getId().equals(currentUser.getId()))
-                                .anyMatch(m -> m.getUsername().toLowerCase().contains(trimmedQuery));
-                    }
-                })
-                .map(this::mapToConversationResponse)
-                .collect(Collectors.toList());
+        if (isPinMatch) {
+            // Return only hidden conversations
+            return deduplicated.stream()
+                    .filter(c -> c.getDeletedByUsers() == null || !c.getDeletedByUsers().contains(currentUser.getId()))
+                    .filter(c -> c.getHiddenByUsers() != null && c.getHiddenByUsers().contains(currentUser.getId()))
+                    .map(this::mapToConversationResponse)
+                    .collect(Collectors.toList());
+        } else {
+            // Regular search - exclude hidden conversations
+            return deduplicated.stream()
+                    .filter(c -> c.getDeletedByUsers() == null || !c.getDeletedByUsers().contains(currentUser.getId()))
+                    .filter(c -> c.getHiddenByUsers() == null || !c.getHiddenByUsers().contains(currentUser.getId()))
+                    .filter(c -> {
+                        if (c.getType() == ConversationType.GROUP) {
+                            return c.getName() != null && c.getName().toLowerCase().contains(trimmedQuery.toLowerCase());
+                        } else {
+                            return c.getMembers().stream()
+                                    .filter(m -> !m.getId().equals(currentUser.getId()))
+                                    .anyMatch(m -> m.getUsername().toLowerCase().contains(trimmedQuery.toLowerCase()));
+                        }
+                    })
+                    .map(this::mapToConversationResponse)
+                    .collect(Collectors.toList());
+        }
+    }
+
+    public ConversationResponse updateHidden(String id, boolean hidden) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Conversation conversation = getConversationForMember(id, currentUser);
+
+        if (conversation.getHiddenByUsers() == null) {
+            conversation.setHiddenByUsers(new HashSet<>());
+        }
+
+        if (hidden) {
+            if (currentUser.getChatPin() == null || currentUser.getChatPin().isEmpty()) {
+                throw new BadRequestException("Please set up a chat PIN code first.");
+            }
+            conversation.getHiddenByUsers().add(currentUser.getId());
+        } else {
+            conversation.getHiddenByUsers().remove(currentUser.getId());
+        }
+
+        return mapToConversationResponse(conversationRepository.save(conversation));
     }
 }

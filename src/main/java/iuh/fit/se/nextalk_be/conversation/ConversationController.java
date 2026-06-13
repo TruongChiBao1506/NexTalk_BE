@@ -82,6 +82,16 @@ public class ConversationController {
         return ResponseEntity.ok(ApiResponse.success(response, "Conversations retrieved successfully"));
     }
 
+    @PutMapping("/{id}/hidden")
+    @Operation(summary = "Hide/unhide a conversation for the current user")
+    public ResponseEntity<ApiResponse<ConversationResponse>> updateHidden(
+            @PathVariable("id") String id,
+            @RequestParam("hidden") boolean hidden
+    ) {
+        ConversationResponse response = conversationService.updateHidden(id, hidden);
+        return ResponseEntity.ok(ApiResponse.success(response, hidden ? "Conversation hidden successfully" : "Conversation unhidden successfully"));
+    }
+
     @PostMapping("/{id}/summary")
     @Operation(summary = "Summarize the latest messages of a conversation via n8n webhook")
     public ResponseEntity<ApiResponse<ConversationSummaryResponse>> summarizeConversation(@PathVariable("id") String id) {

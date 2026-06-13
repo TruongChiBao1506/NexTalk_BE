@@ -27,6 +27,7 @@ public class AuthService {
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final EmailVerificationRepository emailVerificationRepository;
+    private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final MailService mailService;
@@ -67,7 +68,7 @@ public class AuthService {
         emailVerificationRepository.save(verification);
 
         // Send email
-        String verificationLink = "http://localhost:" + serverPort + "/api/auth/verify-email?token=" + token;
+        String verificationLink = "http://localhost:3000/verify-email?token=" + token;
         mailService.sendVerificationEmail(savedUser.getEmail(), verificationLink);
 
         return RegisterResponse.builder()
@@ -166,6 +167,45 @@ public class AuthService {
                 .accessToken(newAccessToken)
                 .refreshToken(newRefreshToken)
                 .build();
+    }
+
+    public void forgotPassword(ForgotPasswordRequest request) {
+        User user = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + request.getEmail()));
+
+        String token = UUID.randomUUID().toString();
+        PasswordResetToken resetToken = PasswordResetToken.builder()
+                .user(user)
+                .token(token)
+                .expiresAt(LocalDateTime.now().plusMinutes(15))
+                .used(false)
+                .build();
+
+        passwordResetTokenRepository.save(resetToken);
+
+        String resetLink = "http://localhost:3000/reset-password?token=" + token;
+        mailService.sendPasswordResetEmail(user.getEmail(), resetLink);
+    }
+
+    // @Transactional
+    public void resetPassword(ResetPasswordRequest request) {
+        PasswordResetToken resetToken = passwordResetTokenRepository.findByToken(request.getToken())
+                .orElseThrow(() -> new ResourceNotFoundException("Invalid or expired reset token"));
+
+        if (resetToken.isUsed()) {
+            throw new BadRequestException("Token has already been used");
+        }
+
+        if (resetToken.getExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new BadRequestException("Reset token has expired");
+        }
+
+        User user = resetToken.getUser();
+        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        userRepository.save(user);
+
+        resetToken.setUsed(true);
+        passwordResetTokenRepository.save(resetToken);
     }
 
     // @Transactional

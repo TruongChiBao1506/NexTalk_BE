@@ -36,4 +36,7 @@ public class Conversation extends BaseEntity {
 
     @Builder.Default
     private Set<String> deletedByUsers = new HashSet<>();
+
+    @Builder.Default
+    private Set<String> hiddenByUsers = new HashSet<>();
 }

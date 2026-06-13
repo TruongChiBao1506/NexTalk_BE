@@ -197,8 +197,13 @@ public class MessageService {
                     contentPreview = savedMessage.getContent();
                 }
 
-                String notificationContent = "Bạn có tin nhắn mới từ " + currentUser.getUsername() + ": " + 
-                        (contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
+                String notificationContent;
+                if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
+                    notificationContent = "Bạn có tin nhắn mới";
+                } else {
+                    notificationContent = "Bạn có tin nhắn mới từ " + currentUser.getUsername() + ": " + 
+                            (contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
+                }
 
                 notificationService.createAndSend(
                         member,

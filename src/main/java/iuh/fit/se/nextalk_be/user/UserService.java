@@ -3,6 +3,7 @@ package iuh.fit.se.nextalk_be.user;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
+import iuh.fit.se.nextalk_be.user.dto.ChangePasswordRequest;
 import iuh.fit.se.nextalk_be.user.dto.UpdateProfileRequest;
 import iuh.fit.se.nextalk_be.user.dto.UserProfileResponse;
 import lombok.RequiredArgsConstructor;
@@ -14,8 +15,16 @@ import org.springframework.transaction.annotation.Transactional;
 import iuh.fit.se.nextalk_be.presence.PresenceService;
 import iuh.fit.se.nextalk_be.presence.dto.PresenceUpdateResponse;
 import org.springframework.messaging.simp.SimpMessageSendingOperations;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import iuh.fit.se.nextalk_be.conversation.ConversationRepository;
+import iuh.fit.se.nextalk_be.conversation.Conversation;
+import iuh.fit.se.nextalk_be.message.MessageRepository;
+import iuh.fit.se.nextalk_be.message.Message;
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.HashSet;
 
 @Service
 @RequiredArgsConstructor
@@ -24,6 +33,9 @@ public class UserService {
     private final UserRepository userRepository;
     private final PresenceService presenceService;
     private final SimpMessageSendingOperations messagingTemplate;
+    private final PasswordEncoder passwordEncoder;
+    private final ConversationRepository conversationRepository;
+    private final MessageRepository messageRepository;
 
     public User getCurrentAuthenticatedUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -119,6 +131,73 @@ public class UserService {
         return mapToProfileResponse(user);
     }
 
+    public void changePassword(ChangePasswordRequest request) {
+        User user = getCurrentAuthenticatedUser();
+        if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPassword())) {
+            throw new BadRequestException("Mật khẩu hiện tại không chính xác");
+        }
+        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        userRepository.save(user);
+    }
+
+    public UserProfileResponse setupChatPin(String pin) {
+        if (pin == null || !pin.matches("\\d{4}")) {
+            throw new BadRequestException("PIN must be exactly 4 digits");
+        }
+        User user = getCurrentAuthenticatedUser();
+        if (user.getChatPin() != null && !user.getChatPin().isEmpty()) {
+            throw new BadRequestException("Chat PIN is already set. Reset it first if forgotten.");
+        }
+        user.setChatPin(passwordEncoder.encode(pin));
+        return mapToProfileResponse(userRepository.save(user));
+    }
+
+    public UserProfileResponse resetChatPin(String pin) {
+        User user = getCurrentAuthenticatedUser();
+
+        // 1. Find all conversations hidden by this user
+        List<Conversation> hiddenConversations = conversationRepository.findAllByHiddenByUsersContaining(user.getId());
+
+        if (pin != null && !pin.isEmpty()) {
+            // "Nhớ mã cũ" flow: Validate PIN
+            if (user.getChatPin() == null || !passwordEncoder.matches(pin, user.getChatPin())) {
+                throw new BadRequestException("Mã PIN không chính xác");
+            }
+            
+            // Unhide conversations without deleting messages
+            for (Conversation conv : hiddenConversations) {
+                if (conv.getHiddenByUsers() != null) {
+                    conv.getHiddenByUsers().remove(user.getId());
+                }
+                conversationRepository.save(conv);
+            }
+        } else {
+            // "Quên mã cũ" flow: Delete messages and unhide
+            for (Conversation conv : hiddenConversations) {
+                List<Message> messages = messageRepository.findAllByConversationId(conv.getId());
+                for (Message msg : messages) {
+                    if (msg.getDeletedByUsers() == null) {
+                        msg.setDeletedByUsers(new ArrayList<>());
+                    }
+                    if (!msg.getDeletedByUsers().contains(user.getId())) {
+                        msg.getDeletedByUsers().add(user.getId());
+                    }
+                }
+                messageRepository.saveAll(messages);
+
+                // Remove from hidden list
+                if (conv.getHiddenByUsers() != null) {
+                    conv.getHiddenByUsers().remove(user.getId());
+                }
+                conversationRepository.save(conv);
+            }
+        }
+
+        // 3. Clear user PIN
+        user.setChatPin(null);
+        return mapToProfileResponse(userRepository.save(user));
+    }
+
     public UserProfileResponse mapToProfileResponse(User user) {
         return UserProfileResponse.builder()
                 .id(user.getId())
@@ -129,6 +208,7 @@ public class UserService {
                 .status(presenceService.getUserStatus(user.getId()))
                 .lastSeen(presenceService.getUserLastSeen(user.getId()))
                 .isVerified(user.isVerified())
+                .hasChatPin(user.getChatPin() != null && !user.getChatPin().isEmpty())
                 .createdAt(user.getCreatedAt())
                 .updatedAt(user.getUpdatedAt())
                 .build();

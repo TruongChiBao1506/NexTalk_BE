@@ -3,6 +3,8 @@ package iuh.fit.se.nextalk_be.user;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import iuh.fit.se.nextalk_be.common.ApiResponse;
+import iuh.fit.se.nextalk_be.user.dto.ChangePasswordRequest;
+import iuh.fit.se.nextalk_be.user.dto.ChatPinRequest;
 import iuh.fit.se.nextalk_be.user.dto.UpdateProfileRequest;
 import iuh.fit.se.nextalk_be.user.dto.UserProfileResponse;
 import jakarta.validation.Valid;
@@ -32,6 +34,13 @@ public class UserController {
         return ResponseEntity.ok(ApiResponse.success(response, "Profile updated successfully"));
     }
 
+    @PostMapping("/change-password")
+    @Operation(summary = "Change password for the currently logged-in user")
+    public ResponseEntity<ApiResponse<Void>> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
+        userService.changePassword(request);
+        return ResponseEntity.ok(ApiResponse.success(null, "Password changed successfully"));
+    }
+
     @GetMapping("/search")
     @Operation(summary = "Search users by email or username (partial match)")
     public ResponseEntity<ApiResponse<java.util.List<UserProfileResponse>>> searchUsers(@RequestParam("query") String query) {
@@ -51,5 +60,20 @@ public class UserController {
     public ResponseEntity<ApiResponse<UserProfileResponse>> updateStatus(@RequestParam("status") String status) {
         UserProfileResponse response = userService.updatePresenceStatus(status);
         return ResponseEntity.ok(ApiResponse.success(response, "Status updated successfully"));
+    }
+
+    @PostMapping("/chat-pin/setup")
+    @Operation(summary = "Set up a new chat PIN code")
+    public ResponseEntity<ApiResponse<UserProfileResponse>> setupChatPin(@Valid @RequestBody ChatPinRequest request) {
+        UserProfileResponse response = userService.setupChatPin(request.getPin());
+        return ResponseEntity.ok(ApiResponse.success(response, "Chat PIN set up successfully"));
+    }
+
+    @PostMapping("/chat-pin/reset")
+    @Operation(summary = "Reset chat PIN and clear all hidden conversations history")
+    public ResponseEntity<ApiResponse<UserProfileResponse>> resetChatPin(@RequestBody(required = false) ChatPinRequest request) {
+        String pin = request != null ? request.getPin() : null;
+        UserProfileResponse response = userService.resetChatPin(pin);
+        return ResponseEntity.ok(ApiResponse.success(response, "Chat PIN reset successfully"));
     }
 }

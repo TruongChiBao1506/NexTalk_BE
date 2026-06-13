@@ -19,6 +19,7 @@ public class UserProfileResponse {
     private LocalDateTime lastSeen;
     @com.fasterxml.jackson.annotation.JsonProperty("isVerified")
     private boolean isVerified;
+    private boolean hasChatPin;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

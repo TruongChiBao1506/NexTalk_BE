@@ -15,6 +15,32 @@ public class MailService {
 
     private final JavaMailSender mailSender;
 
+    public void sendPasswordResetEmail(String toEmail, String resetLink) {
+        String subject = "NexTalk - Reset Your Password";
+        String htmlContent = "<h3>Reset Password Request</h3>"
+                + "<p>You requested to reset your password. Please click the link below to set a new password:</p>"
+                + "<p><a href=\"" + resetLink + "\" style=\"display: inline-block; padding: 10px 20px; color: white; background-color: #007bff; text-decoration: none; border-radius: 5px;\">Reset Password</a></p>"
+                + "<p>If you didn't request this, please ignore this email.</p>"
+                + "<p>This link will expire in 15 minutes.</p>";
+
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setTo(toEmail);
+            helper.setSubject(subject);
+            helper.setText(htmlContent, true);
+            mailSender.send(message);
+            log.info("Password reset email sent successfully to {}", toEmail);
+        } catch (Exception e) {
+            log.error("Failed to send password reset email to {}. Fallback: logging the reset link: {}",
+                    toEmail, resetLink, e);
+            System.out.println("=================================================");
+            System.out.println("PASSWORD RESET LINK FOR " + toEmail + ":");
+            System.out.println(resetLink);
+            System.out.println("=================================================");
+        }
+    }
+
     public void sendVerificationEmail(String toEmail, String verificationLink) {
         String subject = "NexTalk - Verify Your Email Account";
         String htmlContent = "<h3>Welcome to NexTalk!</h3>"

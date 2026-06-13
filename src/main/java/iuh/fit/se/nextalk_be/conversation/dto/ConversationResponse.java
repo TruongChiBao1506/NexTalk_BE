@@ -19,6 +19,7 @@ public class ConversationResponse {
     private boolean blockedByMe;
     private boolean blockedMe;
     private boolean pinned;
+    private boolean hidden;
     private int selfDestructSeconds;
     private Set<UserProfileResponse> members;
     private LocalDateTime createdAt;

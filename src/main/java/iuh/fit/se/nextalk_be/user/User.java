@@ -33,6 +33,8 @@ public class User extends BaseEntity implements UserDetails {
 
     private String status; // ONLINE, OFFLINE, AWAY
 
+    private String chatPin;
+
     @Builder.Default
     private boolean isVerified = false;
 

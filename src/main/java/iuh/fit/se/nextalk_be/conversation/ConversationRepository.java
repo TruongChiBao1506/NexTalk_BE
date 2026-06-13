@@ -15,4 +15,6 @@ public interface ConversationRepository extends MongoRepository<Conversation, St
     Optional<Conversation> findPrivateConversationBetweenUsers(ObjectId user1Id, ObjectId user2Id);
 
     List<Conversation> findAllByMembersIdOrderByUpdatedAtDesc(String userId);
+
+    List<Conversation> findAllByHiddenByUsersContaining(String userId);
 }
