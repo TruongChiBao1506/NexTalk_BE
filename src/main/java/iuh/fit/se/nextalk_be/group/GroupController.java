@@ -60,6 +60,16 @@ public class GroupController {
         return ResponseEntity.ok(ApiResponse.success(null, "Member removed successfully"));
     }
 
+    @PutMapping("/{id}/members/{userId}/role")
+    @Operation(summary = "Update member role (owner or leader only)")
+    public ResponseEntity<ApiResponse<GroupResponse>> updateMemberRole(
+            @PathVariable("id") String id,
+            @PathVariable("userId") String userId,
+            @Valid @RequestBody UpdateMemberRoleRequest request) {
+        GroupResponse response = groupService.updateMemberRole(id, userId, request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Member role updated successfully"));
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "Get group details")
     public ResponseEntity<ApiResponse<GroupResponse>> getGroup(@PathVariable("id") String id) {

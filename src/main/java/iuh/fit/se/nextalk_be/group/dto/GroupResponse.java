@@ -13,6 +13,7 @@ import java.util.List;
 public class GroupResponse {
     private String id;
     private String name;
+    private String avatarUrl;
     private String ownerId;
     private String ownerUsername;
     private String conversationId;

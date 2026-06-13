@@ -17,6 +17,8 @@ public class Group extends BaseEntity {
 
     private String name;
 
+    private String avatarUrl;
+
     @DocumentReference
     private User owner;
 

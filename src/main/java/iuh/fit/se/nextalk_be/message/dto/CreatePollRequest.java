@@ -4,7 +4,6 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import lombok.*;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Getter
@@ -25,5 +24,5 @@ public class CreatePollRequest {
     private boolean allowMultiple;
     private boolean allowAddOptions;
     private boolean anonymous;
-    private LocalDateTime expiresAt;
+    private String expiresAt;
 }

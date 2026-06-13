@@ -111,8 +111,7 @@ public class GroupService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Group group = getGroupOrThrow(groupId);
 
-        // Only owner or admin can update
-        assertOwnerOrAdmin(group, currentUser);
+        assertCanManageGroupSettings(group, currentUser);
 
         if (request.getName() != null && !request.getName().trim().isEmpty()) {
             group.setName(request.getName().trim());
@@ -121,8 +120,18 @@ public class GroupService {
                 conversationRepository.save(group.getConversation());
             }
         }
+        boolean avatarChanged = false;
+        if (request.getAvatarUrl() != null) {
+            String avatarUrl = request.getAvatarUrl().trim();
+            String nextAvatarUrl = avatarUrl.isEmpty() ? null : avatarUrl;
+            avatarChanged = !Objects.equals(group.getAvatarUrl(), nextAvatarUrl);
+            group.setAvatarUrl(avatarUrl.isEmpty() ? null : avatarUrl);
+        }
 
         Group saved = groupRepository.save(group);
+        if (avatarChanged && saved.getConversation() != null) {
+            createAndBroadcastSystemMessage(saved.getConversation(), currentUser, "đã cập nhật ảnh đại diện nhóm.");
+        }
         List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
         return mapToGroupResponse(saved, members);
     }
@@ -132,8 +141,8 @@ public class GroupService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Group group = getGroupOrThrow(groupId);
 
-        if (!group.getOwner().getId().equals(currentUser.getId())) {
-            throw new UnauthorizedException("Only the group owner can delete this group");
+        if (!getRole(group, currentUser).map(this::isLeaderRole).orElse(false)) {
+            throw new UnauthorizedException("Only the group leader can delete this group");
         }
 
         groupMemberRepository.deleteAll(groupMemberRepository.findAllByGroupId(groupId));
@@ -148,7 +157,7 @@ public class GroupService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Group group = getGroupOrThrow(groupId);
 
-        assertOwnerOrAdmin(group, currentUser);
+        assertCanApproveMembers(group, currentUser);
 
         if (groupMemberRepository.existsByGroupIdAndUserId(groupId, request.getUserId())) {
             throw new BadRequestException("User is already a member of this group");
@@ -199,7 +208,14 @@ public class GroupService {
 
         boolean isSelf = currentUser.getId().equals(userId);
         if (!isSelf) {
-            assertOwnerOrAdmin(group, currentUser);
+            GroupRole actorRole = getRole(group, currentUser)
+                    .orElseThrow(() -> new UnauthorizedException("Only group members can perform this action"));
+            GroupRole targetRole = groupMemberRepository.findByGroupIdAndUserId(groupId, userId)
+                    .map(GroupMember::getRole)
+                    .orElseThrow(() -> new BadRequestException("User is not a member of this group"));
+            if (!canRemoveMember(actorRole, targetRole)) {
+                throw new UnauthorizedException("You cannot remove this member");
+            }
         }
 
         if (!groupMemberRepository.existsByGroupIdAndUserId(groupId, userId)) {
@@ -213,6 +229,50 @@ public class GroupService {
             group.getConversation().getMembers().removeIf(m -> m.getId().equals(userId));
             conversationRepository.save(group.getConversation());
         }
+    }
+
+    // @Transactional
+    public GroupResponse updateMemberRole(String groupId, String userId, UpdateMemberRoleRequest request) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Group group = getGroupOrThrow(groupId);
+        GroupRole newRole = request.getRole();
+
+        if (newRole == GroupRole.OWNER || newRole == GroupRole.LEADER || newRole == GroupRole.ADMIN) {
+            throw new BadRequestException("Cannot assign leader role from this action");
+        }
+        if (group.getOwner().getId().equals(userId)) {
+            throw new BadRequestException("Cannot change the group owner's role");
+        }
+
+        GroupRole actorRole = getRole(group, currentUser)
+                .orElseThrow(() -> new UnauthorizedException("Only group members can perform this action"));
+        if (!canManageRoles(actorRole)) {
+            throw new UnauthorizedException("Only the group leader can update member roles");
+        }
+
+        GroupMember targetMembership = groupMemberRepository.findByGroupIdAndUserId(groupId, userId)
+                .orElseThrow(() -> new BadRequestException("User is not a member of this group"));
+        GroupRole oldRole = targetMembership.getRole();
+        if (oldRole == newRole) {
+            List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
+            return mapToGroupResponse(group, members);
+        }
+        if (!canChangeRole(actorRole, oldRole, newRole)) {
+            throw new UnauthorizedException("You cannot update this member role");
+        }
+
+        targetMembership.setRole(newRole);
+        groupMemberRepository.save(targetMembership);
+        if (group.getConversation() != null) {
+            createAndBroadcastSystemMessage(
+                    group.getConversation(),
+                    currentUser,
+                    buildRoleChangeSystemContent(targetMembership.getUser().getUsername(), oldRole, newRole)
+            );
+        }
+
+        List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
+        return mapToGroupResponse(group, members);
     }
 
     // @Transactional(readOnly = true)
@@ -243,15 +303,72 @@ public class GroupService {
                 .orElseThrow(() -> new ResourceNotFoundException("Group not found: " + groupId));
     }
 
-    private void assertOwnerOrAdmin(Group group, User user) {
-        boolean isOwner = group.getOwner().getId().equals(user.getId());
-        if (!isOwner) {
-            Optional<GroupMember> membership = groupMemberRepository.findByGroupIdAndUserId(group.getId(), user.getId());
-            boolean isAdmin = membership.map(m -> m.getRole() == GroupRole.ADMIN || m.getRole() == GroupRole.OWNER).orElse(false);
-            if (!isAdmin) {
-                throw new UnauthorizedException("Only the group owner or admin can perform this action");
-            }
+    private void assertCanManageGroupSettings(Group group, User user) {
+        if (!getRole(group, user).map(this::isLeaderRole).orElse(false)) {
+            throw new UnauthorizedException("Only the group leader can perform this action");
         }
+    }
+
+    private void assertCanApproveMembers(Group group, User user) {
+        if (!getRole(group, user).map(this::canApproveMembers).orElse(false)) {
+            throw new UnauthorizedException("Only the group leader or deputy can perform this action");
+        }
+    }
+
+    private Optional<GroupRole> getRole(Group group, User user) {
+        if (group.getOwner().getId().equals(user.getId())) {
+            return Optional.of(GroupRole.OWNER);
+        }
+        return groupMemberRepository.findByGroupIdAndUserId(group.getId(), user.getId())
+                .map(GroupMember::getRole);
+    }
+
+    private boolean isLeaderRole(GroupRole role) {
+        return role == GroupRole.OWNER || role == GroupRole.LEADER || role == GroupRole.ADMIN;
+    }
+
+    private boolean canApproveMembers(GroupRole role) {
+        return isLeaderRole(role) || role == GroupRole.DEPUTY;
+    }
+
+    private boolean canManageRoles(GroupRole role) {
+        return isLeaderRole(role);
+    }
+
+    private boolean canChangeRole(GroupRole actorRole, GroupRole targetRole, GroupRole newRole) {
+        if (isLeaderRole(actorRole)) {
+            return !isLeaderRole(targetRole)
+                    && (newRole == GroupRole.DEPUTY || newRole == GroupRole.MEMBER);
+        }
+        return false;
+    }
+
+    private boolean canRemoveMember(GroupRole actorRole, GroupRole targetRole) {
+        if (isLeaderRole(actorRole)) {
+            return !isLeaderRole(targetRole);
+        }
+        if (actorRole == GroupRole.DEPUTY) {
+            return targetRole == GroupRole.MEMBER;
+        }
+        return false;
+    }
+
+    private String buildRoleChangeSystemContent(String username, GroupRole oldRole, GroupRole newRole) {
+        if (newRole == GroupRole.DEPUTY) {
+            return "đã bổ nhiệm " + username + " làm Phó nhóm.";
+        }
+        if (oldRole == GroupRole.DEPUTY && newRole == GroupRole.MEMBER) {
+            return "đã bãi nhiệm " + username + " khỏi vai trò Phó nhóm.";
+        }
+        return "đã cập nhật quyền của " + username + " thanh " + roleLabel(newRole) + ".";
+    }
+
+    private String roleLabel(GroupRole role) {
+        return switch (role) {
+            case OWNER, LEADER, ADMIN -> "Trưởng nhóm";
+            case DEPUTY -> "Phó nhóm";
+            case MEMBER -> "Thành viên";
+        };
     }
 
     private GroupResponse mapToGroupResponse(Group group, List<GroupMember> members) {
@@ -267,6 +384,7 @@ public class GroupService {
         return GroupResponse.builder()
                 .id(group.getId())
                 .name(group.getName())
+                .avatarUrl(group.getAvatarUrl())
                 .ownerId(group.getOwner().getId())
                 .ownerUsername(group.getOwner().getUsername())
                 .conversationId(group.getConversation() != null ? group.getConversation().getId() : null)

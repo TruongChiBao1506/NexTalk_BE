@@ -30,7 +30,8 @@ import org.springframework.data.domain.PageImpl;
 import java.util.stream.Collectors;
 import java.util.function.Function;
 
-import java.time.LocalDateTime;
+import java.time.*;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 
 @Service
@@ -375,6 +376,8 @@ public class MessageService {
     }
 
     private MessageResponse mapToMessageResponseWithStatuses(Message message, List<MessageStatus> statusRecords) {
+        lockExpiredPollIfNeeded(message);
+
         List<MessageStatusResponse> statusResponses = statusRecords.stream()
                 .map(status -> MessageStatusResponse.builder()
                         .userId(status.getUser().getId())
@@ -413,6 +416,8 @@ public class MessageService {
             List<MessageStatus> statusRecords,
             Map<String, String> usernameMap
     ) {
+        lockExpiredPollIfNeeded(message);
+
         List<MessageStatusResponse> statusResponses = statusRecords.stream()
                 .map(status -> {
                     String userId = status.getUser().getId();
@@ -552,6 +557,9 @@ public class MessageService {
             throw new BadRequestException("Polls can only be created in group conversations");
         }
         ensureConversationMember(conversation, currentUser);
+        if (!canModerateGroup(conversation, currentUser)) {
+            throw new BadRequestException("Only the group leader or deputy can create polls");
+        }
 
         List<String> optionTexts = request.getOptions().stream()
                 .filter(Objects::nonNull)
@@ -575,7 +583,7 @@ public class MessageService {
         metadata.put("allowAddOptions", request.isAllowAddOptions());
         metadata.put("anonymous", request.isAnonymous());
         metadata.put("locked", false);
-        metadata.put("expiresAt", request.getExpiresAt() != null ? request.getExpiresAt().toString() : null);
+        metadata.put("expiresAt", normalizePollExpiresAt(request.getExpiresAt()));
         metadata.put("creatorId", currentUser.getId());
         metadata.put("creatorName", currentUser.getUsername());
         metadata.put("options", options);
@@ -586,8 +594,6 @@ public class MessageService {
                 .content(request.getQuestion().trim())
                 .messageType(MessageType.POLL)
                 .metadata(metadata)
-                .isPinned(true)
-                .pinnedAt(LocalDateTime.now())
                 .build();
 
         Message savedPoll = messageRepository.save(poll);
@@ -603,7 +609,7 @@ public class MessageService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Message poll = getPollMessageForMember(messageId, currentUser);
         Map<String, Object> metadata = mutableMetadata(poll);
-        ensurePollOpen(metadata);
+        ensurePollOpen(poll, metadata);
 
         boolean allowMultiple = Boolean.TRUE.equals(metadata.get("allowMultiple"));
         List<Map<String, Object>> options = mutablePollOptions(metadata);
@@ -637,7 +643,7 @@ public class MessageService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Message poll = getPollMessageForMember(messageId, currentUser);
         Map<String, Object> metadata = mutableMetadata(poll);
-        ensurePollOpen(metadata);
+        ensurePollOpen(poll, metadata);
 
         if (!Boolean.TRUE.equals(metadata.get("allowAddOptions")) && !canManagePoll(poll, currentUser)) {
             throw new BadRequestException("This poll does not allow members to add options");
@@ -726,17 +732,76 @@ public class MessageService {
         }
     }
 
-    private void ensurePollOpen(Map<String, Object> metadata) {
+    private void ensurePollOpen(Message poll, Map<String, Object> metadata) {
         if (Boolean.TRUE.equals(metadata.get("locked"))) {
             throw new BadRequestException("Poll is locked");
         }
+        if (isPollExpired(metadata)) {
+            lockPollMetadata(poll, metadata);
+            broadcastMessageUpdate(poll.getConversation(), mapToMessageResponse(poll));
+            throw new BadRequestException("Poll has expired");
+        }
+    }
+
+    private boolean lockExpiredPollIfNeeded(Message poll) {
+        if (poll.getMessageType() != MessageType.POLL || poll.getMetadata() == null) {
+            return false;
+        }
+
+        Map<String, Object> metadata = mutableMetadata(poll);
+        if (Boolean.TRUE.equals(metadata.get("locked")) || !isPollExpired(metadata)) {
+            return false;
+        }
+
+        lockPollMetadata(poll, metadata);
+        return true;
+    }
+
+    private void lockPollMetadata(Message poll, Map<String, Object> metadata) {
+        metadata.put("locked", true);
+        metadata.put("lockedAt", Instant.now().toString());
+        poll.setMetadata(metadata);
+        messageRepository.save(poll);
+    }
+
+    private boolean isPollExpired(Map<String, Object> metadata) {
         Object expiresAtValue = metadata.get("expiresAt");
-        if (expiresAtValue instanceof String expiresAtString && !expiresAtString.isBlank()) {
-            LocalDateTime expiresAt = LocalDateTime.parse(expiresAtString);
-            if (LocalDateTime.now().isAfter(expiresAt)) {
-                metadata.put("locked", true);
-                throw new BadRequestException("Poll has expired");
-            }
+        if (!(expiresAtValue instanceof String expiresAtString) || expiresAtString.isBlank()) {
+            return false;
+        }
+
+        return parsePollExpiresAt(expiresAtString)
+                .map(expiresAt -> !Instant.now().isBefore(expiresAt))
+                .orElse(false);
+    }
+
+    private String normalizePollExpiresAt(String expiresAtString) {
+        if (expiresAtString == null || expiresAtString.isBlank()) {
+            return null;
+        }
+
+        return parsePollExpiresAt(expiresAtString.trim())
+                .map(Instant::toString)
+                .orElseThrow(() -> new BadRequestException("Invalid poll expiration time"));
+    }
+
+    private Optional<Instant> parsePollExpiresAt(String expiresAtString) {
+        try {
+            return Optional.of(Instant.parse(expiresAtString));
+        } catch (DateTimeParseException ignored) {
+            // Fall through for older values stored before poll expiry included a zone.
+        }
+
+        try {
+            return Optional.of(OffsetDateTime.parse(expiresAtString).toInstant());
+        } catch (DateTimeParseException ignored) {
+            // Fall through for legacy LocalDateTime metadata.
+        }
+
+        try {
+            return Optional.of(LocalDateTime.parse(expiresAtString).atZone(ZoneId.systemDefault()).toInstant());
+        } catch (DateTimeParseException ignored) {
+            return Optional.empty();
         }
     }
 
@@ -744,11 +809,41 @@ public class MessageService {
         if (poll.getSender() != null && poll.getSender().getId().equals(currentUser.getId())) {
             return true;
         }
-        Group group = groupRepository.findByConversationId(poll.getConversation().getId()).orElse(null);
-        if (group == null) return false;
-        return groupMemberRepository.findByGroupIdAndUserId(group.getId(), currentUser.getId())
-                .map(member -> member.getRole() == GroupRole.OWNER || member.getRole() == GroupRole.ADMIN)
+        return canModerateGroup(poll.getConversation(), currentUser);
+    }
+
+    private boolean canModerateGroup(Conversation conversation, User currentUser) {
+        if (conversation.getType() != ConversationType.GROUP) {
+            return true;
+        }
+        return getGroupRole(conversation, currentUser)
+                .map(role -> isLeaderRole(role) || role == GroupRole.DEPUTY)
                 .orElse(false);
+    }
+
+    private boolean canModerateMessage(Conversation conversation, User actor, User messageSender) {
+        if (conversation.getType() != ConversationType.GROUP) {
+            return false;
+        }
+        Optional<GroupRole> actorRole = getGroupRole(conversation, actor);
+        if (actorRole.isEmpty()) {
+            return false;
+        }
+        if (isLeaderRole(actorRole.get())) {
+            return true;
+        }
+        return actorRole.get() == GroupRole.DEPUTY;
+    }
+
+    private Optional<GroupRole> getGroupRole(Conversation conversation, User user) {
+        Group group = groupRepository.findByConversationId(conversation.getId()).orElse(null);
+        if (group == null) return Optional.empty();
+        return groupMemberRepository.findByGroupIdAndUserId(group.getId(), user.getId())
+                .map(member -> member.getRole());
+    }
+
+    private boolean isLeaderRole(GroupRole role) {
+        return role == GroupRole.OWNER || role == GroupRole.LEADER || role == GroupRole.ADMIN;
     }
 
     private Map<String, Object> mutableMetadata(Message message) {
@@ -885,7 +980,8 @@ public class MessageService {
         Message message = messageRepository.findById(messageId)
                 .orElseThrow(() -> new ResourceNotFoundException("Message not found with ID: " + messageId));
 
-        if (!message.getSender().getId().equals(currentUser.getId())) {
+        if (!message.getSender().getId().equals(currentUser.getId())
+                && !canModerateMessage(message.getConversation(), currentUser, message.getSender())) {
             throw new BadRequestException("You can only recall your own messages");
         }
         if (message.getMessageType() == MessageType.SYSTEM || message.getMessageType() == MessageType.POLL) {
@@ -936,8 +1032,11 @@ public class MessageService {
         if (message.isRecalled()) {
             throw new BadRequestException("Cannot pin a recalled message");
         }
-        if (message.getMessageType() == MessageType.SYSTEM || message.getMessageType() == MessageType.POLL) {
+        if (message.getMessageType() == MessageType.SYSTEM) {
             throw new BadRequestException("Cannot pin this message type");
+        }
+        if (!canModerateGroup(message.getConversation(), currentUser)) {
+            throw new BadRequestException("Only the group leader or deputy can pin messages");
         }
 
         message.setPinned(pin);

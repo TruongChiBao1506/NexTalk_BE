@@ -4,6 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import iuh.fit.se.nextalk_be.conversation.Conversation;
 import iuh.fit.se.nextalk_be.conversation.ConversationRepository;
 import iuh.fit.se.nextalk_be.conversation.ConversationType;
+import iuh.fit.se.nextalk_be.group.Group;
+import iuh.fit.se.nextalk_be.group.GroupMember;
+import iuh.fit.se.nextalk_be.group.GroupMemberRepository;
+import iuh.fit.se.nextalk_be.group.GroupRepository;
+import iuh.fit.se.nextalk_be.group.GroupRole;
+import iuh.fit.se.nextalk_be.message.dto.CreatePollRequest;
 import iuh.fit.se.nextalk_be.message.dto.EditMessageRequest;
 import iuh.fit.se.nextalk_be.message.dto.MessageRequest;
 import iuh.fit.se.nextalk_be.message.dto.ReactMessageRequest;
@@ -21,6 +27,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Set;
+import java.util.List;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.*;
@@ -46,6 +53,12 @@ public class AdvancedFeaturesTest {
     @Autowired
     private MessageRepository messageRepository;
 
+    @Autowired
+    private GroupRepository groupRepository;
+
+    @Autowired
+    private GroupMemberRepository groupMemberRepository;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private User senderUser;
@@ -56,6 +69,8 @@ public class AdvancedFeaturesTest {
     @BeforeEach
     void setUp() {
         messageRepository.deleteAll();
+        groupMemberRepository.deleteAll();
+        groupRepository.deleteAll();
         conversationRepository.deleteAll();
         userRepository.deleteAll();
 
@@ -170,6 +185,58 @@ public class AdvancedFeaturesTest {
 
         // Unpin message
         mockMvc.perform(delete("/api/messages/" + baseMessage.getId() + "/pin")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isPinned", is(false)));
+    }
+
+    @Test
+    @WithMockUser(username = "sender@gmail.com")
+    void createPoll_IsNotPinnedByDefault_AndCanBePinnedManually() throws Exception {
+        Conversation groupConversation = conversationRepository.save(Conversation.builder()
+                .type(ConversationType.GROUP)
+                .members(Set.of(senderUser, receiverUser))
+                .build());
+        Group group = groupRepository.save(Group.builder()
+                .name("Poll Group")
+                .owner(senderUser)
+                .conversation(groupConversation)
+                .build());
+        groupMemberRepository.save(GroupMember.builder()
+                .group(group)
+                .user(senderUser)
+                .role(GroupRole.LEADER)
+                .build());
+        groupMemberRepository.save(GroupMember.builder()
+                .group(group)
+                .user(receiverUser)
+                .role(GroupRole.MEMBER)
+                .build());
+
+        CreatePollRequest request = CreatePollRequest.builder()
+                .conversationId(groupConversation.getId())
+                .question("Where should we go?")
+                .options(List.of("Cafe", "Park"))
+                .build();
+
+        String responseBody = mockMvc.perform(post("/api/messages/polls")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.messageType", is("POLL")))
+                .andExpect(jsonPath("$.data.isPinned", is(false)))
+                .andExpect(jsonPath("$.data.pinnedAt", nullValue()))
+                .andReturn().getResponse().getContentAsString();
+
+        String pollId = objectMapper.readTree(responseBody).at("/data/id").asText();
+
+        mockMvc.perform(post("/api/messages/" + pollId + "/pin")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isPinned", is(true)));
+
+        mockMvc.perform(delete("/api/messages/" + pollId + "/pin")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.isPinned", is(false)));
