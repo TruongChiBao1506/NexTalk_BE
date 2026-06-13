@@ -54,6 +54,8 @@ public class Message extends BaseEntity {
 
     private LocalDateTime pinnedAt;
 
+    private LocalDateTime expiresAt;
+
     @Builder.Default
     private List<MessageReaction> reactions = new ArrayList<>();
 

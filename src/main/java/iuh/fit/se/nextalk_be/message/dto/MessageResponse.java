@@ -32,6 +32,7 @@ public class MessageResponse {
     @com.fasterxml.jackson.annotation.JsonProperty("isPinned")
     private boolean isPinned;
     private LocalDateTime pinnedAt;
+    private LocalDateTime expiresAt;
     private List<iuh.fit.se.nextalk_be.message.MessageReaction> reactions;
     private Map<String, Object> metadata;
 }

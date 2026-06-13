@@ -18,6 +18,8 @@ public class ConversationResponse {
     private boolean canSendMessages;
     private boolean blockedByMe;
     private boolean blockedMe;
+    private boolean pinned;
+    private int selfDestructSeconds;
     private Set<UserProfileResponse> members;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

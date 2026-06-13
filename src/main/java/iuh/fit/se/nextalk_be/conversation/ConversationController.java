@@ -4,8 +4,10 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import iuh.fit.se.nextalk_be.common.ApiResponse;
 import iuh.fit.se.nextalk_be.conversation.dto.ConversationResponse;
+import iuh.fit.se.nextalk_be.conversation.dto.UpdateSelfDestructRequest;
 import iuh.fit.se.nextalk_be.summary.ConversationSummaryService;
 import iuh.fit.se.nextalk_be.summary.dto.ConversationSummaryResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -40,6 +42,37 @@ public class ConversationController {
     public ResponseEntity<ApiResponse<ConversationResponse>> getConversationById(@PathVariable("id") String id) {
         ConversationResponse response = conversationService.getConversationById(id);
         return ResponseEntity.ok(ApiResponse.success(response, "Conversation retrieved successfully"));
+    }
+
+    @PutMapping("/{id}/self-destruct")
+    @Operation(summary = "Update self destruct message duration for a conversation")
+    public ResponseEntity<ApiResponse<ConversationResponse>> updateSelfDestruct(
+            @PathVariable("id") String id,
+            @Valid @RequestBody UpdateSelfDestructRequest request
+    ) {
+        ConversationResponse response = conversationService.updateSelfDestruct(id, request.getSelfDestructSeconds());
+        return ResponseEntity.ok(ApiResponse.success(response, "Self destruct setting updated successfully"));
+    }
+
+    @PutMapping("/{id}/pin")
+    @Operation(summary = "Pin a conversation for the current user")
+    public ResponseEntity<ApiResponse<ConversationResponse>> pinConversation(@PathVariable("id") String id) {
+        ConversationResponse response = conversationService.updatePinned(id, true);
+        return ResponseEntity.ok(ApiResponse.success(response, "Conversation pinned successfully"));
+    }
+
+    @DeleteMapping("/{id}/pin")
+    @Operation(summary = "Unpin a conversation for the current user")
+    public ResponseEntity<ApiResponse<ConversationResponse>> unpinConversation(@PathVariable("id") String id) {
+        ConversationResponse response = conversationService.updatePinned(id, false);
+        return ResponseEntity.ok(ApiResponse.success(response, "Conversation unpinned successfully"));
+    }
+
+    @DeleteMapping("/{id}")
+    @Operation(summary = "Delete or hide a conversation for the current user")
+    public ResponseEntity<ApiResponse<Void>> deleteConversationForMe(@PathVariable("id") String id) {
+        conversationService.deleteForCurrentUser(id);
+        return ResponseEntity.ok(ApiResponse.success(null, "Conversation deleted successfully"));
     }
 
     @GetMapping("/search")

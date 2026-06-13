@@ -32,6 +32,7 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class ChatRequestService {
+    private static final int DAILY_STRANGER_MESSAGE_LIMIT = 10;
 
     private final ChatRequestRepository chatRequestRepository;
     private final UserService userService;
@@ -72,10 +73,18 @@ public class ChatRequestService {
             throw new BadRequestException("You already sent a pending chat request to this user");
         });
 
+        long sentToday = chatRequestRepository.countBySenderIdAndCreatedAtAfter(
+                currentUser.getId(),
+                LocalDateTime.now().toLocalDate().atStartOfDay()
+        );
+        if (sentToday >= DAILY_STRANGER_MESSAGE_LIMIT) {
+            throw new BadRequestException("Daily stranger message limit reached. Please try again tomorrow");
+        }
+
         ChatRequest saved = chatRequestRepository.save(ChatRequest.builder()
                 .sender(currentUser)
                 .receiver(receiver)
-                .message(request.getMessage().trim())
+                .message(request.getMessage() == null ? "" : request.getMessage().trim())
                 .status(ChatRequestStatus.PENDING)
                 .build());
 

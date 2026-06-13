@@ -55,7 +55,11 @@ public class ConversationService {
                 .findFirst();
 
         if (existing.isPresent()) {
-            return mapToConversationResponse(existing.get());
+            Conversation conversation = existing.get();
+            if (conversation.getDeletedByUsers() != null && conversation.getDeletedByUsers().remove(currentUser.getId())) {
+                conversation = conversationRepository.save(conversation);
+            }
+            return mapToConversationResponse(conversation);
         }
 
         Conversation conversation = Conversation.builder()
@@ -75,6 +79,8 @@ public class ConversationService {
         List<Conversation> deduplicated = deduplicateConversations(conversations, currentUser.getId());
 
         return deduplicated.stream()
+                .filter(conversation -> conversation.getDeletedByUsers() == null
+                        || !conversation.getDeletedByUsers().contains(currentUser.getId()))
                 .map(this::mapToConversationResponse)
                 .collect(Collectors.toList());
     }
@@ -152,10 +158,73 @@ public class ConversationService {
                 .canSendMessages(canSendMessages(conversation))
                 .blockedByMe(blockedByMe)
                 .blockedMe(blockedMe)
+                .pinned(conversation.getPinnedByUsers() != null && conversation.getPinnedByUsers().contains(currentUser.getId()))
+                .selfDestructSeconds(conversation.getSelfDestructSeconds())
                 .members(memberResponses)
                 .createdAt(conversation.getCreatedAt())
                 .updatedAt(conversation.getUpdatedAt())
                 .build();
+    }
+
+    public ConversationResponse updateSelfDestruct(String id, int selfDestructSeconds) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        if (!List.of(0, 300, 3600, 86400).contains(selfDestructSeconds)) {
+            throw new BadRequestException("Invalid self destruct duration");
+        }
+
+        Conversation conversation = conversationRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + id));
+
+        boolean isMember = conversation.getMembers().stream()
+                .anyMatch(m -> m.getId().equals(currentUser.getId()));
+        if (!isMember) {
+            throw new BadRequestException("You are not a member of this conversation");
+        }
+
+        conversation.setSelfDestructSeconds(selfDestructSeconds);
+        return mapToConversationResponse(conversationRepository.save(conversation));
+    }
+
+    public ConversationResponse updatePinned(String id, boolean pinned) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Conversation conversation = getConversationForMember(id, currentUser);
+
+        if (conversation.getPinnedByUsers() == null) {
+            conversation.setPinnedByUsers(new HashSet<>());
+        }
+        if (pinned) {
+            conversation.getPinnedByUsers().add(currentUser.getId());
+        } else {
+            conversation.getPinnedByUsers().remove(currentUser.getId());
+        }
+
+        return mapToConversationResponse(conversationRepository.save(conversation));
+    }
+
+    public void deleteForCurrentUser(String id) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Conversation conversation = getConversationForMember(id, currentUser);
+
+        if (conversation.getDeletedByUsers() == null) {
+            conversation.setDeletedByUsers(new HashSet<>());
+        }
+        if (conversation.getPinnedByUsers() != null) {
+            conversation.getPinnedByUsers().remove(currentUser.getId());
+        }
+        conversation.getDeletedByUsers().add(currentUser.getId());
+        conversationRepository.save(conversation);
+    }
+
+    private Conversation getConversationForMember(String id, User currentUser) {
+        Conversation conversation = conversationRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + id));
+
+        boolean isMember = conversation.getMembers().stream()
+                .anyMatch(m -> m.getId().equals(currentUser.getId()));
+        if (!isMember) {
+            throw new BadRequestException("You are not a member of this conversation");
+        }
+        return conversation;
     }
 
     private String getPrivateOtherMemberId(Conversation conversation, String currentUserId) {
@@ -211,6 +280,7 @@ public class ConversationService {
         List<Conversation> deduplicated = deduplicateConversations(conversations, currentUser.getId());
 
         return deduplicated.stream()
+                .filter(c -> c.getDeletedByUsers() == null || !c.getDeletedByUsers().contains(currentUser.getId()))
                 .filter(c -> {
                     if (c.getType() == ConversationType.GROUP) {
                         return c.getName() != null && c.getName().toLowerCase().contains(trimmedQuery);

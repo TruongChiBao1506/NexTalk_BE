@@ -27,4 +27,13 @@ public class Conversation extends BaseEntity {
     @DocumentReference(lazy = true)
     @Builder.Default
     private Set<User> members = new HashSet<>();
+
+    @Builder.Default
+    private int selfDestructSeconds = 0;
+
+    @Builder.Default
+    private Set<String> pinnedByUsers = new HashSet<>();
+
+    @Builder.Default
+    private Set<String> deletedByUsers = new HashSet<>();
 }

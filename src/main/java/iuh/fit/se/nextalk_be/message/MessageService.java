@@ -85,6 +85,9 @@ public class MessageService {
         }
 
         ensurePrivateMessageAllowed(conversation, currentUser);
+        if (conversation.getDeletedByUsers() != null && !conversation.getDeletedByUsers().isEmpty()) {
+            conversation.getDeletedByUsers().clear();
+        }
 
         List<MessageAttachment> attachments = request.getAttachments() != null
                 ? request.getAttachments().stream()
@@ -143,6 +146,9 @@ public class MessageService {
                 .forwardedFromMessageId(forwardedFromMessageId)
                 .forwardedFromSenderUsername(forwardedFromSenderUsername)
                 .build();
+        if (conversation.getSelfDestructSeconds() > 0) {
+            message.setExpiresAt(LocalDateTime.now().plusSeconds(conversation.getSelfDestructSeconds()));
+        }
 
         Message savedMessage = messageRepository.save(message);
 
@@ -253,6 +259,9 @@ public class MessageService {
                 conversationId, currentUser.getId(), pageable
         );
         List<MessageResponse> content = mapMessagesToResponses(messages.getContent());
+        content = content.stream()
+                .filter(message -> message.getExpiresAt() == null || message.getExpiresAt().isAfter(LocalDateTime.now()))
+                .toList();
         return new PageImpl<>(content, pageable, messages.getTotalElements());
     }
 
@@ -393,6 +402,7 @@ public class MessageService {
                 .isRecalled(message.isRecalled())
                 .isPinned(message.isPinned())
                 .pinnedAt(message.getPinnedAt())
+                .expiresAt(message.getExpiresAt())
                 .reactions(message.getReactions() != null ? message.getReactions() : new ArrayList<>())
                 .metadata(message.getMetadata() != null ? message.getMetadata() : Map.of())
                 .build();
@@ -437,6 +447,7 @@ public class MessageService {
                 .isRecalled(message.isRecalled())
                 .isPinned(message.isPinned())
                 .pinnedAt(message.getPinnedAt())
+                .expiresAt(message.getExpiresAt())
                 .reactions(message.getReactions() != null ? message.getReactions() : new ArrayList<>())
                 .metadata(message.getMetadata() != null ? message.getMetadata() : Map.of())
                 .build();
@@ -954,6 +965,7 @@ public class MessageService {
         List<Message> pinnedMessages = messageRepository.findByConversationIdAndIsPinnedTrue(conversationId);
         List<Message> filtered = pinnedMessages.stream()
                 .filter(m -> m.getDeletedByUsers() == null || !m.getDeletedByUsers().contains(currentUser.getId()))
+                .filter(m -> m.getExpiresAt() == null || m.getExpiresAt().isAfter(LocalDateTime.now()))
                 .toList();
         return mapMessagesToResponses(filtered);
     }
@@ -1088,6 +1100,7 @@ public class MessageService {
 
         List<Message> filtered = messages.stream()
                 .filter(m -> m.getDeletedByUsers() == null || !m.getDeletedByUsers().contains(currentUser.getId()))
+                .filter(m -> m.getExpiresAt() == null || m.getExpiresAt().isAfter(LocalDateTime.now()))
                 .toList();
         return mapMessagesToResponses(filtered);
     }
