@@ -17,6 +17,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
+import com.google.api.client.http.javanet.NetHttpTransport;
+import com.google.api.client.json.gson.GsonFactory;
+
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -36,6 +41,9 @@ public class AuthService {
 
     @Value("${server.port:8080}")
     private String serverPort;
+
+    @Value("${google.client.id}")
+    private String googleClientId;
 
     // @Transactional
     public RegisterResponse register(RegisterRequest request) {
@@ -206,6 +214,74 @@ public class AuthService {
 
         resetToken.setUsed(true);
         passwordResetTokenRepository.save(resetToken);
+    }
+
+    public LoginResponse googleLogin(GoogleLoginRequest request) {
+        try {
+            GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(new NetHttpTransport(), new GsonFactory())
+                    .setAudience(java.util.Collections.singletonList(googleClientId))
+                    .build();
+
+            GoogleIdToken idToken = verifier.verify(request.getIdToken());
+            if (idToken != null) {
+                GoogleIdToken.Payload payload = idToken.getPayload();
+                String email = payload.getEmail();
+                String name = (String) payload.get("name");
+                String pictureUrl = (String) payload.get("picture");
+
+                User user = userRepository.findByEmail(email).orElse(null);
+                if (user == null) {
+                    // Create new user
+                    user = User.builder()
+                            .email(email)
+                            .username(name.replaceAll("\\s+", "").toLowerCase() + "_" + UUID.randomUUID().toString().substring(0, 5))
+                            .password(passwordEncoder.encode(UUID.randomUUID().toString())) // Random password
+                            .avatarUrl(pictureUrl)
+                            .status("OFFLINE")
+                            .isVerified(true)
+                            .build();
+                    user = userRepository.save(user);
+                } else {
+                    // Update user details if needed
+                    boolean updated = false;
+                    if (user.getAvatarUrl() == null || user.getAvatarUrl().isEmpty()) {
+                        user.setAvatarUrl(pictureUrl);
+                        updated = true;
+                    }
+                    if (!user.isVerified()) {
+                        user.setVerified(true);
+                        updated = true;
+                    }
+                    if (updated) {
+                        user = userRepository.save(user);
+                    }
+                }
+
+                // Generate tokens
+                String accessToken = jwtService.generateAccessToken(user);
+                String refreshToken = jwtService.generateRefreshToken(user);
+
+                RefreshToken refreshTokenEntity = RefreshToken.builder()
+                        .user(user)
+                        .token(refreshToken)
+                        .expiresAt(LocalDateTime.now().plusDays(7))
+                        .build();
+
+                refreshTokenRepository.save(refreshTokenEntity);
+
+                UserProfileResponse userProfile = userService.mapToProfileResponse(user);
+
+                return LoginResponse.builder()
+                        .accessToken(accessToken)
+                        .refreshToken(refreshToken)
+                        .user(userProfile)
+                        .build();
+            } else {
+                throw new UnauthorizedException("Invalid Google ID Token");
+            }
+        } catch (Exception e) {
+            throw new UnauthorizedException("Failed to verify Google ID Token: " + e.getMessage());
+        }
     }
 
     // @Transactional
