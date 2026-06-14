@@ -1,0 +1,181 @@
+package iuh.fit.se.nextalk_be.channel;
+
+import iuh.fit.se.nextalk_be.channel.dto.ChannelResponse;
+import iuh.fit.se.nextalk_be.channel.dto.CreateChannelRequest;
+import iuh.fit.se.nextalk_be.channel.dto.UpdateChannelRequest;
+import iuh.fit.se.nextalk_be.conversation.Conversation;
+import iuh.fit.se.nextalk_be.conversation.ConversationRepository;
+import iuh.fit.se.nextalk_be.conversation.ConversationType;
+import iuh.fit.se.nextalk_be.exception.BadRequestException;
+import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
+import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
+import iuh.fit.se.nextalk_be.group.Group;
+import iuh.fit.se.nextalk_be.group.GroupMember;
+import iuh.fit.se.nextalk_be.group.GroupMemberRepository;
+import iuh.fit.se.nextalk_be.group.GroupRepository;
+import iuh.fit.se.nextalk_be.group.GroupRole;
+import iuh.fit.se.nextalk_be.user.User;
+import iuh.fit.se.nextalk_be.user.UserService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+public class ChannelService {
+
+    private final ChannelRepository channelRepository;
+    private final GroupRepository groupRepository;
+    private final GroupMemberRepository groupMemberRepository;
+    private final ConversationRepository conversationRepository;
+    private final UserService userService;
+
+    public ChannelResponse createChannel(String groupId, CreateChannelRequest request) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Group group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new ResourceNotFoundException("Group not found"));
+
+        if (!isLeaderRole(getRole(group, currentUser).orElse(null))) {
+            throw new UnauthorizedException("Only group leaders can create channels");
+        }
+
+        Conversation conversation = Conversation.builder()
+                .type(ConversationType.GROUP)
+                .name(request.getName())
+                .owner(currentUser)
+                .members(new HashSet<>())
+                .build();
+
+        if (!request.isPrivate()) {
+            List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
+            Set<User> conversationMembers = members.stream().map(GroupMember::getUser).collect(Collectors.toSet());
+            conversationMembers.add(group.getOwner());
+            conversation.setMembers(conversationMembers);
+        } else {
+             conversation.getMembers().add(currentUser);
+        }
+
+        Conversation savedConversation = conversationRepository.save(conversation);
+
+        Channel channel = Channel.builder()
+                .name(request.getName())
+                .type(request.getType() != null ? request.getType() : ChannelType.TEXT)
+                .isPrivate(request.isPrivate())
+                .group(group)
+                .conversation(savedConversation)
+                .build();
+
+        Channel savedChannel = channelRepository.save(channel);
+        return mapToResponse(savedChannel);
+    }
+
+    public ChannelResponse updateChannel(String groupId, String channelId, UpdateChannelRequest request) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Group group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new ResourceNotFoundException("Group not found"));
+
+        if (!isLeaderRole(getRole(group, currentUser).orElse(null))) {
+            throw new UnauthorizedException("Only group leaders can update channels");
+        }
+
+        Channel channel = channelRepository.findById(channelId)
+                .orElseThrow(() -> new ResourceNotFoundException("Channel not found"));
+
+        if (!channel.getGroup().getId().equals(groupId)) {
+            throw new BadRequestException("Channel does not belong to this group");
+        }
+
+        if (request.getName() != null && !request.getName().trim().isEmpty()) {
+            channel.setName(request.getName().trim());
+            if (channel.getConversation() != null) {
+                channel.getConversation().setName(request.getName().trim());
+                conversationRepository.save(channel.getConversation());
+            }
+        }
+        if (request.getType() != null) {
+            channel.setType(request.getType());
+        }
+        if (request.getIsPrivate() != null) {
+            channel.setPrivate(request.getIsPrivate());
+        }
+
+        Channel savedChannel = channelRepository.save(channel);
+        return mapToResponse(savedChannel);
+    }
+
+    public void deleteChannel(String groupId, String channelId) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Group group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new ResourceNotFoundException("Group not found"));
+
+        if (!isLeaderRole(getRole(group, currentUser).orElse(null))) {
+            throw new UnauthorizedException("Only group leaders can delete channels");
+        }
+
+        Channel channel = channelRepository.findById(channelId)
+                .orElseThrow(() -> new ResourceNotFoundException("Channel not found"));
+
+        if (!channel.getGroup().getId().equals(groupId)) {
+            throw new BadRequestException("Channel does not belong to this group");
+        }
+
+        if (channel.getConversation() != null) {
+            conversationRepository.delete(channel.getConversation());
+        }
+        channelRepository.delete(channel);
+    }
+
+    public List<ChannelResponse> getChannelsByGroupId(String groupId) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Group group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new ResourceNotFoundException("Group not found"));
+
+        boolean isOwner = group.getOwner().getId().equals(currentUser.getId());
+        boolean isMember = groupMemberRepository.existsByGroupIdAndUserId(groupId, currentUser.getId());
+
+        if (!isOwner && !isMember) {
+            throw new UnauthorizedException("You are not a member of this group");
+        }
+
+        List<Channel> channels = channelRepository.findAllByGroupId(groupId);
+        return channels.stream()
+                .filter(ch -> !ch.isPrivate() || isUserInConversation(ch.getConversation(), currentUser.getId()))
+                .map(this::mapToResponse)
+                .collect(Collectors.toList());
+    }
+
+    private boolean isUserInConversation(Conversation conversation, String userId) {
+        if (conversation == null || conversation.getMembers() == null) return false;
+        return conversation.getMembers().stream().anyMatch(m -> m.getId().equals(userId));
+    }
+
+    private Optional<GroupRole> getRole(Group group, User user) {
+        if (group.getOwner().getId().equals(user.getId())) {
+            return Optional.of(GroupRole.OWNER);
+        }
+        return groupMemberRepository.findByGroupIdAndUserId(group.getId(), user.getId())
+                .map(GroupMember::getRole);
+    }
+
+    private boolean isLeaderRole(GroupRole role) {
+        return role != null && (role == GroupRole.OWNER || role == GroupRole.LEADER || role == GroupRole.ADMIN);
+    }
+
+    public ChannelResponse mapToResponse(Channel channel) {
+        return ChannelResponse.builder()
+                .id(channel.getId())
+                .name(channel.getName())
+                .type(channel.getType())
+                .isPrivate(channel.isPrivate())
+                .groupId(channel.getGroup() != null ? channel.getGroup().getId() : null)
+                .conversationId(channel.getConversation() != null ? channel.getConversation().getId() : null)
+                .createdAt(channel.getCreatedAt())
+                .updatedAt(channel.getUpdatedAt())
+                .build();
+    }
+}

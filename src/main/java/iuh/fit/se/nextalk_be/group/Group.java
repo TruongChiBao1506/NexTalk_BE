@@ -1,7 +1,6 @@
 package iuh.fit.se.nextalk_be.group;
 
 import iuh.fit.se.nextalk_be.common.BaseEntity;
-import iuh.fit.se.nextalk_be.conversation.Conversation;
 import iuh.fit.se.nextalk_be.user.User;
 import lombok.*;
 import org.springframework.data.mongodb.core.mapping.Document;
@@ -19,9 +18,6 @@ public class Group extends BaseEntity {
 
     private String avatarUrl;
 
-    @DocumentReference
+    @DocumentReference(lazy = true)
     private User owner;
-
-    @DocumentReference
-    private Conversation conversation;
 }

@@ -14,6 +14,8 @@ import iuh.fit.se.nextalk_be.group.Group;
 import iuh.fit.se.nextalk_be.group.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.group.GroupRepository;
 import iuh.fit.se.nextalk_be.group.GroupRole;
+import iuh.fit.se.nextalk_be.channel.Channel;
+import iuh.fit.se.nextalk_be.channel.ChannelRepository;
 import iuh.fit.se.nextalk_be.message.dto.*;
 import iuh.fit.se.nextalk_be.user.User;
 import iuh.fit.se.nextalk_be.user.UserRepository;
@@ -50,6 +52,7 @@ public class MessageService {
     private final UserBlockRepository userBlockRepository;
     private final GroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
+    private final ChannelRepository channelRepository;
 
     // @Transactional
     public MessageResponse sendMessage(MessageRequest request) {
@@ -841,7 +844,7 @@ public class MessageService {
     }
 
     private Optional<GroupRole> getGroupRole(Conversation conversation, User user) {
-        Group group = groupRepository.findByConversationId(conversation.getId()).orElse(null);
+        Group group = channelRepository.findByConversationId(conversation.getId()).map(Channel::getGroup).orElse(null);
         if (group == null) return Optional.empty();
         return groupMemberRepository.findByGroupIdAndUserId(group.getId(), user.getId())
                 .map(member -> member.getRole());

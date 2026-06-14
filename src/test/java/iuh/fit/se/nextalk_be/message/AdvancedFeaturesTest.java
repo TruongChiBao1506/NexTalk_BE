@@ -9,6 +9,8 @@ import iuh.fit.se.nextalk_be.group.GroupMember;
 import iuh.fit.se.nextalk_be.group.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.group.GroupRepository;
 import iuh.fit.se.nextalk_be.group.GroupRole;
+import iuh.fit.se.nextalk_be.channel.Channel;
+import iuh.fit.se.nextalk_be.channel.ChannelRepository;
 import iuh.fit.se.nextalk_be.message.dto.CreatePollRequest;
 import iuh.fit.se.nextalk_be.message.dto.EditMessageRequest;
 import iuh.fit.se.nextalk_be.message.dto.MessageRequest;
@@ -59,6 +61,9 @@ public class AdvancedFeaturesTest {
     @Autowired
     private GroupMemberRepository groupMemberRepository;
 
+    @Autowired
+    private ChannelRepository channelRepository;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private User senderUser;
@@ -70,6 +75,7 @@ public class AdvancedFeaturesTest {
     void setUp() {
         messageRepository.deleteAll();
         groupMemberRepository.deleteAll();
+        channelRepository.deleteAll();
         groupRepository.deleteAll();
         conversationRepository.deleteAll();
         userRepository.deleteAll();
@@ -200,6 +206,10 @@ public class AdvancedFeaturesTest {
         Group group = groupRepository.save(Group.builder()
                 .name("Poll Group")
                 .owner(senderUser)
+                .build());
+        channelRepository.save(Channel.builder()
+                .name("Chung")
+                .group(group)
                 .conversation(groupConversation)
                 .build());
         groupMemberRepository.save(GroupMember.builder()

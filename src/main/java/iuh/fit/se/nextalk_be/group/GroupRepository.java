@@ -12,5 +12,4 @@ public interface GroupRepository extends MongoRepository<Group, String> {
 
     List<Group> findAllByOwnerIdOrIdIn(String ownerId, Collection<String> ids);
 
-    Optional<Group> findByConversationId(String conversationId);
 }

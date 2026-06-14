@@ -1,5 +1,9 @@
 package iuh.fit.se.nextalk_be.group;
 
+import iuh.fit.se.nextalk_be.channel.Channel;
+import iuh.fit.se.nextalk_be.channel.ChannelRepository;
+import iuh.fit.se.nextalk_be.channel.ChannelType;
+import iuh.fit.se.nextalk_be.channel.dto.ChannelResponse;
 import iuh.fit.se.nextalk_be.conversation.Conversation;
 import iuh.fit.se.nextalk_be.conversation.ConversationRepository;
 import iuh.fit.se.nextalk_be.conversation.ConversationType;
@@ -19,7 +23,6 @@ import iuh.fit.se.nextalk_be.user.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -31,29 +34,22 @@ public class GroupService {
     private final GroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
     private final ConversationRepository conversationRepository;
+    private final ChannelRepository channelRepository;
     private final UserRepository userRepository;
     private final UserService userService;
     private final NotificationService notificationService;
     private final MessageRepository messageRepository;
     private final SimpMessagingTemplate messagingTemplate;
 
-    // @Transactional
-    public GroupResponse createGroup(iuh.fit.se.nextalk_be.group.dto.CreateGroupRequest request) {
+    public GroupResponse createGroup(CreateGroupRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
-
-        // Create a GROUP conversation to hold messages
-        Conversation conversation = Conversation.builder()
-                .type(ConversationType.GROUP)
-                .name(request.getName())
-                .owner(currentUser)
-                .members(new HashSet<>())
-                .build();
 
         // Create group entity
         Group group = Group.builder()
                 .name(request.getName())
                 .owner(currentUser)
                 .build();
+        Group savedGroup = groupRepository.save(group);
 
         // Collect members: owner + requested member IDs
         Set<User> conversationMembers = new HashSet<>();
@@ -61,7 +57,7 @@ public class GroupService {
 
         List<GroupMember> groupMembers = new ArrayList<>();
         groupMembers.add(GroupMember.builder()
-                .group(group)
+                .group(savedGroup)
                 .user(currentUser)
                 .role(GroupRole.OWNER)
                 .build());
@@ -73,22 +69,33 @@ public class GroupService {
                         .orElseThrow(() -> new ResourceNotFoundException("User not found: " + memberId));
                 conversationMembers.add(member);
                 groupMembers.add(GroupMember.builder()
-                        .group(group)
+                        .group(savedGroup)
                         .user(member)
                         .role(GroupRole.MEMBER)
                         .build());
             }
         }
-
-        conversation.setMembers(conversationMembers);
-        Conversation savedConversation = conversationRepository.save(conversation);
-
-        group.setConversation(savedConversation);
-        Group savedGroup = groupRepository.save(group);
-
         groupMemberRepository.saveAll(groupMembers);
 
-        // Notify all added members (except the owner/creator)
+        // Create default channel ("Chung")
+        Conversation conversation = Conversation.builder()
+                .type(ConversationType.GROUP)
+                .name("Chung")
+                .owner(currentUser)
+                .members(conversationMembers)
+                .build();
+        Conversation savedConversation = conversationRepository.save(conversation);
+
+        Channel defaultChannel = Channel.builder()
+                .name("Chung")
+                .type(ChannelType.TEXT)
+                .isPrivate(false)
+                .group(savedGroup)
+                .conversation(savedConversation)
+                .build();
+        channelRepository.save(defaultChannel);
+
+        // Notify all added members
         if (request.getMemberIds() != null) {
             for (String memberId : request.getMemberIds()) {
                 if (memberId.equals(currentUser.getId())) continue;
@@ -106,19 +113,21 @@ public class GroupService {
         return mapToGroupResponse(savedGroup, groupMembers);
     }
 
-    // @Transactional
     public GroupResponse updateGroup(String groupId, UpdateGroupRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Group group = getGroupOrThrow(groupId);
 
         assertCanManageGroupSettings(group, currentUser);
 
+        boolean nameChanged = false;
+        String newName = null;
         if (request.getName() != null && !request.getName().trim().isEmpty()) {
-            group.setName(request.getName().trim());
-            if (group.getConversation() != null) {
-                group.getConversation().setName(request.getName().trim());
-                conversationRepository.save(group.getConversation());
+            String trimmedName = request.getName().trim();
+            if (!trimmedName.equals(group.getName())) {
+                nameChanged = true;
+                newName = trimmedName;
             }
+            group.setName(trimmedName);
         }
         boolean avatarChanged = false;
         if (request.getAvatarUrl() != null) {
@@ -129,14 +138,19 @@ public class GroupService {
         }
 
         Group saved = groupRepository.save(group);
-        if (avatarChanged && saved.getConversation() != null) {
-            createAndBroadcastSystemMessage(saved.getConversation(), currentUser, "đã cập nhật ảnh đại diện nhóm.");
+        List<Channel> channels = channelRepository.findAllByGroupId(groupId);
+        if (!channels.isEmpty()) {
+            if (avatarChanged) {
+                createAndBroadcastSystemMessage(channels.get(0).getConversation(), currentUser, "đã cập nhật ảnh đại diện nhóm.");
+            }
+            if (nameChanged && newName != null) {
+                createAndBroadcastSystemMessage(channels.get(0).getConversation(), currentUser, "đã đổi tên nhóm thành \"" + newName + "\".");
+            }
         }
         List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
         return mapToGroupResponse(saved, members);
     }
 
-    // @Transactional
     public void deleteGroup(String groupId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Group group = getGroupOrThrow(groupId);
@@ -146,13 +160,17 @@ public class GroupService {
         }
 
         groupMemberRepository.deleteAll(groupMemberRepository.findAllByGroupId(groupId));
-        if (group.getConversation() != null) {
-            conversationRepository.delete(group.getConversation());
+        
+        List<Channel> channels = channelRepository.findAllByGroupId(groupId);
+        for (Channel ch : channels) {
+            if (ch.getConversation() != null) {
+                conversationRepository.delete(ch.getConversation());
+            }
         }
+        channelRepository.deleteAll(channels);
         groupRepository.delete(group);
     }
 
-    // @Transactional
     public GroupResponse addMember(String groupId, AddMemberRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Group group = getGroupOrThrow(groupId);
@@ -173,18 +191,23 @@ public class GroupService {
                 .build();
         groupMemberRepository.save(groupMember);
 
-        // Also add to conversation members for message routing
-        if (group.getConversation() != null) {
-            group.getConversation().getMembers().add(newMember);
-            conversationRepository.save(group.getConversation());
+        // Also add to conversation members of all public channels
+        List<Channel> channels = channelRepository.findAllByGroupId(groupId);
+        for (Channel ch : channels) {
+            if (!ch.isPrivate() && ch.getConversation() != null) {
+                ch.getConversation().getMembers().add(newMember);
+                conversationRepository.save(ch.getConversation());
+            }
+        }
+
+        if (!channels.isEmpty() && channels.get(0).getConversation() != null) {
             createAndBroadcastSystemMessage(
-                    group.getConversation(),
+                    channels.get(0).getConversation(),
                     currentUser,
                     "đã mời " + newMember.getUsername() + " vào nhóm."
             );
         }
 
-        // Notify the newly added member
         notificationService.createAndSend(
                 newMember,
                 NotificationType.GROUP_INVITE,
@@ -196,12 +219,10 @@ public class GroupService {
         return mapToGroupResponse(group, members);
     }
 
-    // @Transactional
     public void removeMember(String groupId, String userId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Group group = getGroupOrThrow(groupId);
 
-        // Owner cannot be removed; only owner/admin can remove others; member can remove themselves
         if (group.getOwner().getId().equals(userId)) {
             throw new BadRequestException("Cannot remove the group owner");
         }
@@ -224,14 +245,15 @@ public class GroupService {
 
         groupMemberRepository.deleteByGroupIdAndUserId(groupId, userId);
 
-        // Remove from conversation members too
-        if (group.getConversation() != null) {
-            group.getConversation().getMembers().removeIf(m -> m.getId().equals(userId));
-            conversationRepository.save(group.getConversation());
+        List<Channel> channels = channelRepository.findAllByGroupId(groupId);
+        for (Channel ch : channels) {
+            if (ch.getConversation() != null) {
+                ch.getConversation().getMembers().removeIf(m -> m.getId().equals(userId));
+                conversationRepository.save(ch.getConversation());
+            }
         }
     }
 
-    // @Transactional
     public GroupResponse updateMemberRole(String groupId, String userId, UpdateMemberRoleRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Group group = getGroupOrThrow(groupId);
@@ -263,9 +285,11 @@ public class GroupService {
 
         targetMembership.setRole(newRole);
         groupMemberRepository.save(targetMembership);
-        if (group.getConversation() != null) {
+        
+        List<Channel> channels = channelRepository.findAllByGroupId(groupId);
+        if (!channels.isEmpty() && channels.get(0).getConversation() != null) {
             createAndBroadcastSystemMessage(
-                    group.getConversation(),
+                    channels.get(0).getConversation(),
                     currentUser,
                     buildRoleChangeSystemContent(targetMembership.getUser().getUsername(), oldRole, newRole)
             );
@@ -275,14 +299,12 @@ public class GroupService {
         return mapToGroupResponse(group, members);
     }
 
-    // @Transactional(readOnly = true)
     public GroupResponse getGroupById(String groupId) {
         Group group = getGroupOrThrow(groupId);
         List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
         return mapToGroupResponse(group, members);
     }
 
-    // @Transactional(readOnly = true)
     public List<GroupResponse> getMyGroups() {
         User currentUser = userService.getCurrentAuthenticatedUser();
         List<GroupMember> memberships = groupMemberRepository.findAllByUserId(currentUser.getId());
@@ -290,7 +312,11 @@ public class GroupService {
                 .map(m -> m.getGroup().getId())
                 .collect(Collectors.toSet());
         List<Group> groups = groupRepository.findAllByOwnerIdOrIdIn(currentUser.getId(), groupIds);
-        return groups.stream().map(g -> {
+        return groups.stream()
+                .collect(Collectors.toMap(Group::getId, g -> g, (first, ignored) -> first, LinkedHashMap::new))
+                .values()
+                .stream()
+                .map(g -> {
             List<GroupMember> members = groupMemberRepository.findAllByGroupId(g.getId());
             return mapToGroupResponse(g, members);
         }).collect(Collectors.toList());
@@ -360,7 +386,7 @@ public class GroupService {
         if (oldRole == GroupRole.DEPUTY && newRole == GroupRole.MEMBER) {
             return "đã bãi nhiệm " + username + " khỏi vai trò Phó nhóm.";
         }
-        return "đã cập nhật quyền của " + username + " thanh " + roleLabel(newRole) + ".";
+        return "đã cập nhật quyền của " + username + " thành " + roleLabel(newRole) + ".";
     }
 
     private String roleLabel(GroupRole role) {
@@ -381,13 +407,35 @@ public class GroupService {
                         .build())
                 .collect(Collectors.toList());
 
+        List<ChannelResponse> channelResponses = channelRepository.findAllByGroupId(group.getId()).stream()
+                .map(ch -> ChannelResponse.builder()
+                        .id(ch.getId())
+                        .name(ch.getName())
+                        .type(ch.getType())
+                        .isPrivate(ch.isPrivate())
+                        .groupId(ch.getGroup() != null ? ch.getGroup().getId() : null)
+                        .conversationId(ch.getConversation() != null ? ch.getConversation().getId() : null)
+                        .createdAt(ch.getCreatedAt())
+                        .updatedAt(ch.getUpdatedAt())
+                        .build()
+                ).collect(Collectors.toList());
+
         return GroupResponse.builder()
                 .id(group.getId())
                 .name(group.getName())
                 .avatarUrl(group.getAvatarUrl())
+                .conversationId(channelResponses.stream()
+                        .filter(ch -> "Chung".equals(ch.getName()))
+                        .findFirst()
+                        .or(() -> channelResponses.stream()
+                                .filter(ch -> ch.getType() == ChannelType.TEXT && !ch.isPrivate())
+                                .findFirst())
+                        .or(() -> channelResponses.stream().findFirst())
+                        .map(ChannelResponse::getConversationId)
+                        .orElse(null))
                 .ownerId(group.getOwner().getId())
                 .ownerUsername(group.getOwner().getUsername())
-                .conversationId(group.getConversation() != null ? group.getConversation().getId() : null)
+                .channels(channelResponses)
                 .members(memberResponses)
                 .memberCount(memberResponses.size())
                 .createdAt(group.getCreatedAt())
