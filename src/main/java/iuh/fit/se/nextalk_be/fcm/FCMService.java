@@ -26,7 +26,14 @@ public class FCMService {
 
             if (firebaseCreds != null && !firebaseCreds.isEmpty()) {
                 // Read from environment variable (useful for Production)
-                credentials = GoogleCredentials.fromStream(new java.io.ByteArrayInputStream(firebaseCreds.getBytes()));
+                byte[] credsBytes;
+                if (firebaseCreds.trim().startsWith("{")) {
+                    credsBytes = firebaseCreds.getBytes();
+                } else {
+                    // Try decoding from Base64 if it's not raw JSON
+                    credsBytes = java.util.Base64.getDecoder().decode(firebaseCreds.trim());
+                }
+                credentials = GoogleCredentials.fromStream(new java.io.ByteArrayInputStream(credsBytes));
             } else {
                 // Read from local file (useful for Development)
                 ClassPathResource resource = new ClassPathResource("firebase-service-account.json");
@@ -47,8 +54,8 @@ public class FCMService {
             } else {
                 log.warn("Firebase credentials not found. FCM will be disabled.");
             }
-        } catch (IOException e) {
-            log.error("Failed to initialize Firebase", e);
+        } catch (Exception e) {
+            log.error("Failed to initialize Firebase: " + e.getMessage(), e);
         }
     }
 
