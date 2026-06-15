@@ -38,6 +38,9 @@ public class User extends BaseEntity implements UserDetails {
     @Builder.Default
     private boolean isVerified = false;
 
+    @Builder.Default
+    private List<String> fcmTokens = new java.util.ArrayList<>();
+
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return List.of(new SimpleGrantedAuthority("ROLE_USER"));

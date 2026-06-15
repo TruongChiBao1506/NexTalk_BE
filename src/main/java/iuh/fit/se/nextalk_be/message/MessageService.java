@@ -53,6 +53,8 @@ public class MessageService {
     private final GroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
     private final ChannelRepository channelRepository;
+    private final iuh.fit.se.nextalk_be.fcm.FCMService fcmService;
+    private final iuh.fit.se.nextalk_be.presence.PresenceService presenceService;
 
     // @Transactional
     public MessageResponse sendMessage(MessageRequest request) {
@@ -198,6 +200,11 @@ public class MessageService {
                     contentPreview = "[Tệp đính kèm]";
                 } else {
                     contentPreview = savedMessage.getContent();
+                    if (contentPreview != null) {
+                        contentPreview = contentPreview.replaceAll("<[^>]*>", "");
+                        // Also replace some common HTML entities
+                        contentPreview = contentPreview.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">");
+                    }
                 }
 
                 String notificationContent;
@@ -214,6 +221,14 @@ public class MessageService {
                         notificationContent,
                         conversation.getId().toString()
                 );
+
+                // Send FCM push if member is offline
+                if ("OFFLINE".equals(presenceService.getUserStatus(member.getId()))) {
+                    User dbMember = userRepository.findById(member.getId()).orElse(member);
+                    if (dbMember.getFcmTokens() != null && !dbMember.getFcmTokens().isEmpty()) {
+                        fcmService.sendPushNotificationToTokens(dbMember.getFcmTokens(), "Tin nhắn mới từ " + currentUser.getUsername(), contentPreview);
+                    }
+                }
             }
         }
 

@@ -21,6 +21,22 @@ public class PresenceService {
     private static final String STATUS_KEY_PREFIX = "nextalk:presence:status:";
     private static final String LAST_SEEN_KEY_PREFIX = "nextalk:presence:last_seen:";
 
+    @jakarta.annotation.PostConstruct
+    public void clearAllSessionsOnStartup() {
+        try {
+            java.util.Set<String> keys = redisTemplate.keys(SESSIONS_KEY_PREFIX + "*");
+            if (keys != null && !keys.isEmpty()) {
+                redisTemplate.delete(keys);
+            }
+            java.util.Set<String> statusKeys = redisTemplate.keys(STATUS_KEY_PREFIX + "*");
+            if (statusKeys != null && !statusKeys.isEmpty()) {
+                redisTemplate.delete(statusKeys);
+            }
+        } catch (Exception e) {
+            // Ignore Redis errors during startup
+        }
+    }
+
     public void addSession(String userId, String sessionId) {
         String sessionsKey = SESSIONS_KEY_PREFIX + userId;
         redisTemplate.opsForSet().add(sessionsKey, sessionId);
