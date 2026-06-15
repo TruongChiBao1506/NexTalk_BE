@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.conversation;
 
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
+import iuh.fit.se.nextalk_be.channel.ChannelRepository;
 import iuh.fit.se.nextalk_be.chatrequest.ChatRequestRepository;
 import iuh.fit.se.nextalk_be.chatrequest.ChatRequestStatus;
 import iuh.fit.se.nextalk_be.block.UserBlockRepository;
@@ -31,6 +32,7 @@ public class ConversationService {
     private final ChatRequestRepository chatRequestRepository;
     private final UserBlockRepository userBlockRepository;
     private final PasswordEncoder passwordEncoder;
+    private final ChannelRepository channelRepository;
 
     @Transactional
     public ConversationResponse getOrCreatePrivateConversation(String friendId) {
@@ -155,10 +157,18 @@ public class ConversationService {
         boolean blockedMe = otherMemberId != null
                 && userBlockRepository.existsByBlockerIdAndBlockedId(otherMemberId, currentUser.getId());
 
+        // Với GROUP conversation: lấy tên group thực (conversation.name = "Chung" là tên channel mặc định)
+        String displayName = conversation.getName();
+        if (conversation.getType() == ConversationType.GROUP) {
+            displayName = channelRepository.findByConversationId(conversation.getId())
+                    .map(ch -> ch.getGroup() != null ? ch.getGroup().getName() : null)
+                    .orElse(conversation.getName());
+        }
+
         return ConversationResponse.builder()
                 .id(conversation.getId())
                 .type(conversation.getType().name())
-                .name(conversation.getName())
+                .name(displayName)
                 .canSendMessages(canSendMessages(conversation))
                 .blockedByMe(blockedByMe)
                 .blockedMe(blockedMe)
@@ -170,6 +180,7 @@ public class ConversationService {
                 .updatedAt(conversation.getUpdatedAt())
                 .build();
     }
+
 
     public ConversationResponse updateSelfDestruct(String id, int selfDestructSeconds) {
         User currentUser = userService.getCurrentAuthenticatedUser();
@@ -293,28 +304,52 @@ public class ConversationService {
         List<Conversation> deduplicated = deduplicateConversations(conversations, currentUser.getId());
 
         if (isPinMatch) {
-            // Return only hidden conversations
-            return deduplicated.stream()
-                    .filter(c -> c.getDeletedByUsers() == null || !c.getDeletedByUsers().contains(currentUser.getId()))
-                    .filter(c -> c.getHiddenByUsers() != null && c.getHiddenByUsers().contains(currentUser.getId()))
-                    .map(this::mapToConversationResponse)
-                    .collect(Collectors.toList());
+            // Return only hidden conversations (deduplicated by group ID)
+            List<ConversationResponse> pinResults = new ArrayList<>();
+            Set<String> seenGroupIds = new LinkedHashSet<>();
+            for (Conversation c : deduplicated) {
+                if (c.getDeletedByUsers() != null && c.getDeletedByUsers().contains(currentUser.getId())) continue;
+                if (c.getHiddenByUsers() == null || !c.getHiddenByUsers().contains(currentUser.getId())) continue;
+                if (c.getType() == ConversationType.GROUP) {
+                    String groupId = channelRepository.findByConversationId(c.getId())
+                            .map(ch -> ch.getGroup() != null ? ch.getGroup().getId() : null)
+                            .orElse(null);
+                    if (groupId != null && !seenGroupIds.add(groupId)) continue;
+                }
+                pinResults.add(mapToConversationResponse(c));
+            }
+            return pinResults;
         } else {
-            // Regular search - exclude hidden conversations
-            return deduplicated.stream()
-                    .filter(c -> c.getDeletedByUsers() == null || !c.getDeletedByUsers().contains(currentUser.getId()))
-                    .filter(c -> c.getHiddenByUsers() == null || !c.getHiddenByUsers().contains(currentUser.getId()))
-                    .filter(c -> {
-                        if (c.getType() == ConversationType.GROUP) {
-                            return c.getName() != null && c.getName().toLowerCase().contains(trimmedQuery.toLowerCase());
-                        } else {
-                            return c.getMembers().stream()
-                                    .filter(m -> !m.getId().equals(currentUser.getId()))
-                                    .anyMatch(m -> m.getUsername().toLowerCase().contains(trimmedQuery.toLowerCase()));
-                        }
-                    })
-                    .map(this::mapToConversationResponse)
-                    .collect(Collectors.toList());
+            // Regular search - exclude hidden conversations, deduplicate GROUP by groupId
+            Set<String> seenGroupIds = new LinkedHashSet<>();
+            List<ConversationResponse> results = new ArrayList<>();
+            for (Conversation c : deduplicated) {
+                if (c.getDeletedByUsers() != null && c.getDeletedByUsers().contains(currentUser.getId())) continue;
+                if (c.getHiddenByUsers() != null && c.getHiddenByUsers().contains(currentUser.getId())) continue;
+
+                if (c.getType() == ConversationType.GROUP) {
+                    // Tra ngược channel → group để lấy tên thực và groupId
+                    var channel = channelRepository.findByConversationId(c.getId());
+                    String groupName = channel
+                            .map(ch -> ch.getGroup() != null ? ch.getGroup().getName() : null)
+                            .orElse(c.getName());
+                    if (groupName == null || !groupName.toLowerCase().contains(trimmedQuery.toLowerCase())) continue;
+
+                    // Chỉ giữ 1 conversation đại diện mỗi group (tránh trùng lặp do nhiều channel)
+                    String groupId = channel
+                            .map(ch -> ch.getGroup() != null ? ch.getGroup().getId() : null)
+                            .orElse(null);
+                    if (groupId != null && !seenGroupIds.add(groupId)) continue;
+                } else {
+                    boolean match = c.getMembers().stream()
+                            .filter(m -> !m.getId().equals(currentUser.getId()))
+                            .anyMatch(m -> m.getUsername().toLowerCase().contains(trimmedQuery.toLowerCase()));
+                    if (!match) continue;
+                }
+
+                results.add(mapToConversationResponse(c));
+            }
+            return results;
         }
     }
 
