@@ -4,9 +4,17 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import java.io.File;
 import java.nio.file.Files;
+import java.util.TimeZone;
+import jakarta.annotation.PostConstruct;
 
 @SpringBootApplication
 public class NexTalkBeApplication {
+
+    @PostConstruct
+    public void init() {
+        // Force the application to use Vietnam time (GMT+7) so it matches local development when deployed to Render
+        TimeZone.setDefault(TimeZone.getTimeZone("Asia/Ho_Chi_Minh"));
+    }
 
     public static void main(String[] args) {
         loadEnv();
