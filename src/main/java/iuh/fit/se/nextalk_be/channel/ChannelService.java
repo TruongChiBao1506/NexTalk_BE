@@ -15,6 +15,7 @@ import iuh.fit.se.nextalk_be.group.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.group.GroupRepository;
 import iuh.fit.se.nextalk_be.group.GroupRole;
 import iuh.fit.se.nextalk_be.user.User;
+import iuh.fit.se.nextalk_be.user.UserRepository;
 import iuh.fit.se.nextalk_be.user.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,7 @@ public class ChannelService {
     private final GroupMemberRepository groupMemberRepository;
     private final ConversationRepository conversationRepository;
     private final UserService userService;
+    private final UserRepository userRepository;
 
     public ChannelResponse createChannel(String groupId, CreateChannelRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
@@ -57,7 +59,24 @@ public class ChannelService {
             conversationMembers.add(group.getOwner());
             conversation.setMembers(conversationMembers);
         } else {
-             conversation.getMembers().add(currentUser);
+            Set<User> privateMembers = new HashSet<>();
+            privateMembers.add(currentUser);
+            
+            if (request.getMemberIds() != null && !request.getMemberIds().isEmpty()) {
+                List<GroupMember> groupMembers = groupMemberRepository.findAllByGroupId(groupId);
+                Set<String> validUserIds = groupMembers.stream()
+                        .map(gm -> gm.getUser().getId())
+                        .collect(Collectors.toSet());
+                validUserIds.add(group.getOwner().getId());
+                
+                for (String memberId : request.getMemberIds()) {
+                    if (validUserIds.contains(memberId)) {
+                        userRepository.findById(memberId).ifPresent(privateMembers::add);
+                    }
+                }
+            }
+            
+            conversation.setMembers(privateMembers);
         }
 
         Conversation savedConversation = conversationRepository.save(conversation);
@@ -102,6 +121,58 @@ public class ChannelService {
         }
         if (request.getIsPrivate() != null) {
             channel.setPrivate(request.getIsPrivate());
+            
+            Conversation conversation = channel.getConversation();
+            if (conversation != null) {
+                if (request.getIsPrivate()) {
+                    Set<User> privateMembers = new HashSet<>();
+                    privateMembers.add(currentUser);
+                    
+                    if (request.getMemberIds() != null) {
+                        List<GroupMember> groupMembers = groupMemberRepository.findAllByGroupId(groupId);
+                        Set<String> validUserIds = groupMembers.stream()
+                                .map(gm -> gm.getUser().getId())
+                                .collect(Collectors.toSet());
+                        validUserIds.add(group.getOwner().getId());
+                        
+                        for (String memberId : request.getMemberIds()) {
+                            if (validUserIds.contains(memberId)) {
+                                userRepository.findById(memberId).ifPresent(privateMembers::add);
+                            }
+                        }
+                    } else {
+                        // Keep existing members if memberIds is not provided but channel is already private
+                        privateMembers.addAll(conversation.getMembers());
+                    }
+                    conversation.setMembers(privateMembers);
+                } else {
+                    List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
+                    Set<User> conversationMembers = members.stream().map(GroupMember::getUser).collect(Collectors.toSet());
+                    conversationMembers.add(group.getOwner());
+                    conversation.setMembers(conversationMembers);
+                }
+                conversationRepository.save(conversation);
+            }
+        } else if (channel.isPrivate() && request.getMemberIds() != null) {
+            Conversation conversation = channel.getConversation();
+            if (conversation != null) {
+                Set<User> privateMembers = new HashSet<>();
+                privateMembers.add(currentUser);
+                
+                List<GroupMember> groupMembers = groupMemberRepository.findAllByGroupId(groupId);
+                Set<String> validUserIds = groupMembers.stream()
+                        .map(gm -> gm.getUser().getId())
+                        .collect(Collectors.toSet());
+                validUserIds.add(group.getOwner().getId());
+                
+                for (String memberId : request.getMemberIds()) {
+                    if (validUserIds.contains(memberId)) {
+                        userRepository.findById(memberId).ifPresent(privateMembers::add);
+                    }
+                }
+                conversation.setMembers(privateMembers);
+                conversationRepository.save(conversation);
+            }
         }
 
         Channel savedChannel = channelRepository.save(channel);

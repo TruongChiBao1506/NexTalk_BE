@@ -8,6 +8,7 @@ import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.message.dto.CallSignal;
 import iuh.fit.se.nextalk_be.message.dto.CallTokenResponse;
+import iuh.fit.se.nextalk_be.message.dto.VoiceChannelEvent;
 import iuh.fit.se.nextalk_be.user.User;
 import iuh.fit.se.nextalk_be.user.UserRepository;
 import iuh.fit.se.nextalk_be.user.UserService;
@@ -47,6 +48,7 @@ public class CallController {
     private final UserService userService;
     private final SimpMessagingTemplate messagingTemplate;
     private final MessageService messageService;
+    private final VoiceChannelService voiceChannelService;
     private final Map<String, CallSession> activeCallSessions = new ConcurrentHashMap<>();
 
     @Value("${app.agora.app-id}")
@@ -96,6 +98,72 @@ public class CallController {
 
         return ResponseEntity.ok(ApiResponse.success(response, "Agora token generated successfully"));
     }
+
+    @GetMapping("/channel-token")
+    public ResponseEntity<ApiResponse<CallTokenResponse>> getChannelToken(
+            @RequestParam("channelId") String channelId,
+            @RequestParam("groupId") String groupId
+    ) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        
+        int uid = currentUser.getId().hashCode() & 0x7FFFFFFF;
+        String channelName = channelId;
+
+        RtcTokenBuilder2 tokenBuilder = new RtcTokenBuilder2();
+        int tokenExpire = 7200;
+        int privilegeExpire = 7200;
+
+        String token = tokenBuilder.buildTokenWithUid(
+                appId, appCertificate, channelName, uid, Role.ROLE_PUBLISHER, tokenExpire, privilegeExpire
+        );
+
+        CallTokenResponse response = CallTokenResponse.builder()
+                .token(token)
+                .uid(uid)
+                .channelName(channelName)
+                .build();
+
+        return ResponseEntity.ok(ApiResponse.success(response, "Agora channel token generated successfully"));
+    }
+
+    @MessageMapping("/voice.join")
+    public void joinVoiceChannel(@Payload VoiceChannelEvent event, Principal principal) {
+        if (principal == null) return;
+        User user = findUserByPrincipal(principal);
+        if (user == null) return;
+
+        voiceChannelService.joinChannel(event.getChannelId(), user.getId(), event.getGroupId());
+        
+        event.setType("JOIN");
+        event.setUserId(user.getId());
+        event.setCurrentMembers(voiceChannelService.getChannelMembers(event.getChannelId()));
+        
+        messagingTemplate.convertAndSend("/topic/group." + event.getGroupId() + ".voice", event);
+    }
+
+    @MessageMapping("/voice.leave")
+    public void leaveVoiceChannel(@Payload VoiceChannelEvent event, Principal principal) {
+        if (principal == null) return;
+        User user = findUserByPrincipal(principal);
+        if (user == null) return;
+
+        String[] channelInfo = voiceChannelService.leaveCurrentChannel(user.getId());
+        if (channelInfo != null) {
+            String channelId = channelInfo[0];
+            String groupId = channelInfo[1];
+            
+            VoiceChannelEvent leaveEvent = VoiceChannelEvent.builder()
+                    .type("LEAVE")
+                    .channelId(channelId)
+                    .groupId(groupId)
+                    .userId(user.getId())
+                    .currentMembers(voiceChannelService.getChannelMembers(channelId))
+                    .build();
+            
+            messagingTemplate.convertAndSend("/topic/group." + groupId + ".voice", leaveEvent);
+        }
+    }
+
 
     @MessageMapping("/call.invite")
     public void inviteCall(@Payload CallSignal signal, Principal principal) {

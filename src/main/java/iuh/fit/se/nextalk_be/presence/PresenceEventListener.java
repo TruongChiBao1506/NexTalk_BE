@@ -22,6 +22,7 @@ public class PresenceEventListener {
     private final PresenceService presenceService;
     private final SimpMessageSendingOperations messagingTemplate;
     private final UserRepository userRepository;
+    private final iuh.fit.se.nextalk_be.message.VoiceChannelService voiceChannelService;
 
     @EventListener
     public void handleWebSocketConnectListener(SessionConnectedEvent event) {
@@ -64,6 +65,24 @@ public class PresenceEventListener {
                         presenceService.removeSession(user.getId(), sessionId);
                         String currentStatus = presenceService.getUserStatus(user.getId());
                         log.info("User {} disconnected with session {}. New status is {}", user.getUsername(), sessionId, currentStatus);
+
+                        // Voice Channel cleanup
+                        String[] channelInfo = voiceChannelService.leaveCurrentChannel(user.getId());
+                        if (channelInfo != null) {
+                            String channelId = channelInfo[0];
+                            String groupId = channelInfo[1];
+                            
+                            iuh.fit.se.nextalk_be.message.dto.VoiceChannelEvent leaveEvent = 
+                                iuh.fit.se.nextalk_be.message.dto.VoiceChannelEvent.builder()
+                                    .type("LEAVE")
+                                    .channelId(channelId)
+                                    .groupId(groupId)
+                                    .userId(user.getId())
+                                    .currentMembers(voiceChannelService.getChannelMembers(channelId))
+                                    .build();
+                            
+                            messagingTemplate.convertAndSend("/topic/group." + groupId + ".voice", leaveEvent);
+                        }
 
                         LocalDateTime lastSeen = presenceService.getUserLastSeen(user.getId());
                         PresenceUpdateResponse response = PresenceUpdateResponse.builder()
