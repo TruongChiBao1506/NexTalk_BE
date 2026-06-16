@@ -9,6 +9,7 @@ import iuh.fit.se.nextalk_be.conversation.ConversationRepository;
 import iuh.fit.se.nextalk_be.conversation.ConversationType;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.friend.dto.FriendResponse;
+import iuh.fit.se.nextalk_be.friend.dto.FriendSuggestionResponse;
 import iuh.fit.se.nextalk_be.friend.dto.FriendshipAcceptResponse;
 import iuh.fit.se.nextalk_be.message.Message;
 import iuh.fit.se.nextalk_be.message.MessageRepository;
@@ -151,6 +152,16 @@ public class FriendService {
     }
 
     @Transactional
+    public void cancelFriendRequest(String receiverId) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+
+        Friendship friendship = friendshipRepository.findBySenderIdAndReceiverIdAndStatus(currentUser.getId(), receiverId, FriendshipStatus.PENDING)
+                .orElseThrow(() -> new ResourceNotFoundException("No pending friend request to this user found"));
+
+        friendshipRepository.delete(friendship);
+    }
+
+    @Transactional
     public void removeFriend(String friendId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
@@ -192,6 +203,74 @@ public class FriendService {
 
         return pending.stream()
                 .map(f -> mapToFriendResponse(f.getSender()))
+                .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public List<FriendSuggestionResponse> getFriendSuggestions() {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        String currentUserId = currentUser.getId();
+
+        // 1. Get my accepted friends
+        List<Friendship> myAcceptedFriendships = friendshipRepository.findAllByUserIdAndStatus(currentUserId, FriendshipStatus.ACCEPTED);
+        Set<String> myFriendIds = myAcceptedFriendships.stream()
+                .map(f -> f.getSender().getId().equals(currentUserId) ? f.getReceiver().getId() : f.getSender().getId())
+                .collect(Collectors.toSet());
+
+        // 2. Get my sent pending requests (to know if I already sent a request)
+        List<Friendship> mySentRequests = friendshipRepository.findBySenderIdAndStatus(currentUserId, FriendshipStatus.PENDING);
+        Set<String> sentRequestUserIds = mySentRequests.stream()
+                .map(f -> f.getReceiver().getId())
+                .collect(Collectors.toSet());
+        
+        // 3. Get my received pending requests (to avoid suggesting people who already requested me)
+        List<Friendship> myReceivedRequests = friendshipRepository.findByReceiverIdAndStatus(currentUserId, FriendshipStatus.PENDING);
+        Set<String> receivedRequestUserIds = myReceivedRequests.stream()
+                .map(f -> f.getSender().getId())
+                .collect(Collectors.toSet());
+
+        // 4. Calculate mutual friends
+        java.util.Map<String, Integer> mutualFriendsCountMap = new java.util.HashMap<>();
+        java.util.Map<String, User> potentialFriendsMap = new java.util.HashMap<>();
+
+        // For each friend, fetch their friends
+        for (String friendId : myFriendIds) {
+            List<Friendship> friendsOfFriend = friendshipRepository.findAllByUserIdAndStatus(friendId, FriendshipStatus.ACCEPTED);
+            for (Friendship f : friendsOfFriend) {
+                User candidate = f.getSender().getId().equals(friendId) ? f.getReceiver() : f.getSender();
+                String candidateId = candidate.getId();
+
+                // Exclude myself, my existing friends, people who already requested me, and blocked users
+                if (!candidateId.equals(currentUserId) && 
+                    !myFriendIds.contains(candidateId) && 
+                    !receivedRequestUserIds.contains(candidateId) &&
+                    !userBlockRepository.existsBetweenUsers(currentUserId, candidateId)) {
+                    
+                    mutualFriendsCountMap.put(candidateId, mutualFriendsCountMap.getOrDefault(candidateId, 0) + 1);
+                    potentialFriendsMap.putIfAbsent(candidateId, candidate);
+                }
+            }
+        }
+
+        // 5. Sort by mutual friend count (descending) and take top 10
+        return mutualFriendsCountMap.entrySet().stream()
+                .sorted(java.util.Map.Entry.<String, Integer>comparingByValue().reversed())
+                .limit(10)
+                .map(entry -> {
+                    String candidateId = entry.getKey();
+                    User candidate = potentialFriendsMap.get(candidateId);
+                    return FriendSuggestionResponse.builder()
+                            .id(candidate.getId())
+                            .email(candidate.getEmail())
+                            .username(candidate.getUsername())
+                            .avatarUrl(candidate.getAvatarUrl())
+                            .bio(candidate.getBio())
+                            .status(presenceService.getUserStatus(candidate.getId()))
+                            .lastSeen(presenceService.getUserLastSeen(candidate.getId()))
+                            .mutualFriendsCount(entry.getValue())
+                            .isRequestSent(sentRequestUserIds.contains(candidateId))
+                            .build();
+                })
                 .collect(Collectors.toList());
     }
 

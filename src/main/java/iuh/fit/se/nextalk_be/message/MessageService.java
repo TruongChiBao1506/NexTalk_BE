@@ -102,6 +102,7 @@ public class MessageService {
                         .url(attachment.getUrl().trim())
                         .type(attachment.getType() != null ? attachment.getType().toUpperCase() : "FILE")
                         .name(attachment.getName())
+                        .size(attachment.getSize())
                         .build())
                 .toList()
                 : List.of();

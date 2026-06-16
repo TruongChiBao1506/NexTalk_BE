@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import iuh.fit.se.nextalk_be.common.ApiResponse;
 import iuh.fit.se.nextalk_be.friend.dto.FriendResponse;
+import iuh.fit.se.nextalk_be.friend.dto.FriendSuggestionResponse;
 import iuh.fit.se.nextalk_be.friend.dto.FriendshipAcceptRequest;
 import iuh.fit.se.nextalk_be.friend.dto.FriendshipAcceptResponse;
 import iuh.fit.se.nextalk_be.friend.dto.FriendshipRequest;
@@ -50,6 +51,13 @@ public class FriendController {
         return ResponseEntity.ok(ApiResponse.success(null, "Friend removed successfully"));
     }
 
+    @DeleteMapping("/cancel")
+    @Operation(summary = "Cancel a sent friend request")
+    public ResponseEntity<ApiResponse<Void>> cancelFriendRequest(@RequestParam("receiverId") String receiverId) {
+        friendService.cancelFriendRequest(receiverId);
+        return ResponseEntity.ok(ApiResponse.success(null, "Friend request canceled successfully"));
+    }
+
     @GetMapping
     @Operation(summary = "Retrieve accepted friends list")
     public ResponseEntity<ApiResponse<List<FriendResponse>>> getFriendsList() {
@@ -62,5 +70,12 @@ public class FriendController {
     public ResponseEntity<ApiResponse<List<FriendResponse>>> getPendingRequests() {
         List<FriendResponse> pending = friendService.getPendingRequests();
         return ResponseEntity.ok(ApiResponse.success(pending, "Pending requests retrieved successfully"));
+    }
+
+    @GetMapping("/suggestions")
+    @Operation(summary = "Retrieve friend suggestions based on mutual friends")
+    public ResponseEntity<ApiResponse<List<FriendSuggestionResponse>>> getFriendSuggestions() {
+        List<FriendSuggestionResponse> suggestions = friendService.getFriendSuggestions();
+        return ResponseEntity.ok(ApiResponse.success(suggestions, "Friend suggestions retrieved successfully"));
     }
 }
