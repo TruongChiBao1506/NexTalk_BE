@@ -19,6 +19,9 @@ public class GroupResponse {
     private String ownerId;
     private String ownerUsername;
     private List<ChannelResponse> channels;
+    private boolean requiresApproval;
+    private String inviteCode;
+    private int pendingApprovalCount;
     private List<GroupMemberResponse> members;
     private int memberCount;
     private LocalDateTime createdAt;

@@ -83,4 +83,25 @@ public class GroupController {
         List<GroupResponse> response = groupService.getMyGroups();
         return ResponseEntity.ok(ApiResponse.success(response, "Groups retrieved successfully"));
     }
+
+    @PostMapping("/{id}/invite-code/refresh")
+    @Operation(summary = "Refresh group invite code (admin only)")
+    public ResponseEntity<ApiResponse<GroupResponse>> refreshInviteCode(@PathVariable("id") String id) {
+        GroupResponse response = groupService.refreshInviteCode(id);
+        return ResponseEntity.ok(ApiResponse.success(response, "Invite code refreshed successfully"));
+    }
+
+    @GetMapping("/join/{code}/info")
+    @Operation(summary = "Get public info of a group by invite code")
+    public ResponseEntity<ApiResponse<PublicGroupInfoResponse>> getPublicGroupInfoByInviteCode(@PathVariable("code") String code) {
+        PublicGroupInfoResponse response = groupService.getPublicGroupInfoByInviteCode(code);
+        return ResponseEntity.ok(ApiResponse.success(response, "Group info retrieved successfully"));
+    }
+
+    @PostMapping("/join/{code}")
+    @Operation(summary = "Join a group using an invite code")
+    public ResponseEntity<ApiResponse<Void>> joinGroupByInviteCode(@PathVariable("code") String code) {
+        groupService.joinGroupByInviteCode(code);
+        return ResponseEntity.ok(ApiResponse.success(null, "Joined group successfully or request is pending"));
+    }
 }

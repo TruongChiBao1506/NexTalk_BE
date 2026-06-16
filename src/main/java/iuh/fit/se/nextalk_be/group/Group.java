@@ -20,4 +20,9 @@ public class Group extends BaseEntity {
 
     @DocumentReference(lazy = true)
     private User owner;
+
+    private boolean requiresApproval;
+
+    @org.springframework.data.mongodb.core.index.Indexed(unique = true, sparse = true)
+    private String inviteCode;
 }

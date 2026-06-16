@@ -33,6 +33,7 @@ public class GroupService {
 
     private final GroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
+    private final GroupInvitationRepository groupInvitationRepository;
     private final ConversationRepository conversationRepository;
     private final ChannelRepository channelRepository;
     private final UserRepository userRepository;
@@ -48,6 +49,8 @@ public class GroupService {
         Group group = Group.builder()
                 .name(request.getName())
                 .owner(currentUser)
+                .requiresApproval(request.isRequiresApproval())
+                .inviteCode(generateUniqueInviteCode())
                 .build();
         Group savedGroup = groupRepository.save(group);
 
@@ -137,6 +140,12 @@ public class GroupService {
             group.setAvatarUrl(avatarUrl.isEmpty() ? null : avatarUrl);
         }
 
+        boolean requiresApprovalChanged = false;
+        if (request.getRequiresApproval() != null && request.getRequiresApproval() != group.isRequiresApproval()) {
+            requiresApprovalChanged = true;
+            group.setRequiresApproval(request.getRequiresApproval());
+        }
+
         Group saved = groupRepository.save(group);
         List<Channel> channels = channelRepository.findAllByGroupId(groupId);
         if (!channels.isEmpty()) {
@@ -145,6 +154,10 @@ public class GroupService {
             }
             if (nameChanged && newName != null) {
                 createAndBroadcastSystemMessage(channels.get(0).getConversation(), currentUser, "đã đổi tên nhóm thành \"" + newName + "\".");
+            }
+            if (requiresApprovalChanged) {
+                String actionStr = group.isRequiresApproval() ? "bật" : "tắt";
+                createAndBroadcastSystemMessage(channels.get(0).getConversation(), currentUser, "đã " + actionStr + " chức năng phê duyệt thành viên.");
             }
         }
         List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
@@ -160,6 +173,7 @@ public class GroupService {
         }
 
         groupMemberRepository.deleteAll(groupMemberRepository.findAllByGroupId(groupId));
+        groupInvitationRepository.deleteAllByGroupId(groupId);
         
         List<Channel> channels = channelRepository.findAllByGroupId(groupId);
         for (Channel ch : channels) {
@@ -177,12 +191,16 @@ public class GroupService {
 
         assertCanApproveMembers(group, currentUser);
 
-        if (groupMemberRepository.existsByGroupIdAndUserId(groupId, request.getUserId())) {
+        return doAddMember(group, request.getUserId(), currentUser);
+    }
+
+    public GroupResponse doAddMember(Group group, String userId, User actor) {
+        if (groupMemberRepository.existsByGroupIdAndUserId(group.getId(), userId)) {
             throw new BadRequestException("User is already a member of this group");
         }
 
-        User newMember = userRepository.findById(request.getUserId())
-                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + request.getUserId()));
+        User newMember = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
 
         GroupMember groupMember = GroupMember.builder()
                 .group(group)
@@ -192,7 +210,7 @@ public class GroupService {
         groupMemberRepository.save(groupMember);
 
         // Also add to conversation members of all public channels
-        List<Channel> channels = channelRepository.findAllByGroupId(groupId);
+        List<Channel> channels = channelRepository.findAllByGroupId(group.getId());
         for (Channel ch : channels) {
             if (!ch.isPrivate() && ch.getConversation() != null) {
                 ch.getConversation().getMembers().add(newMember);
@@ -201,21 +219,27 @@ public class GroupService {
         }
 
         if (!channels.isEmpty() && channels.get(0).getConversation() != null) {
+            String messageContent = actor.getId().equals(newMember.getId())
+                    ? "đã tham gia nhóm bằng liên kết."
+                    : "đã thêm " + newMember.getUsername() + " vào nhóm.";
+                    
             createAndBroadcastSystemMessage(
                     channels.get(0).getConversation(),
-                    currentUser,
-                    "đã mời " + newMember.getUsername() + " vào nhóm."
+                    actor,
+                    messageContent
             );
         }
 
-        notificationService.createAndSend(
-                newMember,
-                NotificationType.GROUP_INVITE,
-                currentUser.getUsername() + " đã thêm bạn vào nhóm " + group.getName(),
-                group.getId().toString()
-        );
+        if (!actor.getId().equals(newMember.getId())) {
+            notificationService.createAndSend(
+                    newMember,
+                    NotificationType.GROUP_INVITE,
+                    actor.getUsername() + " đã thêm bạn vào nhóm " + group.getName(),
+                    group.getId().toString()
+            );
+        }
 
-        List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
+        List<GroupMember> members = groupMemberRepository.findAllByGroupId(group.getId());
         return mapToGroupResponse(group, members);
     }
 
@@ -353,6 +377,74 @@ public class GroupService {
         return role == GroupRole.OWNER || role == GroupRole.LEADER || role == GroupRole.ADMIN;
     }
 
+    private boolean isModeratorRole(GroupRole role) {
+        return role == GroupRole.OWNER || role == GroupRole.LEADER || role == GroupRole.ADMIN || role == GroupRole.DEPUTY;
+    }
+
+    private String generateUniqueInviteCode() {
+        String code;
+        do {
+            code = UUID.randomUUID().toString().replaceAll("-", "").substring(0, 10);
+        } while (groupRepository.findByInviteCode(code).isPresent());
+        return code;
+    }
+
+    public GroupResponse refreshInviteCode(String groupId) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Group group = getGroupOrThrow(groupId);
+        assertCanManageGroupSettings(group, currentUser);
+
+        group.setInviteCode(generateUniqueInviteCode());
+        Group saved = groupRepository.save(group);
+        return mapToGroupResponse(saved, groupMemberRepository.findAllByGroupId(groupId));
+    }
+
+    public PublicGroupInfoResponse getPublicGroupInfoByInviteCode(String code) {
+        Group group = groupRepository.findByInviteCode(code)
+                .orElseThrow(() -> new ResourceNotFoundException("Invalid invite code"));
+
+        int memberCount = groupMemberRepository.countByGroupId(group.getId());
+
+        return PublicGroupInfoResponse.builder()
+                .id(group.getId())
+                .name(group.getName())
+                .avatarUrl(group.getAvatarUrl())
+                .ownerUsername(group.getOwner() != null ? group.getOwner().getUsername() : "Unknown")
+                .memberCount(memberCount)
+                .requiresApproval(group.isRequiresApproval())
+                .build();
+    }
+
+    public void joinGroupByInviteCode(String code) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Group group = groupRepository.findByInviteCode(code)
+                .orElseThrow(() -> new ResourceNotFoundException("Invalid invite code"));
+
+        if (groupMemberRepository.existsByGroupIdAndUserId(group.getId(), currentUser.getId())) {
+            throw new BadRequestException("You are already a member of this group");
+        }
+
+        if (group.isRequiresApproval()) {
+            Optional<GroupInvitation> existing = groupInvitationRepository.findByGroupIdAndInviteeId(group.getId(), currentUser.getId());
+            if (existing.isPresent()) {
+                throw new BadRequestException("You already have a pending request to join this group");
+            }
+            GroupInvitation invitation = GroupInvitation.builder()
+                    .group(group)
+                    .inviter(currentUser) // User requests to join (inviter = invitee)
+                    .invitee(currentUser)
+                    .status(InvitationStatus.WAITING_APPROVAL)
+                    .build();
+            groupInvitationRepository.save(invitation);
+        } else {
+            doAddMember(group, currentUser.getId(), currentUser);
+            List<Channel> channels = channelRepository.findAllByGroupId(group.getId());
+            if (!channels.isEmpty()) {
+                createAndBroadcastSystemMessage(channels.get(0).getConversation(), currentUser, "đã tham gia nhóm bằng liên kết.");
+            }
+        }
+    }
+
     private boolean canApproveMembers(GroupRole role) {
         return isLeaderRole(role) || role == GroupRole.DEPUTY;
     }
@@ -420,6 +512,8 @@ public class GroupService {
                         .build()
                 ).collect(Collectors.toList());
 
+        int pendingApprovalCount = groupInvitationRepository.countByGroupIdAndStatus(group.getId(), InvitationStatus.WAITING_APPROVAL);
+
         return GroupResponse.builder()
                 .id(group.getId())
                 .name(group.getName())
@@ -438,6 +532,9 @@ public class GroupService {
                 .channels(channelResponses)
                 .members(memberResponses)
                 .memberCount(memberResponses.size())
+                .requiresApproval(group.isRequiresApproval())
+                .inviteCode(group.getInviteCode())
+                .pendingApprovalCount(pendingApprovalCount)
                 .createdAt(group.getCreatedAt())
                 .updatedAt(group.getUpdatedAt())
                 .build();

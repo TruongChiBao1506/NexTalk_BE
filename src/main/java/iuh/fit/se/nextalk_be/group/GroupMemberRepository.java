@@ -17,5 +17,7 @@ public interface GroupMemberRepository extends MongoRepository<GroupMember, Stri
 
     boolean existsByGroupIdAndUserId(String groupId, String userId);
 
+    int countByGroupId(String groupId);
+
     void deleteByGroupIdAndUserId(String groupId, String userId);
 }
