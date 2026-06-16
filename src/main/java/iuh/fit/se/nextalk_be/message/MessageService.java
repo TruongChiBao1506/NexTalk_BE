@@ -143,6 +143,11 @@ public class MessageService {
             }
         }
 
+        Map<String, Object> metadata = new HashMap<>();
+        if (request.getPriority() != null && !request.getPriority().isBlank()) {
+            metadata.put("priority", request.getPriority().toUpperCase());
+        }
+
         Message message = Message.builder()
                 .conversation(conversation)
                 .sender(currentUser)
@@ -152,6 +157,7 @@ public class MessageService {
                 .parentId(parentId)
                 .forwardedFromMessageId(forwardedFromMessageId)
                 .forwardedFromSenderUsername(forwardedFromSenderUsername)
+                .metadata(metadata)
                 .build();
         if (conversation.getSelfDestructSeconds() > 0) {
             message.setExpiresAt(LocalDateTime.now().plusSeconds(conversation.getSelfDestructSeconds()));

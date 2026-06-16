@@ -23,4 +23,6 @@ public class MessageRequest {
     private List<MessageAttachment> attachments;
 
     private String parentId;
+
+    private String priority; // IMPORTANT, URGENT
 }
