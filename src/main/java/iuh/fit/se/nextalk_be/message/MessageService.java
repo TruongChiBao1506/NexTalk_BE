@@ -214,12 +214,24 @@ public class MessageService {
                     }
                 }
 
+                String priorityPrefix = "";
+                String pushTitlePrefix = "";
+                if (savedMessage.getMetadata() != null && savedMessage.getMetadata().get("priority") != null) {
+                    if ("IMPORTANT".equals(savedMessage.getMetadata().get("priority"))) {
+                        priorityPrefix = "[Quan trọng] ";
+                        pushTitlePrefix = "⚠️ ";
+                    } else if ("URGENT".equals(savedMessage.getMetadata().get("priority"))) {
+                        priorityPrefix = "[Khẩn cấp] ";
+                        pushTitlePrefix = "🚨 ";
+                    }
+                }
+
                 String notificationContent;
                 if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
-                    notificationContent = "Bạn có tin nhắn mới";
+                    notificationContent = pushTitlePrefix + "Bạn có tin nhắn mới";
                 } else {
-                    notificationContent = "Bạn có tin nhắn mới từ " + currentUser.getUsername() + ": " + 
-                            (contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
+                    notificationContent = pushTitlePrefix + "Bạn có tin nhắn mới từ " + currentUser.getUsername() + ": " + 
+                            priorityPrefix + (contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
                 }
 
                 notificationService.createAndSend(
@@ -233,7 +245,13 @@ public class MessageService {
                 if ("OFFLINE".equals(presenceService.getUserStatus(member.getId()))) {
                     User dbMember = userRepository.findById(member.getId()).orElse(member);
                     if (dbMember.getFcmTokens() != null && !dbMember.getFcmTokens().isEmpty()) {
-                        fcmService.sendPushNotificationToTokens(dbMember.getFcmTokens(), "Tin nhắn mới từ " + currentUser.getUsername(), contentPreview);
+                        String pushTitle = pushTitlePrefix + "Tin nhắn mới từ " + currentUser.getUsername();
+                        String pushBody = priorityPrefix + contentPreview;
+                        if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
+                            pushTitle = pushTitlePrefix + "NexTalk";
+                            pushBody = "Bạn có tin nhắn mới";
+                        }
+                        fcmService.sendPushNotificationToTokens(dbMember.getFcmTokens(), pushTitle, pushBody);
                     }
                 }
             }
