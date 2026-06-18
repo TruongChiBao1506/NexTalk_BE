@@ -8,6 +8,7 @@ import iuh.fit.se.nextalk_be.user.User;
 import iuh.fit.se.nextalk_be.user.UserRepository;
 import iuh.fit.se.nextalk_be.user.UserService;
 import iuh.fit.se.nextalk_be.user.dto.UserProfileResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -52,6 +53,9 @@ public class AuthServiceTest {
 
     @Mock
     private AuthenticationManager authenticationManager;
+
+    @Mock
+    private HttpServletRequest httpRequest;
 
     @InjectMocks
     private AuthService authService;
@@ -135,15 +139,25 @@ public class AuthServiceTest {
         when(userRepository.findByEmail(loginRequest.getEmail())).thenReturn(Optional.of(user));
         when(jwtService.generateAccessToken(user)).thenReturn("accessToken");
         when(jwtService.generateRefreshToken(user)).thenReturn("refreshToken");
+        when(jwtService.getRefreshExpirationMs()).thenReturn(604800000L);
+        when(httpRequest.getHeader("X-Forwarded-For")).thenReturn(null);
+        when(httpRequest.getHeader("X-Real-IP")).thenReturn(null);
+        when(httpRequest.getRemoteAddr()).thenReturn("127.0.0.1");
+        when(httpRequest.getHeader("User-Agent")).thenReturn("JUnit Browser");
         when(userService.mapToProfileResponse(user)).thenReturn(UserProfileResponse.builder().email(user.getEmail()).build());
 
-        LoginResponse response = authService.login(loginRequest);
+        LoginResponse response = authService.login(loginRequest, httpRequest);
 
         assertNotNull(response);
         assertEquals("accessToken", response.getAccessToken());
         assertEquals("refreshToken", response.getRefreshToken());
         verify(authenticationManager, times(1)).authenticate(any(UsernamePasswordAuthenticationToken.class));
-        verify(refreshTokenRepository, times(1)).save(any(RefreshToken.class));
+        verify(refreshTokenRepository, times(1)).save(argThat(token ->
+                "refreshToken".equals(token.getToken())
+                        && "127.0.0.1".equals(token.getIpAddress())
+                        && "JUnit Browser".equals(token.getUserAgent())
+                        && token.getLastUsedAt() != null
+        ));
     }
 
     @Test
@@ -152,7 +166,7 @@ public class AuthServiceTest {
 
         when(userRepository.findByEmail(loginRequest.getEmail())).thenReturn(Optional.of(user));
 
-        assertThrows(BadRequestException.class, () -> authService.login(loginRequest));
+        assertThrows(BadRequestException.class, () -> authService.login(loginRequest, httpRequest));
         verify(refreshTokenRepository, never()).save(any(RefreshToken.class));
     }
 }

@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Duration;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -42,7 +43,7 @@ public class AuthController {
     public ResponseEntity<ApiResponse<LoginResponse>> login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest) {
         String identity = rateLimitService.clientIdentity(httpRequest) + ":" + request.getEmail();
         rateLimitService.check("auth:login", identity, 8, Duration.ofMinutes(5));
-        LoginResponse response = authService.login(request);
+        LoginResponse response = authService.login(request, httpRequest);
         return ResponseEntity.ok(ApiResponse.success(response, "Login successful"));
     }
 
@@ -67,7 +68,7 @@ public class AuthController {
     @Operation(summary = "Generate new access token using refresh token")
     public ResponseEntity<ApiResponse<TokenRefreshResponse>> refresh(@Valid @RequestBody TokenRefreshRequest request, HttpServletRequest httpRequest) {
         rateLimitService.check("auth:refresh", rateLimitService.clientIdentity(httpRequest), 30, Duration.ofMinutes(1));
-        TokenRefreshResponse response = authService.refreshToken(request);
+        TokenRefreshResponse response = authService.refreshToken(request, httpRequest);
         return ResponseEntity.ok(ApiResponse.success(response, "Token refreshed successfully"));
     }
 
@@ -82,6 +83,19 @@ public class AuthController {
     @Operation(summary = "Authenticate user with Google ID Token")
     public ResponseEntity<ApiResponse<LoginResponse>> googleLogin(@Valid @RequestBody GoogleLoginRequest request, HttpServletRequest httpRequest) {
         rateLimitService.check("auth:google-login", rateLimitService.clientIdentity(httpRequest), 10, Duration.ofMinutes(5));
-        return ResponseEntity.ok(ApiResponse.success(authService.googleLogin(request), "Google Login successful"));
+        return ResponseEntity.ok(ApiResponse.success(authService.googleLogin(request, httpRequest), "Google Login successful"));
+    }
+
+    @GetMapping("/sessions")
+    @Operation(summary = "List active login sessions for current user")
+    public ResponseEntity<ApiResponse<List<SessionResponse>>> getSessions() {
+        return ResponseEntity.ok(ApiResponse.success(authService.getSessions(), "Sessions retrieved successfully"));
+    }
+
+    @DeleteMapping("/sessions/{id}")
+    @Operation(summary = "Revoke a login session by ID")
+    public ResponseEntity<ApiResponse<Void>> revokeSession(@PathVariable("id") String id) {
+        authService.revokeSession(id);
+        return ResponseEntity.ok(ApiResponse.success(null, "Session revoked successfully"));
     }
 }

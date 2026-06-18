@@ -24,4 +24,10 @@ public class RefreshToken extends BaseEntity {
     private String token;
 
     private LocalDateTime expiresAt;
+
+    private String userAgent;
+
+    private String ipAddress;
+
+    private LocalDateTime lastUsedAt;
 }

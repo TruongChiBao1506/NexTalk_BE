@@ -5,6 +5,7 @@ import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
 import iuh.fit.se.nextalk_be.security.JwtService;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.user.User;
 import iuh.fit.se.nextalk_be.user.UserRepository;
 import iuh.fit.se.nextalk_be.user.UserService;
@@ -22,8 +23,10 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -39,6 +42,7 @@ public class AuthService {
     private final MailService mailService;
     private final UserService userService;
     private final AuthenticationManager authenticationManager;
+    private final RateLimitService rateLimitService;
 
     @Value("${server.port:8080}")
     private String serverPort;
@@ -110,7 +114,7 @@ public class AuthService {
     }
 
     // @Transactional
-    public LoginResponse login(LoginRequest request) {
+    public LoginResponse login(LoginRequest request, HttpServletRequest httpRequest) {
         // Authenticate user
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
@@ -127,7 +131,7 @@ public class AuthService {
         userRepository.save(user);
 
         String accessToken = jwtService.generateAccessToken(user);
-        String refreshToken = issueRefreshToken(user);
+        String refreshToken = issueRefreshToken(user, httpRequest);
 
         UserProfileResponse userProfile = userService.mapToProfileResponse(user);
 
@@ -139,7 +143,7 @@ public class AuthService {
     }
 
     // @Transactional
-    public TokenRefreshResponse refreshToken(TokenRefreshRequest request) {
+    public TokenRefreshResponse refreshToken(TokenRefreshRequest request, HttpServletRequest httpRequest) {
         String requestRefreshToken = request.getRefreshToken();
 
         RefreshToken token = refreshTokenRepository.findByToken(requestRefreshToken)
@@ -157,6 +161,9 @@ public class AuthService {
         // Rotate the same token record to avoid a delete/save gap.
         token.setToken(newRefreshToken);
         token.setExpiresAt(refreshTokenExpiresAt());
+        token.setLastUsedAt(LocalDateTime.now());
+        token.setIpAddress(resolveIpAddress(httpRequest));
+        token.setUserAgent(resolveUserAgent(httpRequest));
         refreshTokenRepository.save(token);
 
         return TokenRefreshResponse.builder()
@@ -165,12 +172,15 @@ public class AuthService {
                 .build();
     }
 
-    private String issueRefreshToken(User user) {
+    private String issueRefreshToken(User user, HttpServletRequest httpRequest) {
         String refreshToken = jwtService.generateRefreshToken(user);
         RefreshToken refreshTokenEntity = RefreshToken.builder()
                 .user(user)
                 .token(refreshToken)
                 .expiresAt(refreshTokenExpiresAt())
+                .ipAddress(resolveIpAddress(httpRequest))
+                .userAgent(resolveUserAgent(httpRequest))
+                .lastUsedAt(LocalDateTime.now())
                 .build();
         refreshTokenRepository.save(refreshTokenEntity);
         return refreshToken;
@@ -232,7 +242,7 @@ public class AuthService {
         passwordResetTokenRepository.save(resetToken);
     }
 
-    public LoginResponse googleLogin(GoogleLoginRequest request) {
+    public LoginResponse googleLogin(GoogleLoginRequest request, HttpServletRequest httpRequest) {
         try {
             GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(new NetHttpTransport(), new GsonFactory())
                     .setAudience(java.util.Collections.singletonList(googleClientId))
@@ -275,7 +285,7 @@ public class AuthService {
 
                 // Generate tokens
                 String accessToken = jwtService.generateAccessToken(user);
-                String refreshToken = issueRefreshToken(user);
+                String refreshToken = issueRefreshToken(user, httpRequest);
 
                 UserProfileResponse userProfile = userService.mapToProfileResponse(user);
 
@@ -303,5 +313,66 @@ public class AuthService {
                         refreshTokenRepository.delete(token);
                     });
         }
+    }
+
+    public List<SessionResponse> getSessions() {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        return refreshTokenRepository.findByUserIdOrderByCreatedAtDesc(currentUser.getId())
+                .stream()
+                .map(this::mapToSessionResponse)
+                .toList();
+    }
+
+    public void revokeSession(String id) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        RefreshToken session = refreshTokenRepository.findByIdAndUserId(id, currentUser.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Session not found"));
+        refreshTokenRepository.delete(session);
+    }
+
+    private SessionResponse mapToSessionResponse(RefreshToken token) {
+        return SessionResponse.builder()
+                .id(token.getId())
+                .deviceName(resolveDeviceName(token.getUserAgent()))
+                .userAgent(token.getUserAgent())
+                .ipAddress(token.getIpAddress())
+                .createdAt(token.getCreatedAt())
+                .lastUsedAt(token.getLastUsedAt())
+                .expiresAt(token.getExpiresAt())
+                .build();
+    }
+
+    private String resolveIpAddress(HttpServletRequest request) {
+        return rateLimitService.clientIdentity(request);
+    }
+
+    private String resolveUserAgent(HttpServletRequest request) {
+        if (request == null) {
+            return "Unknown device";
+        }
+        String userAgent = request.getHeader("User-Agent");
+        if (userAgent == null || userAgent.isBlank()) {
+            return "Unknown device";
+        }
+        return userAgent.length() > 300 ? userAgent.substring(0, 300) : userAgent;
+    }
+
+    private String resolveDeviceName(String userAgent) {
+        if (userAgent == null || userAgent.isBlank()) {
+            return "Unknown device";
+        }
+        String ua = userAgent.toLowerCase();
+        String browser = ua.contains("edg/") ? "Edge"
+                : ua.contains("chrome/") ? "Chrome"
+                : ua.contains("firefox/") ? "Firefox"
+                : ua.contains("safari/") ? "Safari"
+                : "Browser";
+        String platform = ua.contains("windows") ? "Windows"
+                : ua.contains("mac os") ? "macOS"
+                : ua.contains("android") ? "Android"
+                : ua.contains("iphone") || ua.contains("ipad") ? "iOS"
+                : ua.contains("linux") ? "Linux"
+                : "Unknown OS";
+        return browser + " on " + platform;
     }
 }
