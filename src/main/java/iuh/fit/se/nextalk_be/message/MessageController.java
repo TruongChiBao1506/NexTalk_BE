@@ -189,6 +189,14 @@ public class MessageController {
         }
     }
 
+    @MessageMapping("/chat.typing")
+    @Operation(summary = "Broadcast typing indicator via STOMP WebSocket")
+    public void sendTypingIndicator(@Valid @Payload TypingIndicatorRequest request, Principal principal) {
+        if (principal != null) {
+            messageService.broadcastTypingIndicator(request, principal.getName());
+        }
+    }
+
     @MessageMapping("/chat.delivered")
     @Operation(summary = "Mark conversation messages as delivered via WebSocket")
     public void markAsDeliveredWebSocket(@Valid @Payload MessageStatusUpdateRequest request, Principal principal) {

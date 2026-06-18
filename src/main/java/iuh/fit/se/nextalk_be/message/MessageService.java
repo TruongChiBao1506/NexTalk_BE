@@ -70,6 +70,42 @@ public class MessageService {
         return sendMessageWithUser(request, currentUser);
     }
 
+    public void broadcastTypingIndicator(TypingIndicatorRequest request, String senderEmail) {
+        User currentUser = userRepository.findByEmail(senderEmail)
+                .or(() -> userRepository.findByUsername(senderEmail))
+                .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
+
+        Conversation conversation = conversationRepository.findById(request.getConversationId())
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + request.getConversationId()));
+
+        boolean isMember = conversation.getMembers().stream()
+                .anyMatch(member -> member.getId().equals(currentUser.getId()));
+        if (!isMember) {
+            throw new BadRequestException("You are not a member of this conversation");
+        }
+
+        ensurePrivateMessageAllowed(conversation, currentUser);
+
+        TypingIndicatorEvent event = TypingIndicatorEvent.builder()
+                .type("TYPING")
+                .conversationId(conversation.getId())
+                .userId(currentUser.getId())
+                .username(currentUser.getUsername())
+                .typing(request.isTyping())
+                .updatedAt(LocalDateTime.now())
+                .build();
+
+        for (User member : conversation.getMembers()) {
+            if (!member.getId().equals(currentUser.getId())) {
+                messagingTemplate.convertAndSendToUser(
+                        member.getUsername(),
+                        "/queue/private",
+                        event
+                );
+            }
+        }
+    }
+
     private MessageResponse sendMessageWithUser(MessageRequest request, User currentUser) {
         return sendMessageWithUser(request, currentUser, null, null);
     }
