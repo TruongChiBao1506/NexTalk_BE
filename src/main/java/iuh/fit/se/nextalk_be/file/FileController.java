@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import iuh.fit.se.nextalk_be.common.ApiResponse;
 import iuh.fit.se.nextalk_be.file.dto.FileUploadResponse;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Map;
 
 @RestController
@@ -22,10 +24,12 @@ import java.util.Map;
 public class FileController {
 
     private final CloudinaryService cloudinaryService;
+    private final RateLimitService rateLimitService;
 
     @PostMapping("/upload")
     @Operation(summary = "Upload a file to Cloudinary")
     public ResponseEntity<ApiResponse<FileUploadResponse>> uploadFile(@RequestParam("file") MultipartFile file) {
+        rateLimitService.check("file:upload", rateLimitService.currentUserIdentity(), 30, Duration.ofMinutes(10));
         if (file.isEmpty()) {
             return ResponseEntity.badRequest().body(ApiResponse.error("File is empty", null));
         }

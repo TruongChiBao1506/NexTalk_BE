@@ -5,6 +5,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import iuh.fit.se.nextalk_be.common.ApiResponse;
 import iuh.fit.se.nextalk_be.conversation.dto.ConversationResponse;
 import iuh.fit.se.nextalk_be.conversation.dto.UpdateSelfDestructRequest;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.summary.ConversationSummaryService;
 import iuh.fit.se.nextalk_be.summary.dto.ConversationSummaryResponse;
 import jakarta.validation.Valid;
@@ -12,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Duration;
 import java.util.List;
 
 @RestController
@@ -22,6 +24,7 @@ public class ConversationController {
 
     private final ConversationService conversationService;
     private final ConversationSummaryService conversationSummaryService;
+    private final RateLimitService rateLimitService;
 
     @PostMapping("/private/{friendId}")
     @Operation(summary = "Get or create a private conversation with a friend")
@@ -78,6 +81,7 @@ public class ConversationController {
     @GetMapping("/search")
     @Operation(summary = "Search conversations by name or username (partial match)")
     public ResponseEntity<ApiResponse<List<ConversationResponse>>> searchConversations(@RequestParam("query") String query) {
+        rateLimitService.check("conversation:search", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(1));
         List<ConversationResponse> response = conversationService.searchConversations(query);
         return ResponseEntity.ok(ApiResponse.success(response, "Conversations retrieved successfully"));
     }

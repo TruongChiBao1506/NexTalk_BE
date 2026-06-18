@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import iuh.fit.se.nextalk_be.common.ApiResponse;
 import iuh.fit.se.nextalk_be.message.dto.*;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -15,6 +16,7 @@ import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
+import java.time.Duration;
 import java.util.List;
 
 @RestController
@@ -23,6 +25,7 @@ import java.util.List;
 public class MessageController {
 
     private final MessageService messageService;
+    private final RateLimitService rateLimitService;
 
     @PostMapping("/api/messages")
     @Operation(summary = "Send a new message to a conversation (REST API)")
@@ -177,6 +180,7 @@ public class MessageController {
             @RequestParam("query") String query,
             @RequestParam(value = "conversationId", required = false) String conversationId
     ) {
+        rateLimitService.check("message:search", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(1));
         List<MessageResponse> response = messageService.searchMessages(query, conversationId);
         return ResponseEntity.ok(ApiResponse.success(response, "Messages search completed successfully"));
     }

@@ -22,6 +22,7 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -126,15 +127,7 @@ public class AuthService {
         userRepository.save(user);
 
         String accessToken = jwtService.generateAccessToken(user);
-        String refreshToken = jwtService.generateRefreshToken(user);
-
-        // Save refresh token to DB
-        RefreshToken rt = RefreshToken.builder()
-                .user(user)
-                .token(refreshToken)
-                .expiresAt(LocalDateTime.now().plusDays(7))
-                .build();
-        refreshTokenRepository.save(rt);
+        String refreshToken = issueRefreshToken(user);
 
         UserProfileResponse userProfile = userService.mapToProfileResponse(user);
 
@@ -150,7 +143,7 @@ public class AuthService {
         String requestRefreshToken = request.getRefreshToken();
 
         RefreshToken token = refreshTokenRepository.findByToken(requestRefreshToken)
-                .orElseThrow(() -> new UnauthorizedException("Refresh token is not found in database"));
+                .orElseGet(() -> handleMissingRefreshToken(requestRefreshToken));
 
         if (token.getExpiresAt().isBefore(LocalDateTime.now())) {
             refreshTokenRepository.delete(token);
@@ -161,20 +154,43 @@ public class AuthService {
         String newAccessToken = jwtService.generateAccessToken(user);
         String newRefreshToken = jwtService.generateRefreshToken(user);
 
-        // Delete old token and save new one (Token rotation)
-        refreshTokenRepository.delete(token);
-
-        RefreshToken newRt = RefreshToken.builder()
-                .user(user)
-                .token(newRefreshToken)
-                .expiresAt(LocalDateTime.now().plusDays(7))
-                .build();
-        refreshTokenRepository.save(newRt);
+        // Rotate the same token record to avoid a delete/save gap.
+        token.setToken(newRefreshToken);
+        token.setExpiresAt(refreshTokenExpiresAt());
+        refreshTokenRepository.save(token);
 
         return TokenRefreshResponse.builder()
                 .accessToken(newAccessToken)
                 .refreshToken(newRefreshToken)
                 .build();
+    }
+
+    private String issueRefreshToken(User user) {
+        String refreshToken = jwtService.generateRefreshToken(user);
+        RefreshToken refreshTokenEntity = RefreshToken.builder()
+                .user(user)
+                .token(refreshToken)
+                .expiresAt(refreshTokenExpiresAt())
+                .build();
+        refreshTokenRepository.save(refreshTokenEntity);
+        return refreshToken;
+    }
+
+    private LocalDateTime refreshTokenExpiresAt() {
+        return LocalDateTime.now().plus(Duration.ofMillis(jwtService.getRefreshExpirationMs()));
+    }
+
+    private RefreshToken handleMissingRefreshToken(String requestRefreshToken) {
+        try {
+            String subject = jwtService.extractUsername(requestRefreshToken);
+            userRepository.findByEmail(subject)
+                    .or(() -> userRepository.findByUsername(subject))
+                    .ifPresent(refreshTokenRepository::deleteByUser);
+        } catch (Exception ignored) {
+            // Invalid or malformed refresh token. Do not disclose whether it matched an account.
+        }
+
+        throw new UnauthorizedException("Refresh token was reused or revoked. Please sign in again.");
     }
 
     public void forgotPassword(ForgotPasswordRequest request) {
@@ -259,15 +275,7 @@ public class AuthService {
 
                 // Generate tokens
                 String accessToken = jwtService.generateAccessToken(user);
-                String refreshToken = jwtService.generateRefreshToken(user);
-
-                RefreshToken refreshTokenEntity = RefreshToken.builder()
-                        .user(user)
-                        .token(refreshToken)
-                        .expiresAt(LocalDateTime.now().plusDays(7))
-                        .build();
-
-                refreshTokenRepository.save(refreshTokenEntity);
+                String refreshToken = issueRefreshToken(user);
 
                 UserProfileResponse userProfile = userService.mapToProfileResponse(user);
 

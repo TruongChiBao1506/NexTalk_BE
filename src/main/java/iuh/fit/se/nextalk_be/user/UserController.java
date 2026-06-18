@@ -3,6 +3,7 @@ package iuh.fit.se.nextalk_be.user;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import iuh.fit.se.nextalk_be.common.ApiResponse;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.user.dto.ChangePasswordRequest;
 import iuh.fit.se.nextalk_be.user.dto.ChatPinRequest;
 import iuh.fit.se.nextalk_be.user.dto.UpdateProfileRequest;
@@ -12,6 +13,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Duration;
+
 @RestController
 @RequestMapping("/api/users")
 @RequiredArgsConstructor
@@ -19,6 +22,7 @@ import org.springframework.web.bind.annotation.*;
 public class UserController {
 
     private final UserService userService;
+    private final RateLimitService rateLimitService;
 
     @GetMapping("/me")
     @Operation(summary = "Get profile of the currently logged-in user")
@@ -44,6 +48,7 @@ public class UserController {
     @GetMapping("/search")
     @Operation(summary = "Search users by email or username (partial match)")
     public ResponseEntity<ApiResponse<java.util.List<UserProfileResponse>>> searchUsers(@RequestParam("query") String query) {
+        rateLimitService.check("user:search", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(1));
         java.util.List<UserProfileResponse> response = userService.searchUsersByQuery(query);
         return ResponseEntity.ok(ApiResponse.success(response, "Users retrieved successfully"));
     }

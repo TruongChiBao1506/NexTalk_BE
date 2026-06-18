@@ -28,6 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import iuh.fit.se.nextalk_be.notification.NotificationService;
 import iuh.fit.se.nextalk_be.notification.NotificationType;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
 import org.springframework.data.domain.PageImpl;
 import java.util.stream.Collectors;
 import java.util.function.Function;
@@ -35,10 +36,14 @@ import java.util.function.Function;
 import java.time.*;
 import java.time.format.DateTimeParseException;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
 public class MessageService {
+    private static final Pattern QUILL_MENTION_ID_PATTERN = Pattern.compile("data-id=[\"']([^\"']+)[\"']");
+    private static final Pattern PLAIN_MENTION_PATTERN = Pattern.compile("(^|\\s)@([\\p{L}\\p{N}_\\.\\-]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     private final MessageRepository messageRepository;
     private final ConversationRepository conversationRepository;
@@ -55,6 +60,7 @@ public class MessageService {
     private final ChannelRepository channelRepository;
     private final iuh.fit.se.nextalk_be.fcm.FCMService fcmService;
     private final iuh.fit.se.nextalk_be.presence.PresenceService presenceService;
+    private final RateLimitService rateLimitService;
 
     // @Transactional
     public MessageResponse sendMessage(MessageRequest request) {
@@ -116,6 +122,7 @@ public class MessageService {
             String forwardedFromMessageId,
             String forwardedFromSenderUsername
     ) {
+        rateLimitService.check("message:send", currentUser.getId(), 120, Duration.ofMinutes(1));
         Conversation conversation = conversationRepository.findById(request.getConversationId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + request.getConversationId()));
 
@@ -182,6 +189,13 @@ public class MessageService {
         Map<String, Object> metadata = new HashMap<>();
         if (request.getPriority() != null && !request.getPriority().isBlank()) {
             metadata.put("priority", request.getPriority().toUpperCase());
+        }
+        MentionTargets mentionTargets = resolveMentionTargets(content, conversation, currentUser);
+        if (mentionTargets.mentionAll()) {
+            metadata.put("mentionAll", true);
+        }
+        if (!mentionTargets.userIds().isEmpty()) {
+            metadata.put("mentionedUserIds", new ArrayList<>(mentionTargets.userIds()));
         }
 
         Message message = Message.builder()
@@ -262,9 +276,15 @@ public class MessageService {
                     }
                 }
 
+                boolean isMentioned = isMemberMentioned(savedMessage, member);
                 String notificationContent;
                 if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
-                    notificationContent = pushTitlePrefix + "Bạn có tin nhắn mới";
+                    notificationContent = isMentioned
+                            ? pushTitlePrefix + "Bạn được nhắc trong một cuộc trò chuyện"
+                            : pushTitlePrefix + "Bạn có tin nhắn mới";
+                } else if (isMentioned) {
+                    notificationContent = pushTitlePrefix + currentUser.getUsername() + " đã nhắc tới bạn: "
+                            + priorityPrefix + (contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
                 } else {
                     notificationContent = pushTitlePrefix + "Bạn có tin nhắn mới từ " + currentUser.getUsername() + ": " + 
                             priorityPrefix + (contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
@@ -272,7 +292,7 @@ public class MessageService {
 
                 notificationService.createAndSend(
                         member,
-                        NotificationType.NEW_MESSAGE,
+                        isMentioned ? NotificationType.MENTION : NotificationType.NEW_MESSAGE,
                         notificationContent,
                         conversation.getId().toString()
                 );
@@ -281,11 +301,13 @@ public class MessageService {
                 if ("OFFLINE".equals(presenceService.getUserStatus(member.getId()))) {
                     User dbMember = userRepository.findById(member.getId()).orElse(member);
                     if (dbMember.getFcmTokens() != null && !dbMember.getFcmTokens().isEmpty()) {
-                        String pushTitle = pushTitlePrefix + "Tin nhắn mới từ " + currentUser.getUsername();
+                        String pushTitle = pushTitlePrefix + (isMentioned
+                                ? currentUser.getUsername() + " đã nhắc tới bạn"
+                                : "Tin nhắn mới từ " + currentUser.getUsername());
                         String pushBody = priorityPrefix + contentPreview;
                         if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
                             pushTitle = pushTitlePrefix + "NexTalk";
-                            pushBody = "Bạn có tin nhắn mới";
+                            pushBody = isMentioned ? "Bạn được nhắc trong một cuộc trò chuyện" : "Bạn có tin nhắn mới";
                         }
                         fcmService.sendPushNotificationToTokens(dbMember.getFcmTokens(), pushTitle, pushBody);
                     }
@@ -295,6 +317,86 @@ public class MessageService {
 
         return response;
     }
+
+    private MentionTargets resolveMentionTargets(String content, Conversation conversation, User currentUser) {
+        if (content == null || content.isBlank()) {
+            return new MentionTargets(false, Set.of());
+        }
+
+        boolean mentionAll = false;
+        Set<String> mentionedUserIds = new HashSet<>();
+        Map<String, User> membersById = conversation.getMembers().stream()
+                .collect(Collectors.toMap(User::getId, Function.identity(), (first, second) -> first));
+        Map<String, User> membersByUsername = conversation.getMembers().stream()
+                .collect(Collectors.toMap(
+                        member -> member.getUsername().toLowerCase(Locale.ROOT),
+                        Function.identity(),
+                        (first, second) -> first
+                ));
+
+        Matcher idMatcher = QUILL_MENTION_ID_PATTERN.matcher(content);
+        while (idMatcher.find()) {
+            String mentionId = idMatcher.group(1);
+            if ("all".equalsIgnoreCase(mentionId)) {
+                mentionAll = conversation.getType() == ConversationType.GROUP;
+                continue;
+            }
+
+            User mentioned = membersById.get(mentionId);
+            if (mentioned != null && !mentioned.getId().equals(currentUser.getId())) {
+                mentionedUserIds.add(mentioned.getId());
+            }
+        }
+
+        String plainText = content
+                .replaceAll("<[^>]*>", " ")
+                .replace("&nbsp;", " ")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", " ");
+        Matcher plainMatcher = PLAIN_MENTION_PATTERN.matcher(plainText);
+        while (plainMatcher.find()) {
+            String token = plainMatcher.group(2);
+            if ("all".equalsIgnoreCase(token)) {
+                mentionAll = conversation.getType() == ConversationType.GROUP;
+                continue;
+            }
+
+            User mentioned = membersByUsername.get(token.toLowerCase(Locale.ROOT));
+            if (mentioned != null && !mentioned.getId().equals(currentUser.getId())) {
+                mentionedUserIds.add(mentioned.getId());
+            }
+        }
+
+        if (mentionAll) {
+            conversation.getMembers().stream()
+                    .filter(member -> !member.getId().equals(currentUser.getId()))
+                    .map(User::getId)
+                    .forEach(mentionedUserIds::add);
+        }
+
+        return new MentionTargets(mentionAll, mentionedUserIds);
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean isMemberMentioned(Message message, User member) {
+        if (message.getMetadata() == null || member == null) {
+            return false;
+        }
+
+        if (Boolean.TRUE.equals(message.getMetadata().get("mentionAll"))) {
+            return true;
+        }
+
+        Object rawMentionedIds = message.getMetadata().get("mentionedUserIds");
+        if (rawMentionedIds instanceof Collection<?> mentionedIds) {
+            return mentionedIds.stream().anyMatch(id -> member.getId().equals(String.valueOf(id)));
+        }
+
+        return false;
+    }
+
+    private record MentionTargets(boolean mentionAll, Set<String> userIds) {}
 
     private void ensurePrivateMessageAllowed(Conversation conversation, User currentUser) {
         if (conversation.getType() != ConversationType.PRIVATE) {

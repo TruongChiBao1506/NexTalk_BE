@@ -3,11 +3,13 @@ package iuh.fit.se.nextalk_be.chatrequest;
 import iuh.fit.se.nextalk_be.chatrequest.dto.ChatRequestResponse;
 import iuh.fit.se.nextalk_be.chatrequest.dto.CreateChatRequest;
 import iuh.fit.se.nextalk_be.common.ApiResponse;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Duration;
 import java.util.List;
 
 @RestController
@@ -16,9 +18,11 @@ import java.util.List;
 public class ChatRequestController {
 
     private final ChatRequestService chatRequestService;
+    private final RateLimitService rateLimitService;
 
     @PostMapping
     public ResponseEntity<ApiResponse<ChatRequestResponse>> create(@Valid @RequestBody CreateChatRequest request) {
+        rateLimitService.check("chat-request:create", rateLimitService.currentUserIdentity(), 10, Duration.ofHours(1));
         return ResponseEntity.ok(ApiResponse.success(chatRequestService.create(request), "Chat request sent successfully"));
     }
 

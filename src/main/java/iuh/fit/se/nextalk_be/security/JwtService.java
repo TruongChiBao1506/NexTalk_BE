@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Function;
 
 @Service
@@ -57,7 +58,14 @@ public class JwtService {
     }
 
     public String generateRefreshToken(UserDetails userDetails) {
-        return buildToken(new HashMap<>(), userDetails, jwtRefreshExpirationMs);
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("typ", "refresh");
+        claims.put("jti", UUID.randomUUID().toString());
+        return buildToken(claims, userDetails, jwtRefreshExpirationMs);
+    }
+
+    public long getRefreshExpirationMs() {
+        return jwtRefreshExpirationMs;
     }
 
     private String buildToken(Map<String, Object> extraClaims, UserDetails userDetails, long expiration) {
