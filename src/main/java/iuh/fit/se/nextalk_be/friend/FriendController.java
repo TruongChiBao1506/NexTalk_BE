@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import iuh.fit.se.nextalk_be.common.ApiResponse;
 import iuh.fit.se.nextalk_be.friend.dto.FriendResponse;
+import iuh.fit.se.nextalk_be.friend.dto.FriendRelationStatusResponse;
 import iuh.fit.se.nextalk_be.friend.dto.FriendSuggestionResponse;
 import iuh.fit.se.nextalk_be.friend.dto.FriendshipAcceptRequest;
 import iuh.fit.se.nextalk_be.friend.dto.FriendshipAcceptResponse;
@@ -70,6 +71,13 @@ public class FriendController {
     public ResponseEntity<ApiResponse<List<FriendResponse>>> getPendingRequests() {
         List<FriendResponse> pending = friendService.getPendingRequests();
         return ResponseEntity.ok(ApiResponse.success(pending, "Pending requests retrieved successfully"));
+    }
+
+    @GetMapping("/{userId}/status")
+    @Operation(summary = "Retrieve friendship status with a user")
+    public ResponseEntity<ApiResponse<FriendRelationStatusResponse>> getFriendRelationStatus(@PathVariable("userId") String userId) {
+        FriendRelationStatusResponse status = friendService.getFriendRelationStatus(userId);
+        return ResponseEntity.ok(ApiResponse.success(status, "Friend relation status retrieved successfully"));
     }
 
     @GetMapping("/suggestions")

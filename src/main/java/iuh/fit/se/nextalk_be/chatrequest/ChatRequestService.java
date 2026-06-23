@@ -1,6 +1,7 @@
 package iuh.fit.se.nextalk_be.chatrequest;
 
 import iuh.fit.se.nextalk_be.block.UserBlockRepository;
+import iuh.fit.se.nextalk_be.channel.ChannelRepository;
 import iuh.fit.se.nextalk_be.chatrequest.dto.ChatRequestResponse;
 import iuh.fit.se.nextalk_be.chatrequest.dto.CreateChatRequest;
 import iuh.fit.se.nextalk_be.conversation.Conversation;
@@ -26,6 +27,7 @@ import org.bson.types.ObjectId;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -43,6 +45,7 @@ public class ChatRequestService {
     private final MessageStatusRepository messageStatusRepository;
     private final NotificationService notificationService;
     private final UserBlockRepository userBlockRepository;
+    private final ChannelRepository channelRepository;
 
     public ChatRequestResponse create(CreateChatRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
@@ -81,10 +84,37 @@ public class ChatRequestService {
             throw new BadRequestException("Daily stranger message limit reached. Please try again tomorrow");
         }
 
+        Message sharedMessage = null;
+        if (request.getSharedMessageId() != null && !request.getSharedMessageId().isBlank()) {
+            sharedMessage = messageRepository.findById(request.getSharedMessageId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Shared message not found"));
+            boolean canReadSharedMessage = sharedMessage.getConversation().getMembers().stream()
+                    .anyMatch(member -> member.getId().equals(currentUser.getId()));
+            if (!canReadSharedMessage || sharedMessage.isRecalled()
+                    || sharedMessage.getMessageType() == MessageType.SYSTEM
+                    || sharedMessage.getMessageType() == MessageType.POLL) {
+                throw new BadRequestException("This message cannot be shared");
+            }
+            if (channelRepository.findByConversationId(sharedMessage.getConversation().getId())
+                    .map(channel -> channel.isPrivate())
+                    .orElse(false)) {
+                throw new BadRequestException("Messages from private channels cannot be shared to strangers");
+            }
+        }
+        if (sharedMessage == null && (request.getMessage() == null || request.getMessage().isBlank())) {
+            throw new BadRequestException("Message is required");
+        }
+
         ChatRequest saved = chatRequestRepository.save(ChatRequest.builder()
                 .sender(currentUser)
                 .receiver(receiver)
-                .message(request.getMessage() == null ? "" : request.getMessage().trim())
+                .message(toPlainText(request.getMessage()))
+                .sharedMessageId(sharedMessage != null ? sharedMessage.getId() : null)
+                .sharedFromSenderUsername(sharedMessage != null ? sharedMessage.getSender().getUsername() : null)
+                .sharedMessageType(sharedMessage != null ? sharedMessage.getMessageType() : null)
+                .sharedAttachments(sharedMessage != null && sharedMessage.getAttachments() != null
+                        ? new ArrayList<>(sharedMessage.getAttachments())
+                        : new ArrayList<>())
                 .status(ChatRequestStatus.PENDING)
                 .build());
 
@@ -143,7 +173,10 @@ public class ChatRequestService {
                 .conversation(conversation)
                 .sender(request.getSender())
                 .content(request.getMessage())
-                .messageType(MessageType.TEXT)
+                .messageType(request.getSharedMessageType() != null ? request.getSharedMessageType() : MessageType.TEXT)
+                .attachments(request.getSharedAttachments() != null ? request.getSharedAttachments() : new ArrayList<>())
+                .forwardedFromMessageId(request.getSharedMessageId())
+                .forwardedFromSenderUsername(request.getSharedFromSenderUsername())
                 .build());
 
         messageStatusRepository.save(MessageStatus.builder()
@@ -177,6 +210,22 @@ public class ChatRequestService {
         return mapToResponse(chatRequestRepository.save(request), null);
     }
 
+    public ChatRequestResponse cancel(String id) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        ChatRequest request = chatRequestRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Chat request not found"));
+
+        if (!request.getSender().getId().equals(currentUser.getId())) {
+            throw new UnauthorizedException("Only the sender can cancel this chat request");
+        }
+        if (request.getStatus() != ChatRequestStatus.PENDING) {
+            throw new BadRequestException("Chat request is no longer pending");
+        }
+
+        request.setStatus(ChatRequestStatus.CANCELED);
+        return mapToResponse(chatRequestRepository.save(request), null);
+    }
+
     private ChatRequestResponse mapToResponse(ChatRequest request, String conversationId) {
         return ChatRequestResponse.builder()
                 .id(request.getId())
@@ -188,5 +237,15 @@ public class ChatRequestService {
                 .createdAt(request.getCreatedAt())
                 .updatedAt(request.getUpdatedAt())
                 .build();
+    }
+
+    private String toPlainText(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value
+                .replaceAll("<[^>]*>", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 }

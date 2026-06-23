@@ -9,6 +9,7 @@ import iuh.fit.se.nextalk_be.conversation.ConversationRepository;
 import iuh.fit.se.nextalk_be.conversation.ConversationType;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.friend.dto.FriendResponse;
+import iuh.fit.se.nextalk_be.friend.dto.FriendRelationStatusResponse;
 import iuh.fit.se.nextalk_be.friend.dto.FriendSuggestionResponse;
 import iuh.fit.se.nextalk_be.friend.dto.FriendshipAcceptResponse;
 import iuh.fit.se.nextalk_be.message.Message;
@@ -204,6 +205,48 @@ public class FriendService {
         return pending.stream()
                 .map(f -> mapToFriendResponse(f.getSender()))
                 .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public FriendRelationStatusResponse getFriendRelationStatus(String targetUserId) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        String currentUserId = currentUser.getId();
+
+        if (currentUserId.equals(targetUserId)) {
+            return FriendRelationStatusResponse.builder()
+                    .userId(targetUserId)
+                    .status("SELF")
+                    .build();
+        }
+
+        userRepository.findById(targetUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + targetUserId));
+
+        if (userBlockRepository.existsBetweenUsers(currentUserId, targetUserId)) {
+            return FriendRelationStatusResponse.builder()
+                    .userId(targetUserId)
+                    .status("BLOCKED")
+                    .build();
+        }
+
+        String status = friendshipRepository.findFriendshipBetweenUsers(currentUserId, targetUserId)
+                .map(friendship -> {
+                    if (friendship.getStatus() == FriendshipStatus.ACCEPTED) {
+                        return "FRIENDS";
+                    }
+                    if (friendship.getStatus() == FriendshipStatus.PENDING) {
+                        return friendship.getSender().getId().equals(currentUserId)
+                                ? "OUTGOING_PENDING"
+                                : "INCOMING_PENDING";
+                    }
+                    return friendship.getStatus().name();
+                })
+                .orElse("NONE");
+
+        return FriendRelationStatusResponse.builder()
+                .userId(targetUserId)
+                .status(status)
+                .build();
     }
 
     @Transactional(readOnly = true)

@@ -45,4 +45,9 @@ public class ChatRequestController {
     public ResponseEntity<ApiResponse<ChatRequestResponse>> reject(@PathVariable("id") String id) {
         return ResponseEntity.ok(ApiResponse.success(chatRequestService.reject(id), "Chat request rejected"));
     }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<ApiResponse<ChatRequestResponse>> cancel(@PathVariable("id") String id) {
+        return ResponseEntity.ok(ApiResponse.success(chatRequestService.cancel(id), "Chat request canceled"));
+    }
 }
