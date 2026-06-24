@@ -44,6 +44,7 @@ import java.util.regex.Pattern;
 public class MessageService {
     private static final Pattern QUILL_MENTION_ID_PATTERN = Pattern.compile("data-id=[\"']([^\"']+)[\"']");
     private static final Pattern PLAIN_MENTION_PATTERN = Pattern.compile("(^|\\s)@([\\p{L}\\p{N}_\\.\\-]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]*>");
 
     private final MessageRepository messageRepository;
     private final ConversationRepository conversationRepository;
@@ -1127,11 +1128,26 @@ public class MessageService {
             return "đã ghim 1 tin nhắn tệp.";
         }
 
-        String preview = message.getContent() != null ? message.getContent().trim() : "";
+        String preview = toPlainText(message.getContent());
         if (preview.length() > 40) {
             preview = preview.substring(0, 37) + "...";
         }
         return preview.isEmpty() ? "đã ghim tin nhắn." : "đã ghim tin nhắn " + preview;
+    }
+
+    private String toPlainText(String content) {
+        if (content == null || content.isBlank()) {
+            return "";
+        }
+
+        return HTML_TAG_PATTERN.matcher(content)
+                .replaceAll(" ")
+                .replace("&nbsp;", " ")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
     // @Transactional
