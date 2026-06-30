@@ -1,13 +1,24 @@
 package iuh.fit.se.nextalk_be.auth;
 
-import iuh.fit.se.nextalk_be.auth.dto.*;
+import iuh.fit.se.nextalk_be.dto.request.LoginRequest;
+import iuh.fit.se.nextalk_be.dto.request.RegisterRequest;
+import iuh.fit.se.nextalk_be.dto.response.LoginResponse;
+import iuh.fit.se.nextalk_be.dto.response.RegisterResponse;
+import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
+import iuh.fit.se.nextalk_be.entity.EmailVerification;
+import iuh.fit.se.nextalk_be.entity.RefreshToken;
+import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
+import iuh.fit.se.nextalk_be.repository.EmailVerificationRepository;
+import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
+import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.security.JwtService;
-import iuh.fit.se.nextalk_be.user.User;
-import iuh.fit.se.nextalk_be.user.UserRepository;
-import iuh.fit.se.nextalk_be.user.UserService;
-import iuh.fit.se.nextalk_be.user.dto.UserProfileResponse;
+import iuh.fit.se.nextalk_be.service.AuthService;
+import iuh.fit.se.nextalk_be.service.MailService;
+import iuh.fit.se.nextalk_be.service.UserService;
+
+
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

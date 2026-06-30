@@ -1,5 +1,8 @@
 package iuh.fit.se.nextalk_be.security;
 
+import iuh.fit.se.nextalk_be.entity.User;
+
+
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
@@ -70,8 +73,8 @@ public class JwtService {
 
     private String buildToken(Map<String, Object> extraClaims, UserDetails userDetails, long expiration) {
         String subject = userDetails.getUsername();
-        if (userDetails instanceof iuh.fit.se.nextalk_be.user.User) {
-            subject = ((iuh.fit.se.nextalk_be.user.User) userDetails).getEmail();
+        if (userDetails instanceof User) {
+            subject = ((User) userDetails).getEmail();
         }
         return Jwts.builder()
                 .claims(extraClaims)
@@ -85,8 +88,8 @@ public class JwtService {
     public boolean isTokenValid(String token, UserDetails userDetails) {
         final String username = extractUsername(token);
         String expectedSubject = userDetails.getUsername();
-        if (userDetails instanceof iuh.fit.se.nextalk_be.user.User) {
-            expectedSubject = ((iuh.fit.se.nextalk_be.user.User) userDetails).getEmail();
+        if (userDetails instanceof User) {
+            expectedSubject = ((User) userDetails).getEmail();
         }
         return (username.equals(expectedSubject)) && !isTokenExpired(token);
     }

@@ -1,22 +1,27 @@
 package iuh.fit.se.nextalk_be.message;
 
+import iuh.fit.se.nextalk_be.dto.request.CreatePollRequest;
+import iuh.fit.se.nextalk_be.dto.request.EditMessageRequest;
+import iuh.fit.se.nextalk_be.dto.request.MessageRequest;
+import iuh.fit.se.nextalk_be.dto.request.ReactMessageRequest;
+import iuh.fit.se.nextalk_be.entity.Channel;
+import iuh.fit.se.nextalk_be.entity.Conversation;
+import iuh.fit.se.nextalk_be.entity.ConversationType;
+import iuh.fit.se.nextalk_be.entity.Group;
+import iuh.fit.se.nextalk_be.entity.GroupMember;
+import iuh.fit.se.nextalk_be.entity.GroupRole;
+import iuh.fit.se.nextalk_be.entity.Message;
+import iuh.fit.se.nextalk_be.entity.MessageType;
+import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.repository.ChannelRepository;
+import iuh.fit.se.nextalk_be.repository.ConversationRepository;
+import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
+import iuh.fit.se.nextalk_be.repository.GroupRepository;
+import iuh.fit.se.nextalk_be.repository.MessageRepository;
+import iuh.fit.se.nextalk_be.repository.UserRepository;
+
+
 import com.fasterxml.jackson.databind.ObjectMapper;
-import iuh.fit.se.nextalk_be.conversation.Conversation;
-import iuh.fit.se.nextalk_be.conversation.ConversationRepository;
-import iuh.fit.se.nextalk_be.conversation.ConversationType;
-import iuh.fit.se.nextalk_be.group.Group;
-import iuh.fit.se.nextalk_be.group.GroupMember;
-import iuh.fit.se.nextalk_be.group.GroupMemberRepository;
-import iuh.fit.se.nextalk_be.group.GroupRepository;
-import iuh.fit.se.nextalk_be.group.GroupRole;
-import iuh.fit.se.nextalk_be.channel.Channel;
-import iuh.fit.se.nextalk_be.channel.ChannelRepository;
-import iuh.fit.se.nextalk_be.message.dto.CreatePollRequest;
-import iuh.fit.se.nextalk_be.message.dto.EditMessageRequest;
-import iuh.fit.se.nextalk_be.message.dto.MessageRequest;
-import iuh.fit.se.nextalk_be.message.dto.ReactMessageRequest;
-import iuh.fit.se.nextalk_be.user.User;
-import iuh.fit.se.nextalk_be.user.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

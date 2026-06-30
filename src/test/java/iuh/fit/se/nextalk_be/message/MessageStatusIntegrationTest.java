@@ -1,14 +1,21 @@
 package iuh.fit.se.nextalk_be.message;
 
+import iuh.fit.se.nextalk_be.dto.request.MessageRequest;
+import iuh.fit.se.nextalk_be.dto.request.MessageStatusUpdateRequest;
+import iuh.fit.se.nextalk_be.dto.response.MessageStatusUpdateResponse;
+import iuh.fit.se.nextalk_be.entity.Conversation;
+import iuh.fit.se.nextalk_be.entity.ConversationType;
+import iuh.fit.se.nextalk_be.entity.Message;
+import iuh.fit.se.nextalk_be.entity.MessageStatus;
+import iuh.fit.se.nextalk_be.entity.MessageType;
+import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.repository.ConversationRepository;
+import iuh.fit.se.nextalk_be.repository.MessageRepository;
+import iuh.fit.se.nextalk_be.repository.MessageStatusRepository;
+import iuh.fit.se.nextalk_be.repository.UserRepository;
+
+
 import com.fasterxml.jackson.databind.ObjectMapper;
-import iuh.fit.se.nextalk_be.conversation.Conversation;
-import iuh.fit.se.nextalk_be.conversation.ConversationRepository;
-import iuh.fit.se.nextalk_be.conversation.ConversationType;
-import iuh.fit.se.nextalk_be.message.dto.MessageRequest;
-import iuh.fit.se.nextalk_be.message.dto.MessageStatusUpdateRequest;
-import iuh.fit.se.nextalk_be.message.dto.MessageStatusUpdateResponse;
-import iuh.fit.se.nextalk_be.user.User;
-import iuh.fit.se.nextalk_be.user.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;

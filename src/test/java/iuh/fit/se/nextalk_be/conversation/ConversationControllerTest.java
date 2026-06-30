@@ -1,7 +1,12 @@
 package iuh.fit.se.nextalk_be.conversation;
 
-import iuh.fit.se.nextalk_be.user.User;
-import iuh.fit.se.nextalk_be.user.UserRepository;
+import iuh.fit.se.nextalk_be.entity.Conversation;
+import iuh.fit.se.nextalk_be.entity.ConversationType;
+import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.repository.ConversationRepository;
+import iuh.fit.se.nextalk_be.repository.UserRepository;
+
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

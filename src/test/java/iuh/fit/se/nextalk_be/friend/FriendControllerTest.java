@@ -1,10 +1,15 @@
 package iuh.fit.se.nextalk_be.friend;
 
+import iuh.fit.se.nextalk_be.dto.request.FriendshipAcceptRequest;
+import iuh.fit.se.nextalk_be.dto.request.FriendshipRequest;
+import iuh.fit.se.nextalk_be.entity.Friendship;
+import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
+import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.repository.FriendshipRepository;
+import iuh.fit.se.nextalk_be.repository.UserRepository;
+
+
 import com.fasterxml.jackson.databind.ObjectMapper;
-import iuh.fit.se.nextalk_be.friend.dto.FriendshipAcceptRequest;
-import iuh.fit.se.nextalk_be.friend.dto.FriendshipRequest;
-import iuh.fit.se.nextalk_be.user.User;
-import iuh.fit.se.nextalk_be.user.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

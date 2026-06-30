@@ -1,0 +1,56 @@
+package iuh.fit.se.nextalk_be.service;
+
+import iuh.fit.se.nextalk_be.dto.request.AddMemberRequest;
+import iuh.fit.se.nextalk_be.dto.request.CreateGroupRequest;
+import iuh.fit.se.nextalk_be.dto.request.UpdateGroupRequest;
+import iuh.fit.se.nextalk_be.dto.request.UpdateMemberRoleRequest;
+import iuh.fit.se.nextalk_be.dto.response.ChannelResponse;
+import iuh.fit.se.nextalk_be.dto.response.GroupMemberResponse;
+import iuh.fit.se.nextalk_be.dto.response.GroupResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
+import iuh.fit.se.nextalk_be.dto.response.PublicGroupInfoResponse;
+import iuh.fit.se.nextalk_be.entity.Channel;
+import iuh.fit.se.nextalk_be.entity.ChannelType;
+import iuh.fit.se.nextalk_be.entity.Conversation;
+import iuh.fit.se.nextalk_be.entity.ConversationType;
+import iuh.fit.se.nextalk_be.entity.Group;
+import iuh.fit.se.nextalk_be.entity.GroupInvitation;
+import iuh.fit.se.nextalk_be.entity.GroupMember;
+import iuh.fit.se.nextalk_be.entity.GroupRole;
+import iuh.fit.se.nextalk_be.entity.InvitationStatus;
+import iuh.fit.se.nextalk_be.entity.Message;
+import iuh.fit.se.nextalk_be.entity.MessageType;
+import iuh.fit.se.nextalk_be.entity.NotificationType;
+import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.exception.BadRequestException;
+import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
+import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
+import iuh.fit.se.nextalk_be.repository.ChannelRepository;
+import iuh.fit.se.nextalk_be.repository.ConversationRepository;
+import iuh.fit.se.nextalk_be.repository.GroupInvitationRepository;
+import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
+import iuh.fit.se.nextalk_be.repository.GroupRepository;
+import iuh.fit.se.nextalk_be.repository.MessageRepository;
+import iuh.fit.se.nextalk_be.repository.UserRepository;
+import iuh.fit.se.nextalk_be.service.NotificationService;
+import iuh.fit.se.nextalk_be.service.UserService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.stereotype.Service;
+import java.util.*;
+import java.util.stream.Collectors;
+
+public interface GroupService {
+    public GroupResponse createGroup(CreateGroupRequest request);
+    public GroupResponse updateGroup(String groupId, UpdateGroupRequest request);
+    public void deleteGroup(String groupId);
+    public GroupResponse addMember(String groupId, AddMemberRequest request);
+    public GroupResponse doAddMember(Group group, String userId, User actor);
+    public void removeMember(String groupId, String userId);
+    public GroupResponse updateMemberRole(String groupId, String userId, UpdateMemberRoleRequest request);
+    public GroupResponse getGroupById(String groupId);
+    public List<GroupResponse> getMyGroups();
+    public GroupResponse refreshInviteCode(String groupId);
+    public PublicGroupInfoResponse getPublicGroupInfoByInviteCode(String code);
+    public void joinGroupByInviteCode(String code);
+}

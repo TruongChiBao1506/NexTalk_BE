@@ -1,0 +1,33 @@
+package iuh.fit.se.nextalk_be.entity;
+
+import iuh.fit.se.nextalk_be.entity.Group;
+import iuh.fit.se.nextalk_be.entity.GroupRole;
+import iuh.fit.se.nextalk_be.entity.User;
+
+
+import lombok.*;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
+import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.mapping.DocumentReference;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@Document(collection = "group_members")
+@CompoundIndex(name = "group_user_idx", def = "{'group': 1, 'user': 1}", unique = true)
+public class GroupMember {
+
+    @Id
+    private String id;
+
+    @DocumentReference
+    private Group group;
+
+    @DocumentReference
+    private User user;
+
+    private GroupRole role;
+}

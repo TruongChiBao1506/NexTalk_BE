@@ -1,6 +1,9 @@
 package iuh.fit.se.nextalk_be.exception;
 
-import iuh.fit.se.nextalk_be.common.ApiResponse;
+import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
+import iuh.fit.se.nextalk_be.exception.AppException;
+
+
 import org.springframework.context.support.DefaultMessageSourceResolvable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

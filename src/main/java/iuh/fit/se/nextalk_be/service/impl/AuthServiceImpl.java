@@ -1,0 +1,397 @@
+package iuh.fit.se.nextalk_be.service.impl;
+import iuh.fit.se.nextalk_be.service.AuthService;
+
+import iuh.fit.se.nextalk_be.dto.request.ForgotPasswordRequest;
+import iuh.fit.se.nextalk_be.dto.request.GoogleLoginRequest;
+import iuh.fit.se.nextalk_be.dto.request.LoginRequest;
+import iuh.fit.se.nextalk_be.dto.request.RegisterRequest;
+import iuh.fit.se.nextalk_be.dto.request.ResetPasswordRequest;
+import iuh.fit.se.nextalk_be.dto.request.TokenRefreshRequest;
+import iuh.fit.se.nextalk_be.dto.response.LoginResponse;
+import iuh.fit.se.nextalk_be.dto.response.RegisterResponse;
+import iuh.fit.se.nextalk_be.dto.response.SessionResponse;
+import iuh.fit.se.nextalk_be.dto.response.TokenRefreshResponse;
+import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
+import iuh.fit.se.nextalk_be.entity.EmailVerification;
+import iuh.fit.se.nextalk_be.entity.PasswordResetToken;
+import iuh.fit.se.nextalk_be.entity.RefreshToken;
+import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.exception.BadRequestException;
+import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
+import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
+import iuh.fit.se.nextalk_be.repository.EmailVerificationRepository;
+import iuh.fit.se.nextalk_be.repository.PasswordResetTokenRepository;
+import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
+import iuh.fit.se.nextalk_be.repository.UserRepository;
+import iuh.fit.se.nextalk_be.security.JwtService;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
+import iuh.fit.se.nextalk_be.service.MailService;
+import iuh.fit.se.nextalk_be.service.UserService;
+
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
+import com.google.api.client.http.javanet.NetHttpTransport;
+import com.google.api.client.json.gson.GsonFactory;
+
+import jakarta.servlet.http.HttpServletRequest;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+public class AuthServiceImpl implements AuthService {
+
+    private final UserRepository userRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final EmailVerificationRepository emailVerificationRepository;
+    private final PasswordResetTokenRepository passwordResetTokenRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final JwtService jwtService;
+    private final MailService mailService;
+    private final UserService userService;
+    private final AuthenticationManager authenticationManager;
+    private final RateLimitService rateLimitService;
+
+    @Value("${server.port:8080}")
+    private String serverPort;
+
+    @Value("${google.client.id}")
+    private String googleClientId;
+
+    // @Transactional
+    public RegisterResponse register(RegisterRequest request) {
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new BadRequestException("Email is already registered");
+        }
+        if (userRepository.existsByUsername(request.getUsername())) {
+            throw new BadRequestException("Username is already taken");
+        }
+
+        User user = User.builder()
+                .email(request.getEmail())
+                .username(request.getUsername())
+                .password(passwordEncoder.encode(request.getPassword()))
+                .status("OFFLINE")
+                .isVerified(false)
+                .build();
+
+        User savedUser = userRepository.save(user);
+
+        // Generate email verification token
+        String token = UUID.randomUUID().toString();
+        EmailVerification verification = EmailVerification.builder()
+                .user(savedUser)
+                .token(token)
+                .expiresAt(LocalDateTime.now().plusHours(24))
+                .verified(false)
+                .build();
+
+        emailVerificationRepository.save(verification);
+
+        // Send email
+        String verificationLink = "http://localhost:3000/verify-email?token=" + token;
+        mailService.sendVerificationEmail(savedUser.getEmail(), verificationLink);
+
+        return RegisterResponse.builder()
+                .id(savedUser.getId())
+                .email(savedUser.getEmail())
+                .username(savedUser.getUsername())
+                .isVerified(savedUser.isVerified())
+                .build();
+    }
+
+    // @Transactional
+    public void verifyEmail(String token) {
+        EmailVerification verification = emailVerificationRepository.findByToken(token)
+                .orElseThrow(() -> new ResourceNotFoundException("Verification token not found"));
+
+        if (verification.isVerified()) {
+            throw new BadRequestException("Email is already verified");
+        }
+
+        if (verification.getExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new BadRequestException("Verification token has expired");
+        }
+
+        User user = verification.getUser();
+        user.setVerified(true);
+        userRepository.save(user);
+
+        verification.setVerified(true);
+        emailVerificationRepository.save(verification);
+    }
+
+    // @Transactional
+    public LoginResponse login(LoginRequest request, HttpServletRequest httpRequest) {
+        // Authenticate user
+        authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
+        );
+
+        User user = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + request.getEmail()));
+
+        if (!user.isVerified()) {
+            throw new BadRequestException("Account not verified. Please verify your email first.");
+        }
+
+        user.setStatus("ONLINE");
+        userRepository.save(user);
+
+        String accessToken = jwtService.generateAccessToken(user);
+        String refreshToken = issueRefreshToken(user, httpRequest);
+
+        UserProfileResponse userProfile = userService.mapToProfileResponse(user);
+
+        return LoginResponse.builder()
+                .accessToken(accessToken)
+                .refreshToken(refreshToken)
+                .user(userProfile)
+                .build();
+    }
+
+    // @Transactional
+    public TokenRefreshResponse refreshToken(TokenRefreshRequest request, HttpServletRequest httpRequest) {
+        String requestRefreshToken = request.getRefreshToken();
+
+        RefreshToken token = refreshTokenRepository.findByToken(requestRefreshToken)
+                .orElseGet(() -> handleMissingRefreshToken(requestRefreshToken));
+
+        if (token.getExpiresAt().isBefore(LocalDateTime.now())) {
+            refreshTokenRepository.delete(token);
+            throw new UnauthorizedException("Refresh token was expired. Please sign in again.");
+        }
+
+        User user = token.getUser();
+        String newAccessToken = jwtService.generateAccessToken(user);
+        String newRefreshToken = jwtService.generateRefreshToken(user);
+
+        // Rotate the same token record to avoid a delete/save gap.
+        token.setToken(newRefreshToken);
+        token.setExpiresAt(refreshTokenExpiresAt());
+        token.setLastUsedAt(LocalDateTime.now());
+        token.setIpAddress(resolveIpAddress(httpRequest));
+        token.setUserAgent(resolveUserAgent(httpRequest));
+        refreshTokenRepository.save(token);
+
+        return TokenRefreshResponse.builder()
+                .accessToken(newAccessToken)
+                .refreshToken(newRefreshToken)
+                .build();
+    }
+
+    private String issueRefreshToken(User user, HttpServletRequest httpRequest) {
+        String refreshToken = jwtService.generateRefreshToken(user);
+        RefreshToken refreshTokenEntity = RefreshToken.builder()
+                .user(user)
+                .token(refreshToken)
+                .expiresAt(refreshTokenExpiresAt())
+                .ipAddress(resolveIpAddress(httpRequest))
+                .userAgent(resolveUserAgent(httpRequest))
+                .lastUsedAt(LocalDateTime.now())
+                .build();
+        refreshTokenRepository.save(refreshTokenEntity);
+        return refreshToken;
+    }
+
+    private LocalDateTime refreshTokenExpiresAt() {
+        return LocalDateTime.now().plus(Duration.ofMillis(jwtService.getRefreshExpirationMs()));
+    }
+
+    private RefreshToken handleMissingRefreshToken(String requestRefreshToken) {
+        try {
+            String subject = jwtService.extractUsername(requestRefreshToken);
+            userRepository.findByEmail(subject)
+                    .or(() -> userRepository.findByUsername(subject))
+                    .ifPresent(refreshTokenRepository::deleteByUser);
+        } catch (Exception ignored) {
+            // Invalid or malformed refresh token. Do not disclose whether it matched an account.
+        }
+
+        throw new UnauthorizedException("Refresh token was reused or revoked. Please sign in again.");
+    }
+
+    public void forgotPassword(ForgotPasswordRequest request) {
+        User user = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + request.getEmail()));
+
+        String token = UUID.randomUUID().toString();
+        PasswordResetToken resetToken = PasswordResetToken.builder()
+                .user(user)
+                .token(token)
+                .expiresAt(LocalDateTime.now().plusMinutes(15))
+                .used(false)
+                .build();
+
+        passwordResetTokenRepository.save(resetToken);
+
+        String resetLink = "http://localhost:3000/reset-password?token=" + token;
+        mailService.sendPasswordResetEmail(user.getEmail(), resetLink);
+    }
+
+    // @Transactional
+    public void resetPassword(ResetPasswordRequest request) {
+        PasswordResetToken resetToken = passwordResetTokenRepository.findByToken(request.getToken())
+                .orElseThrow(() -> new ResourceNotFoundException("Invalid or expired reset token"));
+
+        if (resetToken.isUsed()) {
+            throw new BadRequestException("Token has already been used");
+        }
+
+        if (resetToken.getExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new BadRequestException("Reset token has expired");
+        }
+
+        User user = resetToken.getUser();
+        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        userRepository.save(user);
+
+        resetToken.setUsed(true);
+        passwordResetTokenRepository.save(resetToken);
+    }
+
+    public LoginResponse googleLogin(GoogleLoginRequest request, HttpServletRequest httpRequest) {
+        try {
+            GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(new NetHttpTransport(), new GsonFactory())
+                    .setAudience(java.util.Collections.singletonList(googleClientId))
+                    .build();
+
+            GoogleIdToken idToken = verifier.verify(request.getIdToken());
+            if (idToken != null) {
+                GoogleIdToken.Payload payload = idToken.getPayload();
+                String email = payload.getEmail();
+                String name = (String) payload.get("name");
+                String pictureUrl = (String) payload.get("picture");
+
+                User user = userRepository.findByEmail(email).orElse(null);
+                if (user == null) {
+                    // Create new user
+                    user = User.builder()
+                            .email(email)
+                            .username(name.replaceAll("\\s+", "").toLowerCase() + "_" + UUID.randomUUID().toString().substring(0, 5))
+                            .password(passwordEncoder.encode(UUID.randomUUID().toString())) // Random password
+                            .avatarUrl(pictureUrl)
+                            .status("OFFLINE")
+                            .isVerified(true)
+                            .build();
+                    user = userRepository.save(user);
+                } else {
+                    // Update user details if needed
+                    boolean updated = false;
+                    if (user.getAvatarUrl() == null || user.getAvatarUrl().isEmpty()) {
+                        user.setAvatarUrl(pictureUrl);
+                        updated = true;
+                    }
+                    if (!user.isVerified()) {
+                        user.setVerified(true);
+                        updated = true;
+                    }
+                    if (updated) {
+                        user = userRepository.save(user);
+                    }
+                }
+
+                // Generate tokens
+                String accessToken = jwtService.generateAccessToken(user);
+                String refreshToken = issueRefreshToken(user, httpRequest);
+
+                UserProfileResponse userProfile = userService.mapToProfileResponse(user);
+
+                return LoginResponse.builder()
+                        .accessToken(accessToken)
+                        .refreshToken(refreshToken)
+                        .user(userProfile)
+                        .build();
+            } else {
+                throw new UnauthorizedException("Invalid Google ID Token");
+            }
+        } catch (Exception e) {
+            throw new UnauthorizedException("Failed to verify Google ID Token: " + e.getMessage());
+        }
+    }
+
+    // @Transactional
+    public void logout(TokenRefreshRequest request) {
+        if (request != null && request.getRefreshToken() != null) {
+            refreshTokenRepository.findByToken(request.getRefreshToken())
+                    .ifPresent(token -> {
+                        User user = token.getUser();
+                        user.setStatus("OFFLINE");
+                        userRepository.save(user);
+                        refreshTokenRepository.delete(token);
+                    });
+        }
+    }
+
+    public List<SessionResponse> getSessions() {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        return refreshTokenRepository.findByUserIdOrderByCreatedAtDesc(currentUser.getId())
+                .stream()
+                .map(this::mapToSessionResponse)
+                .toList();
+    }
+
+    public void revokeSession(String id) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        RefreshToken session = refreshTokenRepository.findByIdAndUserId(id, currentUser.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Session not found"));
+        refreshTokenRepository.delete(session);
+    }
+
+    private SessionResponse mapToSessionResponse(RefreshToken token) {
+        return SessionResponse.builder()
+                .id(token.getId())
+                .deviceName(resolveDeviceName(token.getUserAgent()))
+                .userAgent(token.getUserAgent())
+                .ipAddress(token.getIpAddress())
+                .createdAt(token.getCreatedAt())
+                .lastUsedAt(token.getLastUsedAt())
+                .expiresAt(token.getExpiresAt())
+                .build();
+    }
+
+    private String resolveIpAddress(HttpServletRequest request) {
+        return rateLimitService.clientIdentity(request);
+    }
+
+    private String resolveUserAgent(HttpServletRequest request) {
+        if (request == null) {
+            return "Unknown device";
+        }
+        String userAgent = request.getHeader("User-Agent");
+        if (userAgent == null || userAgent.isBlank()) {
+            return "Unknown device";
+        }
+        return userAgent.length() > 300 ? userAgent.substring(0, 300) : userAgent;
+    }
+
+    private String resolveDeviceName(String userAgent) {
+        if (userAgent == null || userAgent.isBlank()) {
+            return "Unknown device";
+        }
+        String ua = userAgent.toLowerCase();
+        String browser = ua.contains("edg/") ? "Edge"
+                : ua.contains("chrome/") ? "Chrome"
+                : ua.contains("firefox/") ? "Firefox"
+                : ua.contains("safari/") ? "Safari"
+                : "Browser";
+        String platform = ua.contains("windows") ? "Windows"
+                : ua.contains("mac os") ? "macOS"
+                : ua.contains("android") ? "Android"
+                : ua.contains("iphone") || ua.contains("ipad") ? "iOS"
+                : ua.contains("linux") ? "Linux"
+                : "Unknown OS";
+        return browser + " on " + platform;
+    }
+}

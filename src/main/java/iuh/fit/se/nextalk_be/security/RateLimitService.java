@@ -1,6 +1,8 @@
 package iuh.fit.se.nextalk_be.security;
 
 import iuh.fit.se.nextalk_be.exception.RateLimitExceededException;
+
+
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;

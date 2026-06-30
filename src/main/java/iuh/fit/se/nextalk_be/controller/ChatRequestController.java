@@ -1,0 +1,56 @@
+package iuh.fit.se.nextalk_be.controller;
+
+import iuh.fit.se.nextalk_be.dto.request.ChatRequestResponse;
+import iuh.fit.se.nextalk_be.dto.request.CreateChatRequest;
+import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
+import iuh.fit.se.nextalk_be.service.ChatRequestService;
+
+
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.Duration;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/chat-requests")
+@RequiredArgsConstructor
+public class ChatRequestController {
+
+    private final ChatRequestService chatRequestService;
+    private final RateLimitService rateLimitService;
+
+    @PostMapping
+    public ResponseEntity<ApiResponse<ChatRequestResponse>> create(@Valid @RequestBody CreateChatRequest request) {
+        rateLimitService.check("chat-request:create", rateLimitService.currentUserIdentity(), 10, Duration.ofHours(1));
+        return ResponseEntity.ok(ApiResponse.success(chatRequestService.create(request), "Chat request sent successfully"));
+    }
+
+    @GetMapping("/incoming")
+    public ResponseEntity<ApiResponse<List<ChatRequestResponse>>> incoming() {
+        return ResponseEntity.ok(ApiResponse.success(chatRequestService.getIncomingPending(), "Incoming chat requests retrieved"));
+    }
+
+    @GetMapping("/outgoing")
+    public ResponseEntity<ApiResponse<List<ChatRequestResponse>>> outgoing() {
+        return ResponseEntity.ok(ApiResponse.success(chatRequestService.getOutgoingPending(), "Outgoing chat requests retrieved"));
+    }
+
+    @PostMapping("/{id}/accept")
+    public ResponseEntity<ApiResponse<ChatRequestResponse>> accept(@PathVariable("id") String id) {
+        return ResponseEntity.ok(ApiResponse.success(chatRequestService.accept(id), "Chat request accepted"));
+    }
+
+    @PostMapping("/{id}/reject")
+    public ResponseEntity<ApiResponse<ChatRequestResponse>> reject(@PathVariable("id") String id) {
+        return ResponseEntity.ok(ApiResponse.success(chatRequestService.reject(id), "Chat request rejected"));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<ApiResponse<ChatRequestResponse>> cancel(@PathVariable("id") String id) {
+        return ResponseEntity.ok(ApiResponse.success(chatRequestService.cancel(id), "Chat request canceled"));
+    }
+}

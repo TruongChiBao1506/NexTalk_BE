@@ -1,6 +1,9 @@
 package iuh.fit.se.nextalk_be.security;
 
-import iuh.fit.se.nextalk_be.user.UserRepository;
+import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.repository.UserRepository;
+
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

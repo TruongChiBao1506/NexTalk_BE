@@ -1,5 +1,8 @@
 package iuh.fit.se.nextalk_be.exception;
 
+import iuh.fit.se.nextalk_be.exception.AppException;
+
+
 import org.springframework.http.HttpStatus;
 
 public class BadRequestException extends AppException {

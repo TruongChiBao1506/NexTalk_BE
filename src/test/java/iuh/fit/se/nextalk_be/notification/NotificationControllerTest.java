@@ -1,9 +1,13 @@
 package iuh.fit.se.nextalk_be.notification;
 
+import iuh.fit.se.nextalk_be.entity.Notification;
+import iuh.fit.se.nextalk_be.entity.NotificationType;
+import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.repository.NotificationRepository;
+import iuh.fit.se.nextalk_be.repository.UserRepository;
+
+
 import com.fasterxml.jackson.databind.ObjectMapper;
-import iuh.fit.se.nextalk_be.notification.dto.NotificationResponse;
-import iuh.fit.se.nextalk_be.user.User;
-import iuh.fit.se.nextalk_be.user.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

@@ -1,5 +1,8 @@
 package iuh.fit.se.nextalk_be.file;
 
+import iuh.fit.se.nextalk_be.service.CloudinaryService;
+
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;

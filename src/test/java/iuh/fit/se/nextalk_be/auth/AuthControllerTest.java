@@ -1,11 +1,15 @@
 package iuh.fit.se.nextalk_be.auth;
 
+import iuh.fit.se.nextalk_be.dto.request.LoginRequest;
+import iuh.fit.se.nextalk_be.dto.request.RegisterRequest;
+import iuh.fit.se.nextalk_be.entity.EmailVerification;
+import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.repository.EmailVerificationRepository;
+import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
+import iuh.fit.se.nextalk_be.repository.UserRepository;
+
+
 import com.fasterxml.jackson.databind.ObjectMapper;
-import iuh.fit.se.nextalk_be.auth.dto.LoginRequest;
-import iuh.fit.se.nextalk_be.auth.dto.RegisterRequest;
-import iuh.fit.se.nextalk_be.auth.dto.TokenRefreshRequest;
-import iuh.fit.se.nextalk_be.user.User;
-import iuh.fit.se.nextalk_be.user.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

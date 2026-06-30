@@ -1,0 +1,57 @@
+package iuh.fit.se.nextalk_be.service;
+
+import iuh.fit.se.nextalk_be.dto.request.ForgotPasswordRequest;
+import iuh.fit.se.nextalk_be.dto.request.GoogleLoginRequest;
+import iuh.fit.se.nextalk_be.dto.request.LoginRequest;
+import iuh.fit.se.nextalk_be.dto.request.RegisterRequest;
+import iuh.fit.se.nextalk_be.dto.request.ResetPasswordRequest;
+import iuh.fit.se.nextalk_be.dto.request.TokenRefreshRequest;
+import iuh.fit.se.nextalk_be.dto.response.LoginResponse;
+import iuh.fit.se.nextalk_be.dto.response.RegisterResponse;
+import iuh.fit.se.nextalk_be.dto.response.SessionResponse;
+import iuh.fit.se.nextalk_be.dto.response.TokenRefreshResponse;
+import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
+import iuh.fit.se.nextalk_be.entity.EmailVerification;
+import iuh.fit.se.nextalk_be.entity.PasswordResetToken;
+import iuh.fit.se.nextalk_be.entity.RefreshToken;
+import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.exception.BadRequestException;
+import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
+import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
+import iuh.fit.se.nextalk_be.repository.EmailVerificationRepository;
+import iuh.fit.se.nextalk_be.repository.PasswordResetTokenRepository;
+import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
+import iuh.fit.se.nextalk_be.repository.UserRepository;
+import iuh.fit.se.nextalk_be.security.JwtService;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
+import iuh.fit.se.nextalk_be.service.MailService;
+import iuh.fit.se.nextalk_be.service.UserService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
+import com.google.api.client.http.javanet.NetHttpTransport;
+import com.google.api.client.json.gson.GsonFactory;
+import jakarta.servlet.http.HttpServletRequest;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+
+public interface AuthService {
+    public RegisterResponse register(RegisterRequest request);
+    public void verifyEmail(String token);
+    public LoginResponse login(LoginRequest request, HttpServletRequest httpRequest);
+    public TokenRefreshResponse refreshToken(TokenRefreshRequest request, HttpServletRequest httpRequest);
+    public void forgotPassword(ForgotPasswordRequest request);
+    public void resetPassword(ResetPasswordRequest request);
+    public LoginResponse googleLogin(GoogleLoginRequest request, HttpServletRequest httpRequest);
+    public void logout(TokenRefreshRequest request);
+    public List<SessionResponse> getSessions();
+    public void revokeSession(String id);
+}

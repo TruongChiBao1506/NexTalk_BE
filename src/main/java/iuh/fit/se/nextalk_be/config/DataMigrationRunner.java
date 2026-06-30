@@ -1,12 +1,14 @@
 package iuh.fit.se.nextalk_be.config;
 
-import iuh.fit.se.nextalk_be.channel.Channel;
-import iuh.fit.se.nextalk_be.channel.ChannelRepository;
-import iuh.fit.se.nextalk_be.channel.ChannelType;
-import iuh.fit.se.nextalk_be.conversation.Conversation;
-import iuh.fit.se.nextalk_be.conversation.ConversationRepository;
-import iuh.fit.se.nextalk_be.group.Group;
-import iuh.fit.se.nextalk_be.group.GroupRepository;
+import iuh.fit.se.nextalk_be.entity.Channel;
+import iuh.fit.se.nextalk_be.entity.ChannelType;
+import iuh.fit.se.nextalk_be.entity.Conversation;
+import iuh.fit.se.nextalk_be.entity.Group;
+import iuh.fit.se.nextalk_be.repository.ChannelRepository;
+import iuh.fit.se.nextalk_be.repository.ConversationRepository;
+import iuh.fit.se.nextalk_be.repository.GroupRepository;
+
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.data.mongodb.core.MongoTemplate;
