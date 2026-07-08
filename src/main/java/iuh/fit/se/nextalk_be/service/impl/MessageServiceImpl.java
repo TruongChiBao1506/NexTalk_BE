@@ -41,6 +41,7 @@ import iuh.fit.se.nextalk_be.repository.UserBlockRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.FCMService;
+import iuh.fit.se.nextalk_be.service.AiBotService;
 import iuh.fit.se.nextalk_be.service.LinkPreviewService;
 import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.PresenceService;
@@ -68,6 +69,7 @@ import java.util.regex.Pattern;
 public class MessageServiceImpl implements MessageService {
     private static final Pattern QUILL_MENTION_ID_PATTERN = Pattern.compile("data-id=[\"']([^\"']+)[\"']");
     private static final Pattern PLAIN_MENTION_PATTERN = Pattern.compile("(^|\\s)@([\\p{L}\\p{N}_\\.\\-]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    private static final Pattern BOT_MENTION_PATTERN = Pattern.compile("(^|\\s)@(bot|nextalk\\s+ai|meta\\s+ai)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]*>");
 
     private final MessageRepository messageRepository;
@@ -87,6 +89,7 @@ public class MessageServiceImpl implements MessageService {
     private final PresenceService presenceService;
     private final RateLimitService rateLimitService;
     private final LinkPreviewService linkPreviewService;
+    private final AiBotService aiBotService;
 
     // @Transactional
     public MessageResponse sendMessage(MessageRequest request) {
@@ -347,7 +350,34 @@ public class MessageServiceImpl implements MessageService {
             }
         }
 
+        if (shouldTriggerAiBot(savedMessage, conversation)) {
+            aiBotService.answerMentionAsync(conversation, savedMessage, currentUser);
+        }
+
         return response;
+    }
+
+    private boolean shouldTriggerAiBot(Message message, Conversation conversation) {
+        if (conversation.getType() != ConversationType.GROUP) {
+            return false;
+        }
+        if (message.getMessageType() != MessageType.TEXT || message.getContent() == null) {
+            return false;
+        }
+        String content = message.getContent();
+        Matcher idMatcher = QUILL_MENTION_ID_PATTERN.matcher(content);
+        while (idMatcher.find()) {
+            if ("bot".equalsIgnoreCase(idMatcher.group(1))) {
+                return true;
+            }
+        }
+        String plainText = content
+                .replaceAll("<[^>]*>", " ")
+                .replace("&nbsp;", " ")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", " ");
+        return BOT_MENTION_PATTERN.matcher(plainText).find();
     }
 
     private MentionTargets resolveMentionTargets(String content, Conversation conversation, User currentUser) {

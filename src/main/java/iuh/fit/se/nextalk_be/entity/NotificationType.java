@@ -5,5 +5,6 @@ public enum NotificationType {
     MENTION,
     FRIEND_REQUEST,
     GROUP_INVITE,
-    CHAT_REQUEST
+    CHAT_REQUEST,
+    REMINDER
 }
