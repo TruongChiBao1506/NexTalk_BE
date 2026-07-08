@@ -1,0 +1,14 @@
+package iuh.fit.se.nextalk_be.dto.request;
+
+import jakarta.validation.constraints.NotBlank;
+import lombok.*;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class QrLoginConfirmRequest {
+    @NotBlank(message = "QR token is required")
+    private String qrToken;
+}

@@ -3,11 +3,14 @@ package iuh.fit.se.nextalk_be.controller;
 import iuh.fit.se.nextalk_be.dto.request.ForgotPasswordRequest;
 import iuh.fit.se.nextalk_be.dto.request.GoogleLoginRequest;
 import iuh.fit.se.nextalk_be.dto.request.LoginRequest;
+import iuh.fit.se.nextalk_be.dto.request.QrLoginConfirmRequest;
 import iuh.fit.se.nextalk_be.dto.request.RegisterRequest;
 import iuh.fit.se.nextalk_be.dto.request.ResetPasswordRequest;
 import iuh.fit.se.nextalk_be.dto.request.TokenRefreshRequest;
 import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
 import iuh.fit.se.nextalk_be.dto.response.LoginResponse;
+import iuh.fit.se.nextalk_be.dto.response.QrLoginInitResponse;
+import iuh.fit.se.nextalk_be.dto.response.QrLoginStatusResponse;
 import iuh.fit.se.nextalk_be.dto.response.RegisterResponse;
 import iuh.fit.se.nextalk_be.dto.response.SessionResponse;
 import iuh.fit.se.nextalk_be.dto.response.TokenRefreshResponse;
@@ -96,6 +99,26 @@ public class AuthController {
     public ResponseEntity<ApiResponse<LoginResponse>> googleLogin(@Valid @RequestBody GoogleLoginRequest request, HttpServletRequest httpRequest) {
         rateLimitService.check("auth:google-login", rateLimitService.clientIdentity(httpRequest), 10, Duration.ofMinutes(5));
         return ResponseEntity.ok(ApiResponse.success(authService.googleLogin(request, httpRequest), "Google Login successful"));
+    }
+
+    @PostMapping("/qr/init")
+    @Operation(summary = "Create a short-lived QR login session")
+    public ResponseEntity<ApiResponse<QrLoginInitResponse>> initQrLogin(HttpServletRequest httpRequest) {
+        rateLimitService.check("auth:qr:init", rateLimitService.clientIdentity(httpRequest), 10, Duration.ofMinutes(5));
+        return ResponseEntity.ok(ApiResponse.success(authService.initQrLogin(httpRequest), "QR login session created"));
+    }
+
+    @GetMapping("/qr/status/{sessionId}")
+    @Operation(summary = "Poll QR login session status")
+    public ResponseEntity<ApiResponse<QrLoginStatusResponse>> getQrLoginStatus(@PathVariable("sessionId") String sessionId, HttpServletRequest httpRequest) {
+        rateLimitService.check("auth:qr:status", rateLimitService.clientIdentity(httpRequest) + ":" + sessionId, 80, Duration.ofMinutes(2));
+        return ResponseEntity.ok(ApiResponse.success(authService.getQrLoginStatus(sessionId, httpRequest), "QR login status retrieved"));
+    }
+
+    @PostMapping("/qr/confirm")
+    @Operation(summary = "Confirm a QR login session as the current user")
+    public ResponseEntity<ApiResponse<QrLoginStatusResponse>> confirmQrLogin(@Valid @RequestBody QrLoginConfirmRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(authService.confirmQrLogin(request), "QR login confirmed"));
     }
 
     @GetMapping("/sessions")

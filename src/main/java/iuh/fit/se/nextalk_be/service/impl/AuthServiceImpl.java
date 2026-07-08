@@ -4,16 +4,21 @@ import iuh.fit.se.nextalk_be.service.AuthService;
 import iuh.fit.se.nextalk_be.dto.request.ForgotPasswordRequest;
 import iuh.fit.se.nextalk_be.dto.request.GoogleLoginRequest;
 import iuh.fit.se.nextalk_be.dto.request.LoginRequest;
+import iuh.fit.se.nextalk_be.dto.request.QrLoginConfirmRequest;
 import iuh.fit.se.nextalk_be.dto.request.RegisterRequest;
 import iuh.fit.se.nextalk_be.dto.request.ResetPasswordRequest;
 import iuh.fit.se.nextalk_be.dto.request.TokenRefreshRequest;
 import iuh.fit.se.nextalk_be.dto.response.LoginResponse;
+import iuh.fit.se.nextalk_be.dto.response.QrLoginInitResponse;
+import iuh.fit.se.nextalk_be.dto.response.QrLoginStatusResponse;
 import iuh.fit.se.nextalk_be.dto.response.RegisterResponse;
 import iuh.fit.se.nextalk_be.dto.response.SessionResponse;
 import iuh.fit.se.nextalk_be.dto.response.TokenRefreshResponse;
 import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
 import iuh.fit.se.nextalk_be.entity.EmailVerification;
 import iuh.fit.se.nextalk_be.entity.PasswordResetToken;
+import iuh.fit.se.nextalk_be.entity.QrLoginSession;
+import iuh.fit.se.nextalk_be.entity.QrLoginStatus;
 import iuh.fit.se.nextalk_be.entity.RefreshToken;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
@@ -21,6 +26,7 @@ import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
 import iuh.fit.se.nextalk_be.repository.EmailVerificationRepository;
 import iuh.fit.se.nextalk_be.repository.PasswordResetTokenRepository;
+import iuh.fit.se.nextalk_be.repository.QrLoginSessionRepository;
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.security.JwtService;
@@ -54,6 +60,7 @@ public class AuthServiceImpl implements AuthService {
 
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final QrLoginSessionRepository qrLoginSessionRepository;
     private final EmailVerificationRepository emailVerificationRepository;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final PasswordEncoder passwordEncoder;
@@ -319,6 +326,106 @@ public class AuthServiceImpl implements AuthService {
         } catch (Exception e) {
             throw new UnauthorizedException("Failed to verify Google ID Token: " + e.getMessage());
         }
+    }
+
+    public QrLoginInitResponse initQrLogin(HttpServletRequest httpRequest) {
+        QrLoginSession session = QrLoginSession.builder()
+                .sessionId(UUID.randomUUID().toString())
+                .qrToken(UUID.randomUUID() + "-" + UUID.randomUUID())
+                .status(QrLoginStatus.PENDING)
+                .expiresAt(LocalDateTime.now().plusMinutes(2))
+                .ipAddress(resolveIpAddress(httpRequest))
+                .userAgent(resolveUserAgent(httpRequest))
+                .build();
+
+        QrLoginSession savedSession = qrLoginSessionRepository.save(session);
+        return QrLoginInitResponse.builder()
+                .sessionId(savedSession.getSessionId())
+                .qrToken(savedSession.getQrToken())
+                .expiresAt(savedSession.getExpiresAt())
+                .build();
+    }
+
+    public QrLoginStatusResponse getQrLoginStatus(String sessionId, HttpServletRequest httpRequest) {
+        QrLoginSession session = qrLoginSessionRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new ResourceNotFoundException("QR login session not found"));
+
+        if (isQrSessionExpired(session)) {
+            return saveQrStatus(session, QrLoginStatus.EXPIRED, null);
+        }
+
+        if (session.getStatus() != QrLoginStatus.CONFIRMED) {
+            return QrLoginStatusResponse.builder()
+                    .status(session.getStatus())
+                    .expiresAt(session.getExpiresAt())
+                    .build();
+        }
+
+        User user = session.getUser();
+        if (user == null) {
+            return saveQrStatus(session, QrLoginStatus.EXPIRED, null);
+        }
+
+        user.setStatus("ONLINE");
+        userRepository.save(user);
+
+        LoginResponse loginResponse = LoginResponse.builder()
+                .accessToken(jwtService.generateAccessToken(user))
+                .refreshToken(issueRefreshToken(user, httpRequest))
+                .user(userService.mapToProfileResponse(user))
+                .build();
+
+        session.setStatus(QrLoginStatus.CONSUMED);
+        session.setConsumedAt(LocalDateTime.now());
+        qrLoginSessionRepository.save(session);
+
+        return QrLoginStatusResponse.builder()
+                .status(QrLoginStatus.CONFIRMED)
+                .expiresAt(session.getExpiresAt())
+                .login(loginResponse)
+                .build();
+    }
+
+    public QrLoginStatusResponse confirmQrLogin(QrLoginConfirmRequest request) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        QrLoginSession session = qrLoginSessionRepository.findByQrToken(request.getQrToken())
+                .orElseThrow(() -> new ResourceNotFoundException("QR login session not found"));
+
+        if (isQrSessionExpired(session)) {
+            return saveQrStatus(session, QrLoginStatus.EXPIRED, null);
+        }
+
+        if (session.getStatus() == QrLoginStatus.CONFIRMED || session.getStatus() == QrLoginStatus.CONSUMED) {
+            throw new BadRequestException("QR login session was already used");
+        }
+
+        session.setUser(currentUser);
+        session.setStatus(QrLoginStatus.CONFIRMED);
+        session.setConfirmedAt(LocalDateTime.now());
+        qrLoginSessionRepository.save(session);
+
+        return QrLoginStatusResponse.builder()
+                .status(QrLoginStatus.CONFIRMED)
+                .expiresAt(session.getExpiresAt())
+                .build();
+    }
+
+    private boolean isQrSessionExpired(QrLoginSession session) {
+        return session.getExpiresAt() == null
+                || session.getExpiresAt().isBefore(LocalDateTime.now())
+                || session.getStatus() == QrLoginStatus.EXPIRED;
+    }
+
+    private QrLoginStatusResponse saveQrStatus(QrLoginSession session, QrLoginStatus status, LoginResponse loginResponse) {
+        if (session.getStatus() != status) {
+            session.setStatus(status);
+            qrLoginSessionRepository.save(session);
+        }
+        return QrLoginStatusResponse.builder()
+                .status(status)
+                .expiresAt(session.getExpiresAt())
+                .login(loginResponse)
+                .build();
     }
 
     // @Transactional
