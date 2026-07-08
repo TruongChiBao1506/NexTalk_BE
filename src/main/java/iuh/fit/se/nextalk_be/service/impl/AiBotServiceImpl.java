@@ -1,7 +1,12 @@
 package iuh.fit.se.nextalk_be.service.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import iuh.fit.se.nextalk_be.dto.SummaryMessagePayload;
 import iuh.fit.se.nextalk_be.dto.request.AiBotRequest;
+import iuh.fit.se.nextalk_be.dto.request.CreateMessageReminderRequest;
+import iuh.fit.se.nextalk_be.dto.request.CreatePollRequest;
+import iuh.fit.se.nextalk_be.dto.response.ConversationSummaryResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageReminderResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.Message;
@@ -11,12 +16,19 @@ import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.repository.MessageStatusRepository;
 import iuh.fit.se.nextalk_be.service.AiBotService;
+import iuh.fit.se.nextalk_be.service.ConversationSummaryService;
+import iuh.fit.se.nextalk_be.service.MessageReminderService;
+import iuh.fit.se.nextalk_be.service.MessageService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -48,6 +60,9 @@ public class AiBotServiceImpl implements AiBotService {
     private static final Pattern HOUR_PATTERN = Pattern.compile(
             "(?iu)(?:luc|lúc|vao|vào|at)?\\s*(\\d{1,2})(?:[:h]\\s*(\\d{1,2}))?\\s*(sang|sáng|chieu|chiều|toi|tối|dem|đêm|am|pm)?"
     );
+    private static final Pattern POLL_INTENT_PATTERN = Pattern.compile("(?iu)(poll|binh chon|bình chọn|bo phieu|bỏ phiếu)");
+    private static final Pattern SEARCH_INTENT_PATTERN = Pattern.compile("(?iu)(tim|tìm|search|kiem|kiếm)");
+    private static final Pattern SUMMARY_INTENT_PATTERN = Pattern.compile("(?iu)(tom tat|tóm tắt|summary|tong ket|tổng kết)");
     private static final DateTimeFormatter REMINDER_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm dd/MM/yyyy");
 
     private final MessageRepository messageRepository;
@@ -55,6 +70,10 @@ public class AiBotServiceImpl implements AiBotService {
     private final MessageStatusRepository messageStatusRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final RestTemplate restTemplate;
+    private final MessageReminderService messageReminderService;
+    private final ConversationSummaryService conversationSummaryService;
+    private final ObjectProvider<MessageService> messageServiceProvider;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${app.ai-bot.n8n-webhook-url:}")
     private String aiBotWebhookUrl;
@@ -87,7 +106,7 @@ public class AiBotServiceImpl implements AiBotService {
             answer = reply.answer();
             metadata = reply.metadata();
         } catch (Exception e) {
-            answer = "Minh chua the tra loi ngay luc nay. Vui long thu lai sau.";
+            answer = "Mình chưa thể thực hiện yêu cầu này ngay lúc này. Bạn thử lại sau nhé.";
         }
 
         createAndBroadcastBotMessage(conversation, requester, answer, triggerMessage.getId(), metadata);
@@ -95,35 +114,271 @@ public class AiBotServiceImpl implements AiBotService {
 
     private AiBotReply requestAnswer(Conversation conversation, Message triggerMessage, User requester) {
         String question = extractQuestion(triggerMessage);
-        Optional<ReminderIntent> reminderIntent = parseReminderIntent(question);
-        if (reminderIntent.isPresent()) {
-            ReminderIntent reminder = reminderIntent.get();
-            if (reminder.remindAt() == null) {
-                return new AiBotReply(
-                        "Ban muon minh nhac vao thoi gian nao? Vi du: \"@bot nhac toi gui bao cao luc 9h sang mai\".",
-                        Map.of()
-                );
+        List<SummaryMessagePayload> contextMessages = getContextMessages(conversation, triggerMessage);
+        AiBotRequest request = buildAiRequest(conversation, triggerMessage, requester, question, contextMessages);
+
+        AiAction action = requestStructuredAction(request);
+        if (action != null && action.intent() != null) {
+            AiBotReply actionReply = executeAction(action, conversation, triggerMessage, requester, question);
+            if (actionReply != null) {
+                return actionReply;
             }
+        }
 
-            String note = reminder.note().isBlank() ? "Nhac hen tu NexTalk AI" : reminder.note();
-            Map<String, Object> metadata = new HashMap<>();
-            metadata.put("systemType", "AI_REMINDER_CREATE");
-            metadata.put("action", "CREATE_MESSAGE_REMINDER");
-            metadata.put("messageId", triggerMessage.getId());
-            metadata.put("remindAt", reminder.remindAt().atZone(ZoneId.systemDefault()).toInstant().toString());
-            metadata.put("note", note);
-            metadata.put("preview", stripHtml(triggerMessage.getContent()).trim());
-            metadata.put("requestedByUserId", requester.getId());
-
-            String formattedTime = reminder.remindAt().format(REMINDER_TIME_FORMATTER);
-            return new AiBotReply("Minh da tao nhac hen cho ban luc " + formattedTime + ": " + note, metadata);
+        AiBotReply heuristicReply = executeHeuristicAction(question, conversation, triggerMessage, requester);
+        if (heuristicReply != null) {
+            return heuristicReply;
         }
 
         if ((geminiApiKey == null || geminiApiKey.isBlank()) && (aiBotWebhookUrl == null || aiBotWebhookUrl.isBlank())) {
-            return new AiBotReply("AI Bot chua duoc cau hinh webhook.", Map.of());
+            return new AiBotReply("AI Bot chưa được cấu hình.", Map.of());
         }
 
-        List<SummaryMessagePayload> contextMessages = messageRepository
+        if (geminiApiKey != null && !geminiApiKey.isBlank()) {
+            String geminiAnswer = requestGeminiAnswer(request);
+            if (geminiAnswer != null && !geminiAnswer.isBlank()) {
+                return new AiBotReply(geminiAnswer.trim(), Map.of());
+            }
+        }
+
+        if (aiBotWebhookUrl == null || aiBotWebhookUrl.isBlank()) {
+            return new AiBotReply("NexTalk AI chưa nhận được câu trả lời phù hợp.", Map.of());
+        }
+
+        ResponseEntity<Object> response = restTemplate.postForEntity(aiBotWebhookUrl, request, Object.class);
+        String answer = extractAnswer(response.getBody());
+        if (answer == null || answer.isBlank()) {
+            return new AiBotReply("Mình chưa nhận được câu trả lời phù hợp từ AI.", Map.of());
+        }
+        return new AiBotReply(answer.trim(), Map.of());
+    }
+
+    private AiAction requestStructuredAction(AiBotRequest request) {
+        if (geminiApiKey == null || geminiApiKey.isBlank()) {
+            return null;
+        }
+
+        Map<String, Object> payload = Map.of(
+                "contents", List.of(Map.of(
+                        "role", "user",
+                        "parts", List.of(Map.of("text", buildRouterPrompt(request)))
+                )),
+                "generationConfig", Map.of(
+                        "temperature", 0.1,
+                        "maxOutputTokens", Math.min(maxOutputTokens, 1400),
+                        "responseMimeType", "application/json"
+                )
+        );
+
+        try {
+            ResponseEntity<Object> response = restTemplate.postForEntity(
+                    geminiUrl,
+                    payload,
+                    Object.class,
+                    geminiModel,
+                    geminiApiKey
+            );
+            String json = extractGeminiText(response.getBody());
+            if (json == null || json.isBlank()) {
+                return null;
+            }
+            return parseAiAction(json);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private AiAction parseAiAction(String rawJson) throws Exception {
+        String json = rawJson.trim();
+        if (json.startsWith("```")) {
+            json = json.replaceFirst("(?s)^```(?:json)?\\s*", "").replaceFirst("(?s)\\s*```$", "");
+        }
+        Map<String, Object> map = objectMapper.readValue(json, Map.class);
+        String intent = stringValue(map.get("intent")).toUpperCase();
+        String reply = stringValue(map.get("reply"));
+        Object paramsRaw = map.get("parameters");
+        Map<String, Object> parameters = paramsRaw instanceof Map<?, ?> rawMap
+                ? new HashMap<>((Map<String, Object>) rawMap)
+                : new HashMap<>();
+        return new AiAction(intent, parameters, reply);
+    }
+
+    private AiBotReply executeAction(AiAction action, Conversation conversation, Message triggerMessage, User requester, String question) {
+        return runAs(requester, () -> switch (action.intent()) {
+            case "ANSWER" -> action.reply().isBlank() ? null : new AiBotReply(action.reply(), Map.of());
+            case "ASK_CLARIFICATION" -> new AiBotReply(
+                    action.reply().isBlank() ? "Bạn cho mình thêm thông tin để thực hiện nhé." : action.reply(),
+                    Map.of()
+            );
+            case "CREATE_REMINDER" -> createReminderAction(action, triggerMessage);
+            case "CREATE_POLL" -> createPollAction(action, conversation);
+            case "SEARCH_MESSAGES" -> searchMessagesAction(action, conversation, question);
+            case "SUMMARIZE_CONVERSATION" -> summarizeConversationAction(conversation);
+            default -> null;
+        });
+    }
+
+    private AiBotReply executeHeuristicAction(String question, Conversation conversation, Message triggerMessage, User requester) {
+        String normalized = normalizeText(question);
+        if (SUMMARY_INTENT_PATTERN.matcher(question).find()) {
+            return runAs(requester, () -> summarizeConversationAction(conversation));
+        }
+        if (SEARCH_INTENT_PATTERN.matcher(question).find()) {
+            String query = normalized
+                    .replaceAll("\\b(tim|search|kiem|tin nhan|message|file)\\b", " ")
+                    .replaceAll("\\s+", " ")
+                    .trim();
+            if (query.length() >= 2) {
+                return runAs(requester, () -> searchMessagesAction(new AiAction("SEARCH_MESSAGES", Map.of("query", query), ""), conversation, question));
+            }
+        }
+        if (POLL_INTENT_PATTERN.matcher(question).find()) {
+            AiAction pollAction = parseSimplePoll(question);
+            if (pollAction != null) {
+                return runAs(requester, () -> createPollAction(pollAction, conversation));
+            }
+        }
+
+        Optional<ReminderIntent> reminderIntent = parseReminderIntent(question);
+        if (reminderIntent.isEmpty()) {
+            return null;
+        }
+        ReminderIntent reminder = reminderIntent.get();
+        if (reminder.remindAt() == null) {
+            return new AiBotReply("Bạn muốn mình nhắc vào thời gian nào?", Map.of());
+        }
+        return runAs(requester, () -> {
+            MessageReminderResponse response = messageReminderService.createReminder(CreateMessageReminderRequest.builder()
+                    .messageId(triggerMessage.getId())
+                    .remindAt(reminder.remindAt().atZone(ZoneId.systemDefault()).toInstant().toString())
+                    .note(reminder.note().isBlank() ? "Nhắc hẹn từ NexTalk AI" : reminder.note())
+                    .build());
+            return new AiBotReply("Mình đã tạo nhắc hẹn lúc " + formatReminderTime(response.getRemindAt()) + ": " + response.getNote(), Map.of());
+        });
+    }
+
+    private AiBotReply createReminderAction(AiAction action, Message triggerMessage) {
+        String remindAt = stringParam(action, "remindAt");
+        String note = stringParam(action, "note");
+        if (remindAt.isBlank()) {
+            return new AiBotReply("Bạn muốn mình nhắc vào thời gian nào?", Map.of());
+        }
+        MessageReminderResponse response = messageReminderService.createReminder(CreateMessageReminderRequest.builder()
+                .messageId(triggerMessage.getId())
+                .remindAt(remindAt)
+                .note(note.isBlank() ? "Nhắc hẹn từ NexTalk AI" : note)
+                .build());
+        String reply = action.reply().isBlank()
+                ? "Mình đã tạo nhắc hẹn lúc " + formatReminderTime(response.getRemindAt()) + ": " + response.getNote()
+                : action.reply();
+        return new AiBotReply(reply, Map.of());
+    }
+
+    private AiBotReply createPollAction(AiAction action, Conversation conversation) {
+        String question = stringParam(action, "question");
+        List<String> options = stringListParam(action, "options");
+        if (question.isBlank() || options.size() < 2) {
+            return new AiBotReply("Bạn cho mình câu hỏi và ít nhất 2 lựa chọn để tạo bình chọn nhé.", Map.of());
+        }
+
+        MessageResponse poll = messageServiceProvider.getObject().createPoll(CreatePollRequest.builder()
+                .conversationId(conversation.getId())
+                .question(question)
+                .options(options)
+                .allowMultiple(booleanParam(action, "allowMultiple"))
+                .allowAddOptions(booleanParam(action, "allowAddOptions"))
+                .anonymous(booleanParam(action, "anonymous"))
+                .expiresAt(stringParam(action, "expiresAt"))
+                .build());
+
+        String reply = action.reply().isBlank()
+                ? "Mình đã tạo bình chọn: " + poll.getContent()
+                : action.reply();
+        return new AiBotReply(reply, Map.of("action", "CREATE_POLL", "pollMessageId", poll.getId()));
+    }
+
+    private AiBotReply searchMessagesAction(AiAction action, Conversation conversation, String originalQuestion) {
+        String query = stringParam(action, "query");
+        if (query.isBlank()) {
+            query = originalQuestion;
+        }
+        query = query.replaceAll("(?i)@?(bot|nextalk\\s+ai|meta\\s+ai)", " ").replaceAll("\\s+", " ").trim();
+        if (query.length() < 2) {
+            return new AiBotReply("Bạn muốn tìm nội dung gì?", Map.of());
+        }
+
+        List<MessageResponse> results = messageServiceProvider.getObject().searchMessages(query, conversation.getId());
+        if (results.isEmpty()) {
+            return new AiBotReply("Mình không tìm thấy tin nhắn nào phù hợp với: " + query, Map.of());
+        }
+
+        StringBuilder builder = new StringBuilder("Mình tìm thấy ").append(results.size()).append(" tin nhắn. Gần nhất:\n");
+        results.stream().limit(5).forEach(message -> builder
+                .append("- ")
+                .append(message.getSenderUsername())
+                .append(": ")
+                .append(shorten(stripHtml(message.getContent()), 90))
+                .append('\n'));
+        return new AiBotReply(builder.toString().trim(), Map.of("action", "SEARCH_MESSAGES", "query", query));
+    }
+
+    private AiBotReply summarizeConversationAction(Conversation conversation) {
+        ConversationSummaryResponse summary = conversationSummaryService.summarize(conversation.getId());
+        return new AiBotReply("Tóm tắt gần đây:\n" + summary.getSummary(), Map.of("action", "SUMMARIZE_CONVERSATION"));
+    }
+
+    private AiAction parseSimplePoll(String question) {
+        String cleaned = question
+                .replaceAll("(?iu)@?(bot|nextalk\\s+ai|meta\\s+ai)", " ")
+                .replaceAll("(?iu)(tao|tạo|lap|lập)?\\s*(poll|binh chon|bình chọn|bo phieu|bỏ phiếu)", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        String[] parts = cleaned.split("[:：]", 2);
+        if (parts.length < 2) {
+            parts = cleaned.split("(?iu)\\b(gom|gồm|cac lua chon|các lựa chọn|lua chon|lựa chọn)\\b", 2);
+        }
+        if (parts.length < 2) {
+            return null;
+        }
+        List<String> options = List.of(parts[1].split("\\s*(?:,|/|\\||;| hoac | hoặc | hay )\\s*")).stream()
+                .map(String::trim)
+                .filter(option -> !option.isBlank())
+                .distinct()
+                .toList();
+        if (options.size() < 2) {
+            return null;
+        }
+        return new AiAction("CREATE_POLL", Map.of("question", parts[0].trim(), "options", options), "");
+    }
+
+    private <T> T runAs(User requester, ActionSupplier<T> supplier) {
+        Authentication previous = SecurityContextHolder.getContext().getAuthentication();
+        try {
+            UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                    requester,
+                    null,
+                    requester.getAuthorities()
+            );
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+            return supplier.get();
+        } catch (Exception e) {
+            return (T) new AiBotReply(cleanActionError(e), Map.of());
+        } finally {
+            SecurityContextHolder.getContext().setAuthentication(previous);
+        }
+    }
+
+    private String cleanActionError(Exception e) {
+        String message = e.getMessage();
+        if (message == null || message.isBlank()) {
+            return "Mình chưa thực hiện được yêu cầu này.";
+        }
+        return "Mình chưa thực hiện được: " + message;
+    }
+
+    private List<SummaryMessagePayload> getContextMessages(Conversation conversation, Message triggerMessage) {
+        return messageRepository
                 .findByConversationIdOrderByCreatedAtDesc(conversation.getId(), PageRequest.of(0, messageLimit))
                 .getContent()
                 .stream()
@@ -136,8 +391,16 @@ public class AiBotServiceImpl implements AiBotService {
                         .createdAt(message.getCreatedAt())
                         .build())
                 .toList();
+    }
 
-        AiBotRequest request = AiBotRequest.builder()
+    private AiBotRequest buildAiRequest(
+            Conversation conversation,
+            Message triggerMessage,
+            User requester,
+            String question,
+            List<SummaryMessagePayload> contextMessages
+    ) {
+        return AiBotRequest.builder()
                 .conversationId(conversation.getId())
                 .conversationName(conversation.getName())
                 .conversationType(conversation.getType().name())
@@ -147,27 +410,9 @@ public class AiBotServiceImpl implements AiBotService {
                 .triggerMessageId(triggerMessage.getId())
                 .messageCount(contextMessages.size())
                 .preferredModel(preferredModel)
-                .instruction("Ban la NexTalk Bot trong group chat. Tra loi truc tiep cau hoi cua nguoi dung bang tieng Viet, ngan gon, huu ich, lich su. Neu can, dung ngu canh tin nhan gan nhat nhung khong bia thong tin.")
+                .instruction("Route user request to a safe NexTalk action or answer directly.")
                 .messages(contextMessages)
                 .build();
-
-        if (geminiApiKey != null && !geminiApiKey.isBlank()) {
-            String geminiAnswer = requestGeminiAnswer(request);
-            if (geminiAnswer != null && !geminiAnswer.isBlank()) {
-                return new AiBotReply(geminiAnswer.trim(), Map.of());
-            }
-        }
-
-        if (aiBotWebhookUrl == null || aiBotWebhookUrl.isBlank()) {
-            return new AiBotReply("NexTalk AI chua nhan duoc cau tra loi phu hop tu Gemini.", Map.of());
-        }
-
-        ResponseEntity<Object> response = restTemplate.postForEntity(aiBotWebhookUrl, request, Object.class);
-        String answer = extractAnswer(response.getBody());
-        if (answer == null || answer.isBlank()) {
-            return new AiBotReply("Minh chua nhan duoc cau tra loi phu hop tu AI.", Map.of());
-        }
-        return new AiBotReply(answer.trim(), Map.of());
     }
 
     private String requestGeminiAnswer(AiBotRequest request) {
@@ -192,6 +437,50 @@ public class AiBotServiceImpl implements AiBotService {
         return extractGeminiText(response.getBody());
     }
 
+    private String buildRouterPrompt(AiBotRequest request) {
+        StringBuilder contextBuilder = new StringBuilder();
+        if (request.getMessages() != null) {
+            for (SummaryMessagePayload message : request.getMessages()) {
+                contextBuilder
+                        .append(message.getSenderUsername())
+                        .append(": ")
+                        .append(message.getContent())
+                        .append('\n');
+            }
+        }
+
+        return """
+                You are NexTalk AI action router. Return ONLY valid JSON.
+                Current date-time timezone: Asia/Ho_Chi_Minh. User: %s.
+                User request: %s
+
+                Recent context:
+                %s
+
+                Choose one intent:
+                ANSWER, ASK_CLARIFICATION, CREATE_REMINDER, CREATE_POLL, SEARCH_MESSAGES, SUMMARIZE_CONVERSATION.
+
+                JSON shape:
+                {
+                  "intent": "...",
+                  "reply": "short Vietnamese user-facing reply with proper Vietnamese accents, or empty if backend should compose",
+                  "parameters": {}
+                }
+
+                Parameter rules:
+                CREATE_REMINDER: parameters.note, parameters.remindAt ISO-8601 with timezone. If time missing use ASK_CLARIFICATION.
+                CREATE_POLL: parameters.question, parameters.options array with at least 2 items, optional allowMultiple, allowAddOptions, anonymous, expiresAt ISO string.
+                SEARCH_MESSAGES: parameters.query.
+                SUMMARIZE_CONVERSATION: parameters may be empty.
+                ANSWER: reply must answer naturally in Vietnamese with proper accents.
+                Do not invent permissions or private data. If unclear, use ASK_CLARIFICATION.
+                """.formatted(
+                request.getRequestedByUsername(),
+                request.getQuestion(),
+                contextBuilder.length() == 0 ? "(No context)" : contextBuilder.toString().trim()
+        );
+    }
+
     private String buildPrompt(AiBotRequest request) {
         StringBuilder contextBuilder = new StringBuilder();
         if (request.getMessages() != null) {
@@ -205,20 +494,20 @@ public class AiBotServiceImpl implements AiBotService {
         }
 
         return """
-                Ban la NexTalk AI trong group chat.
-                Nguoi hoi: %s
-                Cau hoi: %s
+                Bạn là NexTalk AI trong group chat.
+                Người hỏi: %s
+                Câu hỏi: %s
 
-                Ngu canh gan nhat:
+                Ngữ cảnh gần nhất:
                 %s
 
-                Hay tra loi bang tieng Viet, ro rang, huu ich va phai ket thuc tron y.
-                Neu cau hoi can giai thich, hay trinh bay ngan gon theo cac muc: khai niem, dac diem chinh, vi du/ung dung.
-                Khong dung o giua cau hoac giua danh sach. Neu khong du du kien, hay noi ro ban can them thong tin.
+                Hãy trả lời bằng tiếng Việt có dấu, rõ ràng, hữu ích và phải kết thúc trọn ý.
+                Nếu câu hỏi cần giải thích, hãy trình bày ngắn gọn theo các mục: khái niệm, đặc điểm chính, ví dụ/ứng dụng.
+                Nếu không đủ dữ kiện, hãy nói rõ bạn cần thêm thông tin.
                 """.formatted(
                 request.getRequestedByUsername(),
                 request.getQuestion(),
-                contextBuilder.length() == 0 ? "(Khong co ngu canh)" : contextBuilder.toString().trim()
+                contextBuilder.length() == 0 ? "(Không có ngữ cảnh)" : contextBuilder.toString().trim()
         );
     }
 
@@ -237,22 +526,18 @@ public class AiBotServiceImpl implements AiBotService {
             if (!(candidateRaw instanceof Map<?, ?> candidate)) {
                 continue;
             }
-
             Object finishReason = candidate.get("finishReason");
             if ("MAX_TOKENS".equals(String.valueOf(finishReason))) {
                 reachedTokenLimit = true;
             }
-
             Object contentRaw = candidate.get("content");
             if (!(contentRaw instanceof Map<?, ?> content)) {
                 continue;
             }
-
             Object partsRaw = content.get("parts");
             if (!(partsRaw instanceof List<?> parts)) {
                 continue;
             }
-
             for (Object partRaw : parts) {
                 if (!(partRaw instanceof Map<?, ?> part)) {
                     continue;
@@ -271,7 +556,7 @@ public class AiBotServiceImpl implements AiBotService {
             return null;
         }
         if (reachedTokenLimit) {
-            answer.append("\n\n(Cau tra loi dang dai nen minh tam dung tai day. Ban co the hoi tiep de minh giai thich phan con lai.)");
+            answer.append("\n\n(Câu trả lời đang dài nên mình tạm dừng tại đây. Bạn có thể hỏi tiếp để mình giải thích phần còn lại.)");
         }
         return answer.toString().trim();
     }
@@ -317,7 +602,7 @@ public class AiBotServiceImpl implements AiBotService {
                 .replaceAll("\\s+", " ")
                 .trim();
         if (question.isBlank()) {
-            question = "Hay ho tro cuoc tro chuyen nay dua tren ngu canh gan nhat.";
+            question = "Hãy hỗ trợ cuộc trò chuyện này dựa trên ngữ cảnh gần nhất.";
         }
         return question;
     }
@@ -457,6 +742,51 @@ public class AiBotServiceImpl implements AiBotService {
         return normalized.replaceAll("\\s+", " ").trim();
     }
 
+    private String stringParam(AiAction action, String key) {
+        return stringValue(action.parameters().get(key));
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private boolean booleanParam(AiAction action, String key) {
+        Object value = action.parameters().get(key);
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        return "true".equalsIgnoreCase(String.valueOf(value));
+    }
+
+    private List<String> stringListParam(AiAction action, String key) {
+        Object raw = action.parameters().get(key);
+        if (!(raw instanceof List<?> rawList)) {
+            return List.of();
+        }
+        return rawList.stream()
+                .map(this::stringValue)
+                .filter(value -> !value.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private String formatReminderTime(String instantString) {
+        try {
+            return java.time.Instant.parse(instantString)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDateTime()
+                    .format(REMINDER_TIME_FORMATTER);
+        } catch (Exception ignored) {
+            return instantString;
+        }
+    }
+
+    private String shorten(String value, int maxLength) {
+        if (value == null) return "";
+        String normalized = value.replaceAll("\\s+", " ").trim();
+        return normalized.length() <= maxLength ? normalized : normalized.substring(0, maxLength - 3) + "...";
+    }
+
     private void createAndBroadcastBotMessage(Conversation conversation, User requester, String answer, String triggerMessageId, Map<String, Object> extraMetadata) {
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("systemType", "AI_BOT_REPLY");
@@ -515,7 +845,15 @@ public class AiBotServiceImpl implements AiBotService {
                 .build();
     }
 
+    @FunctionalInterface
+    private interface ActionSupplier<T> {
+        T get();
+    }
+
     private record AiBotReply(String answer, Map<String, Object> metadata) {
+    }
+
+    private record AiAction(String intent, Map<String, Object> parameters, String reply) {
     }
 
     private record ReminderIntent(String note, LocalDateTime remindAt) {
