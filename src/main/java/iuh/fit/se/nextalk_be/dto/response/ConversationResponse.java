@@ -24,6 +24,8 @@ public class ConversationResponse {
     private boolean hidden;
     private int selfDestructSeconds;
     private Set<UserProfileResponse> members;
+    private String themeColor;
+    private String wallpaperUrl;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

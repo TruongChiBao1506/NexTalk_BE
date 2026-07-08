@@ -42,4 +42,8 @@ public class Conversation extends BaseEntity {
 
     @Builder.Default
     private Set<String> hiddenByUsers = new HashSet<>();
+
+    private String themeColor;
+    
+    private String wallpaperUrl;
 }

@@ -1,6 +1,7 @@
 package iuh.fit.se.nextalk_be.controller;
 
 import iuh.fit.se.nextalk_be.dto.request.UpdateSelfDestructRequest;
+import iuh.fit.se.nextalk_be.dto.request.UpdateThemeRequest;
 import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
 import iuh.fit.se.nextalk_be.dto.response.ConversationResponse;
 import iuh.fit.se.nextalk_be.dto.response.ConversationSummaryResponse;
@@ -106,5 +107,15 @@ public class ConversationController {
     public ResponseEntity<ApiResponse<ConversationSummaryResponse>> summarizeConversation(@PathVariable("id") String id) {
         ConversationSummaryResponse response = conversationSummaryService.summarize(id);
         return ResponseEntity.ok(ApiResponse.success(response, "Conversation summary generated successfully"));
+    }
+
+    @PutMapping("/{id}/theme")
+    @Operation(summary = "Update conversation theme color and wallpaper")
+    public ResponseEntity<ApiResponse<ConversationResponse>> updateTheme(
+            @PathVariable("id") String id,
+            @Valid @RequestBody UpdateThemeRequest request
+    ) {
+        ConversationResponse response = conversationService.updateTheme(id, request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Conversation theme updated successfully"));
     }
 }

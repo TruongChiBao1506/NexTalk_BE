@@ -181,6 +181,8 @@ public class ConversationServiceImpl implements ConversationService {
                 .pinned(conversation.getPinnedByUsers() != null && conversation.getPinnedByUsers().contains(currentUser.getId()))
                 .hidden(conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(currentUser.getId()))
                 .selfDestructSeconds(conversation.getSelfDestructSeconds())
+                .themeColor(conversation.getThemeColor())
+                .wallpaperUrl(conversation.getWallpaperUrl())
                 .members(memberResponses)
                 .createdAt(conversation.getCreatedAt())
                 .updatedAt(conversation.getUpdatedAt())
@@ -376,6 +378,16 @@ public class ConversationServiceImpl implements ConversationService {
             conversation.getHiddenByUsers().remove(currentUser.getId());
         }
 
+        return mapToConversationResponse(conversationRepository.save(conversation));
+    }
+
+    public ConversationResponse updateTheme(String id, iuh.fit.se.nextalk_be.dto.request.UpdateThemeRequest request) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Conversation conversation = getConversationForMember(id, currentUser);
+        
+        conversation.setThemeColor(request.getThemeColor());
+        conversation.setWallpaperUrl(request.getWallpaperUrl());
+        
         return mapToConversationResponse(conversationRepository.save(conversation));
     }
 }
