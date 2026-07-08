@@ -17,9 +17,15 @@ public class CloudinaryServiceImpl implements CloudinaryService {
     private final Cloudinary cloudinary;
 
     public Map uploadFile(MultipartFile file) throws IOException {
+        String contentType = file.getContentType();
+        String resourceType = "auto";
+        if (contentType != null && (contentType.startsWith("audio/") || contentType.startsWith("video/"))) {
+            resourceType = "video";
+        }
+
         return cloudinary.uploader().upload(
                 file.getBytes(),
-                ObjectUtils.asMap("resource_type", "auto")
+                ObjectUtils.asMap("resource_type", resourceType)
         );
     }
 }

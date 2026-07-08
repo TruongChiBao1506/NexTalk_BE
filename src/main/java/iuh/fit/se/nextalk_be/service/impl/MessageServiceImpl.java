@@ -41,6 +41,7 @@ import iuh.fit.se.nextalk_be.repository.UserBlockRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.FCMService;
+import iuh.fit.se.nextalk_be.service.LinkPreviewService;
 import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.PresenceService;
 import iuh.fit.se.nextalk_be.service.UserService;
@@ -85,6 +86,7 @@ public class MessageServiceImpl implements MessageService {
     private final FCMService fcmService;
     private final PresenceService presenceService;
     private final RateLimitService rateLimitService;
+    private final LinkPreviewService linkPreviewService;
 
     // @Transactional
     public MessageResponse sendMessage(MessageRequest request) {
@@ -221,6 +223,10 @@ public class MessageServiceImpl implements MessageService {
         if (!mentionTargets.userIds().isEmpty()) {
             metadata.put("mentionedUserIds", new ArrayList<>(mentionTargets.userIds()));
         }
+        if (type == MessageType.TEXT && !content.isBlank()) {
+            linkPreviewService.createPreview(content)
+                    .ifPresent(preview -> metadata.put("linkPreview", preview));
+        }
 
         Message message = Message.builder()
                 .conversation(conversation)
@@ -277,6 +283,8 @@ public class MessageServiceImpl implements MessageService {
                     contentPreview = "[Hình ảnh]";
                 } else if (savedMessage.getMessageType() == MessageType.VIDEO) {
                     contentPreview = "[Video]";
+                } else if (savedMessage.getMessageType() == MessageType.AUDIO) {
+                    contentPreview = "[Tin nhắn thoại]";
                 } else if (savedMessage.getMessageType() == MessageType.FILE) {
                     contentPreview = "[Tệp đính kèm]";
                 } else {
