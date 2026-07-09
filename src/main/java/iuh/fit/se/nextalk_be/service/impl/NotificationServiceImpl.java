@@ -7,6 +7,7 @@ import iuh.fit.se.nextalk_be.entity.NotificationType;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.repository.NotificationRepository;
+import iuh.fit.se.nextalk_be.service.FCMService;
 import iuh.fit.se.nextalk_be.service.UserService;
 
 
@@ -25,6 +26,7 @@ public class NotificationServiceImpl implements NotificationService {
     private final NotificationRepository notificationRepository;
     private final UserService userService;
     private final SimpMessagingTemplate messagingTemplate;
+    private final FCMService fcmService;
 
     /**
      * Create, persist, and push a notification to a specific recipient via WebSocket.
@@ -48,6 +50,10 @@ public class NotificationServiceImpl implements NotificationService {
                 "/queue/notifications",
                 response
         );
+
+        if (shouldSendPush(type)) {
+            fcmService.sendPushNotificationToTokens(recipient.getFcmTokens(), "NexTalk", content);
+        }
 
         return response;
     }
@@ -91,6 +97,12 @@ public class NotificationServiceImpl implements NotificationService {
     public long countUnread() {
         User currentUser = userService.getCurrentAuthenticatedUser();
         return notificationRepository.countByRecipientIdAndIsReadFalse(currentUser.getId());
+    }
+
+    private boolean shouldSendPush(NotificationType type) {
+        return type != NotificationType.NEW_MESSAGE
+                && type != NotificationType.MENTION
+                && type != NotificationType.REMINDER;
     }
 
     private NotificationResponse mapToResponse(Notification notification) {

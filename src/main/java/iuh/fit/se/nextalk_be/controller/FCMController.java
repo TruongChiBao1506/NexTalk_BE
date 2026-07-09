@@ -9,6 +9,7 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -46,5 +47,20 @@ public class FCMController {
         }
 
         return ResponseEntity.ok(ApiResponse.success(null, "Token updated successfully"));
+    }
+
+    @DeleteMapping("/token")
+    public ResponseEntity<ApiResponse<Void>> deleteToken(@AuthenticationPrincipal User user, @RequestBody FCMTokenRequest request) {
+        if (user == null || request.getToken() == null || request.getToken().isEmpty()) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("Invalid token"));
+        }
+
+        User currentUser = userRepository.findById(user.getId()).orElse(null);
+        if (currentUser != null && currentUser.getFcmTokens() != null) {
+            currentUser.getFcmTokens().remove(request.getToken());
+            userRepository.save(currentUser);
+        }
+
+        return ResponseEntity.ok(ApiResponse.success(null, "Token deleted successfully"));
     }
 }

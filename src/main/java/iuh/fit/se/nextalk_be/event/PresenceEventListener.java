@@ -69,7 +69,15 @@ public class PresenceEventListener {
             userRepository.findByEmail(emailOrUsername)
                     .or(() -> userRepository.findByUsername(emailOrUsername))
                     .ifPresent(user -> {
-                        presenceService.removeSession(user.getId(), sessionId);
+                        boolean removedTrackedSession = presenceService.removeSession(user.getId(), sessionId);
+                        if (!removedTrackedSession) {
+                            log.info(
+                                    "Ignored disconnect for untracked WebSocket session {} of user {}",
+                                    sessionId,
+                                    user.getUsername()
+                            );
+                            return;
+                        }
                         String currentStatus = presenceService.getUserStatus(user.getId());
                         log.info("User {} disconnected with session {}. New status is {}", user.getUsername(), sessionId, currentStatus);
 

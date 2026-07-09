@@ -50,15 +50,19 @@ public class PresenceServiceImpl implements PresenceService {
         }
     }
 
-    public void removeSession(String userId, String sessionId) {
+    public boolean removeSession(String userId, String sessionId) {
         String sessionsKey = SESSIONS_KEY_PREFIX + userId;
-        redisTemplate.opsForSet().remove(sessionsKey, sessionId);
+        Long removed = redisTemplate.opsForSet().remove(sessionsKey, sessionId);
+        if (removed == null || removed == 0) {
+            return false;
+        }
 
         Long count = redisTemplate.opsForSet().size(sessionsKey);
         if (count == null || count == 0) {
             setUserStatus(userId, "OFFLINE");
             setLastSeen(userId, LocalDateTime.now());
         }
+        return true;
     }
 
     public void setUserStatus(String userId, String status) {

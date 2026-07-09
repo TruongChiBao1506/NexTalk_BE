@@ -12,7 +12,7 @@ import java.util.UUID;
 public interface PresenceService {
     @jakarta.annotation.PostConstruct public void clearAllSessionsOnStartup();
     public void addSession(String userId, String sessionId);
-    public void removeSession(String userId, String sessionId);
+    public boolean removeSession(String userId, String sessionId);
     public void setUserStatus(String userId, String status);
     public String getUserStatus(String userId);
     public void setLastSeen(String userId, LocalDateTime lastSeenTime);

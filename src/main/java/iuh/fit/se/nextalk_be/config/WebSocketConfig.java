@@ -51,40 +51,58 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
             public Message<?> preSend(Message<?> message, MessageChannel channel) {
                 StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
                 if (accessor != null && StompCommand.CONNECT.equals(accessor.getCommand())) {
-                    List<String> authorization = accessor.getNativeHeader("Authorization");
-                    if (authorization != null && !authorization.isEmpty()) {
-                        String authHeader = authorization.get(0);
-                        if (authHeader.startsWith("Bearer ")) {
-                            String jwt = authHeader.substring(7);
-                            try {
-                                String userEmail = jwtService.extractUsername(jwt);
-                                if (userEmail != null) {
-                                    UserDetails userDetails = userDetailsService.loadUserByUsername(userEmail);
-                                    if (jwtService.isTokenValid(jwt, userDetails)) {
-                                        UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                                                userDetails,
-                                                null,
-                                                userDetails.getAuthorities()
-                                        );
-                                        accessor.setUser(authToken);
-                                    } else {
-                                        throw new org.springframework.messaging.MessageDeliveryException("Token is invalid or expired");
-                                    }
-                                } else {
-                                    throw new org.springframework.messaging.MessageDeliveryException("Token username is null");
-                                }
-                            } catch (Exception e) {
-                                throw new org.springframework.messaging.MessageDeliveryException("Unauthorized: " + e.getMessage());
-                            }
-                        } else {
-                            throw new org.springframework.messaging.MessageDeliveryException("Invalid authorization header format");
-                        }
-                    } else {
-                        throw new org.springframework.messaging.MessageDeliveryException("Missing authorization header");
-                    }
+                    authenticate(accessor);
                 }
                 return message;
             }
         });
+    }
+
+    private void authenticate(StompHeaderAccessor accessor) {
+        String jwt = resolveToken(accessor);
+        if (jwt == null || jwt.isBlank()) {
+            throw new org.springframework.messaging.MessageDeliveryException("Missing authorization token");
+        }
+
+        try {
+            accessor.setUser(buildAuthentication(jwt));
+        } catch (Exception e) {
+            throw new org.springframework.messaging.MessageDeliveryException("Unauthorized: " + e.getMessage());
+        }
+    }
+
+    private String resolveToken(StompHeaderAccessor accessor) {
+        List<String> authorization = accessor.getNativeHeader("Authorization");
+        if (authorization != null && !authorization.isEmpty()) {
+            String authHeader = authorization.get(0);
+            if (authHeader.startsWith("Bearer ")) {
+                return authHeader.substring(7);
+            }
+        }
+
+        List<String> accessTokens = accessor.getNativeHeader("access_token");
+        if (accessTokens != null && !accessTokens.isEmpty()) {
+            return accessTokens.get(0);
+        }
+
+        return null;
+    }
+
+    private UsernamePasswordAuthenticationToken buildAuthentication(String jwt) {
+        String userEmail = jwtService.extractUsername(jwt);
+        if (userEmail == null) {
+            throw new org.springframework.messaging.MessageDeliveryException("Token username is null");
+        }
+
+        UserDetails userDetails = userDetailsService.loadUserByUsername(userEmail);
+        if (!jwtService.isTokenValid(jwt, userDetails)) {
+            throw new org.springframework.messaging.MessageDeliveryException("Token is invalid or expired");
+        }
+
+        return new UsernamePasswordAuthenticationToken(
+                userDetails,
+                null,
+                userDetails.getAuthorities()
+        );
     }
 }
