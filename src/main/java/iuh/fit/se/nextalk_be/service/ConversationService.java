@@ -28,6 +28,7 @@ public interface ConversationService {
     public List<ConversationResponse> getUserConversations();
     public ConversationResponse getConversationById(String id);
     public ConversationResponse mapToConversationResponse(Conversation conversation);
+    public ConversationResponse mapToConversationResponse(Conversation conversation, User currentUser);
     public ConversationResponse updateSelfDestruct(String id, int selfDestructSeconds);
     public ConversationResponse updatePinned(String id, boolean pinned);
     public void deleteForCurrentUser(String id);

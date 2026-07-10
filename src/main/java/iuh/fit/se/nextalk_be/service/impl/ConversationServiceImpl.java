@@ -142,6 +142,10 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     public ConversationResponse mapToConversationResponse(Conversation conversation) {
+        return mapToConversationResponse(conversation, userService.getCurrentAuthenticatedUser());
+    }
+
+    public ConversationResponse mapToConversationResponse(Conversation conversation, User currentUser) {
         Set<UserProfileResponse> memberResponses = conversation.getMembers().stream()
                 .map(m -> UserProfileResponse.builder()
                         .id(m.getId())
@@ -156,7 +160,6 @@ public class ConversationServiceImpl implements ConversationService {
                         .build())
                 .collect(Collectors.toSet());
 
-        User currentUser = userService.getCurrentAuthenticatedUser();
         String otherMemberId = getPrivateOtherMemberId(conversation, currentUser.getId());
         boolean blockedByMe = otherMemberId != null
                 && userBlockRepository.existsByBlockerIdAndBlockedId(currentUser.getId(), otherMemberId);

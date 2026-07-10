@@ -474,20 +474,7 @@ public class MessageServiceImpl implements MessageService {
             throw new BadRequestException("You cannot message this user because one of you has blocked the other.");
         }
 
-        boolean areFriends = friendshipRepository.findRelation(currentUser.getId(), otherMember.getId())
-                .map(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
-                .orElse(false);
 
-        boolean hasAcceptedChatRequest = chatRequestRepository
-                .findBySenderIdAndReceiverIdAndStatus(currentUser.getId(), otherMember.getId(), ChatRequestStatus.ACCEPTED)
-                .isPresent()
-                || chatRequestRepository
-                .findBySenderIdAndReceiverIdAndStatus(otherMember.getId(), currentUser.getId(), ChatRequestStatus.ACCEPTED)
-                .isPresent();
-
-        if (!areFriends && !hasAcceptedChatRequest) {
-            throw new BadRequestException("You are no longer friends. Send a chat request to continue messaging.");
-        }
     }
 
     // @Transactional(readOnly = true)
