@@ -39,6 +39,7 @@ public class SecurityConfig {
                                 "/api/auth/refresh",
                                 "/api/auth/logout",
                                 "/api/auth/google-login",
+                                "/api/auth/mobile-reset",
                                 "/api/auth/qr/init",
                                 "/api/auth/qr/status/**",
                                 "/api/health/**",

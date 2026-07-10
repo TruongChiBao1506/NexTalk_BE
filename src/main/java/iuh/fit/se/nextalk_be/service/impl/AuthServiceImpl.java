@@ -54,6 +54,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
 @Service
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
@@ -244,6 +248,12 @@ public class AuthServiceImpl implements AuthService {
         passwordResetTokenRepository.save(resetToken);
 
         String resetLink = "http://localhost:3000/reset-password?token=" + token;
+        if ("mobile".equalsIgnoreCase(request.getClient()) && request.getReturnUrl() != null) {
+            HttpServletRequest httpRequest = ((ServletRequestAttributes) RequestContextHolder.currentRequestAttributes()).getRequest();
+            String baseUrl = httpRequest.getScheme() + "://" + httpRequest.getServerName() + ":" + httpRequest.getServerPort();
+            resetLink = baseUrl + "/api/auth/mobile-reset?returnUrl=" + request.getReturnUrl() + "&token=" + token;
+        }
+
         mailService.sendPasswordResetEmail(user.getEmail(), resetLink);
     }
 

@@ -30,6 +30,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.Principal;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -78,6 +81,11 @@ public class CallController {
 
         int uid = currentUser.getId().hashCode() & 0x7FFFFFFF;
         String channelName = conversationId;
+        String resolvedAppId = resolveAgoraConfig("AGORA_APP_ID", appId);
+        String resolvedAppCertificate = resolveAgoraConfig("AGORA_APP_CERTIFICATE", appCertificate);
+        if (resolvedAppId.isBlank() || resolvedAppCertificate.isBlank()) {
+            throw new BadRequestException("Agora is not configured");
+        }
 
         RtcTokenBuilder2 tokenBuilder = new RtcTokenBuilder2();
         // Expiration times (in seconds): 2 hours = 7200s
@@ -85,8 +93,8 @@ public class CallController {
         int privilegeExpire = 7200;
 
         String token = tokenBuilder.buildTokenWithUid(
-                appId,
-                appCertificate,
+                resolvedAppId,
+                resolvedAppCertificate,
                 channelName,
                 uid,
                 Role.ROLE_PUBLISHER,
@@ -95,6 +103,7 @@ public class CallController {
         );
 
         CallTokenResponse response = CallTokenResponse.builder()
+                .appId(resolvedAppId)
                 .token(token)
                 .uid(uid)
                 .channelName(channelName)
@@ -112,16 +121,22 @@ public class CallController {
         
         int uid = currentUser.getId().hashCode() & 0x7FFFFFFF;
         String channelName = channelId;
+        String resolvedAppId = resolveAgoraConfig("AGORA_APP_ID", appId);
+        String resolvedAppCertificate = resolveAgoraConfig("AGORA_APP_CERTIFICATE", appCertificate);
+        if (resolvedAppId.isBlank() || resolvedAppCertificate.isBlank()) {
+            throw new BadRequestException("Agora is not configured");
+        }
 
         RtcTokenBuilder2 tokenBuilder = new RtcTokenBuilder2();
         int tokenExpire = 7200;
         int privilegeExpire = 7200;
 
         String token = tokenBuilder.buildTokenWithUid(
-                appId, appCertificate, channelName, uid, Role.ROLE_PUBLISHER, tokenExpire, privilegeExpire
+                resolvedAppId, resolvedAppCertificate, channelName, uid, Role.ROLE_PUBLISHER, tokenExpire, privilegeExpire
         );
 
         CallTokenResponse response = CallTokenResponse.builder()
+                .appId(resolvedAppId)
                 .token(token)
                 .uid(uid)
                 .channelName(channelName)
@@ -373,6 +388,42 @@ public class CallController {
         return userRepository.findByEmail(name)
                 .or(() -> userRepository.findByUsername(name))
                 .orElse(null);
+    }
+
+    private String resolveAgoraConfig(String key, String configuredValue) {
+        if (configuredValue != null && !configuredValue.isBlank()) {
+            return configuredValue.trim();
+        }
+
+        String envValue = System.getenv(key);
+        if (envValue != null && !envValue.isBlank()) {
+            return envValue.trim();
+        }
+
+        for (Path envPath : List.of(Path.of(".env"), Path.of("NexTalk_BE", ".env"))) {
+            String value = readEnvFileValue(envPath, key);
+            if (!value.isBlank()) {
+                return value;
+            }
+        }
+
+        return "";
+    }
+
+    private String readEnvFileValue(Path envPath, String key) {
+        if (!Files.exists(envPath)) {
+            return "";
+        }
+        try {
+            return Files.readAllLines(envPath).stream()
+                    .map(String::trim)
+                    .filter(line -> line.startsWith(key + "="))
+                    .map(line -> line.substring((key + "=").length()).trim())
+                    .findFirst()
+                    .orElse("");
+        } catch (IOException ignored) {
+            return "";
+        }
     }
 
     private void forwardToTarget(CallSignal signal) {

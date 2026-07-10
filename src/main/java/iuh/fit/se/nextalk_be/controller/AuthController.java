@@ -71,6 +71,18 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success(null, "Password reset email sent (if email exists)"));
     }
 
+    @GetMapping("/mobile-reset")
+    @Operation(summary = "Redirect mobile deep link")
+    public ResponseEntity<String> mobileReset(@RequestParam String returnUrl, @RequestParam String token) {
+        String fullUrl = returnUrl + (returnUrl.contains("?") ? "&" : "?") + "token=" + token;
+        String html = "<html><body style='font-family: sans-serif; text-align: center; margin-top: 50px;'>" +
+                "<h2>Redirecting to NexTalk...</h2>" +
+                "<p>If nothing happens, <a href='" + fullUrl + "'>click here</a>.</p>" +
+                "<script>window.location.href = '" + fullUrl + "';</script>" +
+                "</body></html>";
+        return ResponseEntity.ok().header("Content-Type", "text/html").body(html);
+    }
+
     @PostMapping("/reset-password")
     @Operation(summary = "Reset password using token")
     public ResponseEntity<ApiResponse<Void>> resetPassword(@Valid @RequestBody ResetPasswordRequest request, HttpServletRequest httpRequest) {

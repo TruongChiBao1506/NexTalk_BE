@@ -8,6 +8,7 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 public class CallTokenResponse {
+    private String appId;
     private String token;
     private Integer uid;
     private String channelName;
