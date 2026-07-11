@@ -37,8 +37,17 @@ public class User extends BaseEntity implements UserDetails {
 
     private String chatPin;
 
+    /** Birthday stored as YYYY-MM-dd (e.g. 2000-07-11) */
+    private String birthday;
+
+    @Builder.Default
+    private boolean enableBirthdayNotification = true;
+
     @Builder.Default
     private boolean isVerified = false;
+
+    @Builder.Default
+    private boolean isAccountLocked = false;
 
     @Builder.Default
     private List<String> fcmTokens = new java.util.ArrayList<>();
@@ -60,7 +69,7 @@ public class User extends BaseEntity implements UserDetails {
 
     @Override
     public boolean isAccountNonLocked() {
-        return true;
+        return !isAccountLocked;
     }
 
     @Override

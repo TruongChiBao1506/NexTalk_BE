@@ -17,4 +17,9 @@ public class UpdateProfileRequest {
     private String avatarUrl;
 
     private String bio;
+
+    /** Birthday as YYYY-MM-dd */
+    private String birthday;
+
+    private Boolean enableBirthdayNotification;
 }

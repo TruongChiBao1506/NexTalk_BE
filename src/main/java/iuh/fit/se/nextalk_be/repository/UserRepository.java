@@ -20,4 +20,6 @@ public interface UserRepository extends MongoRepository<User, String> {
     boolean existsByUsername(String username);
 
     java.util.List<User> findByUsernameContainingIgnoreCaseOrEmailContainingIgnoreCase(String username, String email);
+
+    java.util.List<User> findByBirthdayNotNullAndEnableBirthdayNotificationTrue();
 }

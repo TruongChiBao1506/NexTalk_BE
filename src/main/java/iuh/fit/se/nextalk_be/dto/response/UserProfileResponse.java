@@ -20,6 +20,8 @@ public class UserProfileResponse {
     @com.fasterxml.jackson.annotation.JsonProperty("isVerified")
     private boolean isVerified;
     private boolean hasChatPin;
+    private String birthday;
+    private boolean enableBirthdayNotification;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

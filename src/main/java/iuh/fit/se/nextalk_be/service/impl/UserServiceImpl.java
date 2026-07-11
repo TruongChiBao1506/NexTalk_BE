@@ -104,6 +104,14 @@ public class UserServiceImpl implements UserService {
             currentUser.setBio(request.getBio());
         }
 
+        if (request.getBirthday() != null) {
+            currentUser.setBirthday(request.getBirthday().isBlank() ? null : request.getBirthday());
+        }
+
+        if (request.getEnableBirthdayNotification() != null) {
+            currentUser.setEnableBirthdayNotification(request.getEnableBirthdayNotification());
+        }
+
         User savedUser = userRepository.save(currentUser);
         return mapToProfileResponse(savedUser);
     }
@@ -214,6 +222,8 @@ public class UserServiceImpl implements UserService {
                 .lastSeen(presenceService.getUserLastSeen(user.getId()))
                 .isVerified(user.isVerified())
                 .hasChatPin(user.getChatPin() != null && !user.getChatPin().isEmpty())
+                .birthday(user.getBirthday())
+                .enableBirthdayNotification(user.isEnableBirthdayNotification())
                 .createdAt(user.getCreatedAt())
                 .updatedAt(user.getUpdatedAt())
                 .build();
