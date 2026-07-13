@@ -81,22 +81,26 @@ public class PresenceEventListener {
                         String currentStatus = presenceService.getUserStatus(user.getId());
                         log.info("User {} disconnected with session {}. New status is {}", user.getUsername(), sessionId, currentStatus);
 
-                        // Voice Channel cleanup
-                        String[] channelInfo = voiceChannelService.leaveCurrentChannel(user.getId());
-                        if (channelInfo != null) {
-                            String channelId = channelInfo[0];
-                            String groupId = channelInfo[1];
-                            
-                            VoiceChannelEvent leaveEvent = 
-                                VoiceChannelEvent.builder()
-                                    .type("LEAVE")
-                                    .channelId(channelId)
-                                    .groupId(groupId)
-                                    .userId(user.getId())
-                                    .currentMembers(voiceChannelService.getChannelMembers(channelId))
-                                    .build();
-                            
-                            messagingTemplate.convertAndSend("/topic/group." + groupId + ".voice", leaveEvent);
+                        // Only the final device disconnect makes the user offline.
+                        // Disconnecting another signed-in device must not remove an
+                        // active voice presence owned by the remaining connection.
+                        if ("OFFLINE".equalsIgnoreCase(currentStatus)) {
+                            String[] channelInfo = voiceChannelService.leaveCurrentChannel(user.getId());
+                            if (channelInfo != null) {
+                                String channelId = channelInfo[0];
+                                String groupId = channelInfo[1];
+
+                                VoiceChannelEvent leaveEvent =
+                                    VoiceChannelEvent.builder()
+                                        .type("LEAVE")
+                                        .channelId(channelId)
+                                        .groupId(groupId)
+                                        .userId(user.getId())
+                                        .currentMembers(voiceChannelService.getChannelMembers(channelId))
+                                        .build();
+
+                                messagingTemplate.convertAndSend("/topic/group." + groupId + ".voice", leaveEvent);
+                            }
                         }
 
                         LocalDateTime lastSeen = presenceService.getUserLastSeen(user.getId());

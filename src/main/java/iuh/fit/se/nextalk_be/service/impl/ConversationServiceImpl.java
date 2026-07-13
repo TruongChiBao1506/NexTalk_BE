@@ -1,7 +1,6 @@
 package iuh.fit.se.nextalk_be.service.impl;
 import iuh.fit.se.nextalk_be.service.ConversationService;
 
-import iuh.fit.se.nextalk_be.dto.request.ChatRequestStatus;
 import iuh.fit.se.nextalk_be.dto.response.ConversationResponse;
 import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
@@ -104,6 +103,11 @@ public class ConversationServiceImpl implements ConversationService {
         List<Conversation> deduplicated = deduplicateConversations(conversations, currentUser.getId());
 
         return deduplicated.stream()
+                // Opening a profile/search result creates a private conversation shell
+                // so the composer has an id. Do not expose that shell in either user's
+                // inbox until the first message is actually sent.
+                .filter(conversation -> conversation.getType() != ConversationType.PRIVATE
+                        || messageRepository.existsByConversationId(conversation.getId()))
                 .filter(conversation -> conversation.getDeletedByUsers() == null
                         || !conversation.getDeletedByUsers().contains(currentUser.getId()))
                 .filter(conversation -> conversation.getHiddenByUsers() == null
@@ -392,14 +396,11 @@ public class ConversationServiceImpl implements ConversationService {
             return false;
         }
 
-        boolean hasAcceptedChatRequest = chatRequestRepository
-                .findBySenderIdAndReceiverIdAndStatus(currentUser.getId(), otherMemberId, ChatRequestStatus.ACCEPTED)
-                .isPresent()
-                || chatRequestRepository
-                .findBySenderIdAndReceiverIdAndStatus(otherMemberId, currentUser.getId(), ChatRequestStatus.ACCEPTED)
-                .isPresent();
-
-        return areFriends || hasAcceptedChatRequest;
+        // Stranger messaging is opt-out. A user who has not enabled the privacy
+        // setting must remain reachable, even before a chat request is accepted.
+        // Keep this response flag aligned with MessageServiceImpl's send guard so
+        // clients do not disable the composer while the backend permits the send.
+        return !otherMember.isBlockStrangerMessages() || areFriends;
     }
 
     // @Transactional(readOnly = true)

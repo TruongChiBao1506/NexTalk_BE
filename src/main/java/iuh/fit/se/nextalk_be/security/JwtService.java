@@ -56,6 +56,16 @@ public class JwtService {
         return generateAccessToken(new HashMap<>(), userDetails);
     }
 
+    public String generateAccessToken(UserDetails userDetails, String sessionId) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("sid", sessionId);
+        return generateAccessToken(claims, userDetails);
+    }
+
+    public String extractSessionId(String token) {
+        return extractClaim(token, claims -> claims.get("sid", String.class));
+    }
+
     public String generateAccessToken(Map<String, Object> extraClaims, UserDetails userDetails) {
         return buildToken(extraClaims, userDetails, jwtAccessExpirationMs);
     }

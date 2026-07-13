@@ -60,4 +60,5 @@ public interface AuthService {
     public void logout(TokenRefreshRequest request);
     public List<SessionResponse> getSessions();
     public void revokeSession(String id);
+    public void revokeAllSessions();
 }

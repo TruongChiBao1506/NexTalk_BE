@@ -17,7 +17,7 @@ public class CallSignal {
     private String callerName;
     private String callerAvatar;
     private String type; // VOICE, VIDEO
-    private String signalType; // INVITE, ANSWER, CANCEL, HANGUP, LEAVE, BUSY
+    private String signalType; // INVITE, ANSWER, CALL_HANDLED, CANCEL, HANGUP, LEAVE, BUSY
     private String token;
     private Integer uid;
     private Boolean accept;

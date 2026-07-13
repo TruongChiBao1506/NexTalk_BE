@@ -227,6 +227,7 @@ public class CallController {
                     signal
             );
         }
+        notifyOtherResponderDevices(signal, responder);
     }
 
     @MessageMapping("/call.cancel")
@@ -467,7 +468,34 @@ public class CallController {
                     signal
             );
         }
+        notifyOtherResponderDevices(signal, responder);
         return ResponseEntity.ok(ApiResponse.success(null, "Call rejected"));
+    }
+
+    private void notifyOtherResponderDevices(CallSignal original, User responder) {
+        CallSignal handledSignal = CallSignal.builder()
+                .callId(original.getCallId())
+                .conversationId(original.getConversationId())
+                .callerId(original.getCallerId())
+                .receiverId(responder.getId())
+                .type(original.getType())
+                .signalType("CALL_HANDLED")
+                .accept(original.getAccept())
+                .reason(Boolean.TRUE.equals(original.getAccept()) ? "answered_on_another_device" : "rejected_on_another_device")
+                .build();
+
+        // User destinations fan out to every active WebSocket session for this user.
+        // The device that performed the action is already connected/idle and ignores it;
+        // other ringing devices close their incoming-call UI.
+        messagingTemplate.convertAndSendToUser(
+                responder.getUsername(),
+                "/queue/calls",
+                handledSignal
+        );
+
+        if (responder.getFcmTokens() != null && !responder.getFcmTokens().isEmpty()) {
+            fcmService.sendCallCancelPushNotificationToTokens(responder.getFcmTokens(), original.getCallId());
+        }
     }
 
     private void forwardCallSignal(CallSignal signal, String senderId) {

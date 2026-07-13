@@ -82,10 +82,9 @@ public class PresenceServiceImpl implements PresenceService {
         if (status != null) {
             return status;
         }
-        // Fallback to MongoDB
-        return userRepository.findById(userId)
-                .map(User::getStatus)
-                .orElse("OFFLINE");
+        // No Redis presence means there is no tracked live WebSocket session.
+        // MongoDB may contain a stale value from a previous process lifetime.
+        return "OFFLINE";
     }
 
     public void setLastSeen(String userId, LocalDateTime lastSeenTime) {

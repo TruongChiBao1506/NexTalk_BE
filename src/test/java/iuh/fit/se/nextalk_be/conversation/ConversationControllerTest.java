@@ -76,7 +76,20 @@ public class ConversationControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success", is(true)))
                 .andExpect(jsonPath("$.data.type", is("PRIVATE")))
-                .andExpect(jsonPath("$.data.members", hasSize(2)));
+                .andExpect(jsonPath("$.data.members", hasSize(2)))
+                .andExpect(jsonPath("$.data.canSendMessages", is(true)));
+    }
+
+    @Test
+    @WithMockUser(username = "current@gmail.com")
+    void getOrCreatePrivateConversation_WhenReceiverBlocksStrangers_IsRejected() throws Exception {
+        friendUser.setBlockStrangerMessages(true);
+        friendUser = userRepository.save(friendUser);
+
+        mockMvc.perform(post("/api/conversations/private/" + friendUser.getId())
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success", is(false)));
     }
 
     @Test
@@ -97,7 +110,7 @@ public class ConversationControllerTest {
     @WithMockUser(username = "current@gmail.com")
     void getUserConversations_Success() throws Exception {
         Conversation conversation = Conversation.builder()
-                .type(ConversationType.PRIVATE)
+                .type(ConversationType.GROUP)
                 .members(Set.of(currentUser, friendUser))
                 .build();
         conversationRepository.save(conversation);
@@ -107,6 +120,21 @@ public class ConversationControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success", is(true)))
                 .andExpect(jsonPath("$.data", hasSize(1)));
+    }
+
+    @Test
+    @WithMockUser(username = "friend@gmail.com")
+    void getUserConversations_DoesNotShowEmptyPrivateConversationToRecipient() throws Exception {
+        conversationRepository.save(Conversation.builder()
+                .type(ConversationType.PRIVATE)
+                .members(Set.of(currentUser, friendUser))
+                .build());
+
+        mockMvc.perform(get("/api/conversations")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data", hasSize(0)));
     }
 
     @Test

@@ -145,4 +145,11 @@ public class AuthController {
         authService.revokeSession(id);
         return ResponseEntity.ok(ApiResponse.success(null, "Session revoked successfully"));
     }
+
+    @DeleteMapping("/sessions")
+    @Operation(summary = "Revoke all login sessions for current user")
+    public ResponseEntity<ApiResponse<Void>> revokeAllSessions() {
+        authService.revokeAllSessions();
+        return ResponseEntity.ok(ApiResponse.success(null, "All sessions revoked successfully"));
+    }
 }

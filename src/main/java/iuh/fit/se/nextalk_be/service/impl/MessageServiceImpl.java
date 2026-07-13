@@ -629,13 +629,13 @@ public class MessageServiceImpl implements MessageService {
                     .build();
 
             for (User member : conversation.getMembers()) {
-                if (!member.getId().equals(user.getId())) {
-                    messagingTemplate.convertAndSendToUser(
-                            member.getUsername(),
-                            "/queue/private",
-                            updateResponse
-                    );
-                }
+                // Also notify the reader's own WebSocket sessions so unread state
+                // is cleared immediately on their other signed-in devices.
+                messagingTemplate.convertAndSendToUser(
+                        member.getUsername(),
+                        "/queue/private",
+                        updateResponse
+                );
             }
         }
     }

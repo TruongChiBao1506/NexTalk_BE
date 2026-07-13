@@ -17,6 +17,8 @@ public interface RefreshTokenRepository extends MongoRepository<RefreshToken, St
 
     Optional<RefreshToken> findByIdAndUserId(String id, String userId);
 
+    boolean existsByIdAndUserId(String id, String userId);
+
     List<RefreshToken> findByUserIdOrderByCreatedAtDesc(String userId);
 
     void deleteByToken(String token);

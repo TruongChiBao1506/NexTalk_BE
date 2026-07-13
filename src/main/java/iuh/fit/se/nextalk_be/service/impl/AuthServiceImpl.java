@@ -42,6 +42,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
@@ -53,6 +54,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.Map;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -73,6 +75,7 @@ public class AuthServiceImpl implements AuthService {
     private final UserService userService;
     private final AuthenticationManager authenticationManager;
     private final RateLimitService rateLimitService;
+    private final SimpMessagingTemplate messagingTemplate;
 
     @Value("${server.port:8080}")
     private String serverPort;
@@ -157,17 +160,14 @@ public class AuthServiceImpl implements AuthService {
             throw new BadRequestException("Account not verified. Please verify your email first.");
         }
 
-        user.setStatus("ONLINE");
-        userRepository.save(user);
-
-        String accessToken = jwtService.generateAccessToken(user);
-        String refreshToken = issueRefreshToken(user, httpRequest);
+        IssuedSession issuedSession = issueRefreshToken(user, httpRequest);
+        String accessToken = jwtService.generateAccessToken(user, issuedSession.session().getId());
 
         UserProfileResponse userProfile = userService.mapToProfileResponse(user);
 
         return LoginResponse.builder()
                 .accessToken(accessToken)
-                .refreshToken(refreshToken)
+                .refreshToken(issuedSession.refreshToken())
                 .user(userProfile)
                 .build();
     }
@@ -185,7 +185,7 @@ public class AuthServiceImpl implements AuthService {
         }
 
         User user = token.getUser();
-        String newAccessToken = jwtService.generateAccessToken(user);
+        String newAccessToken = jwtService.generateAccessToken(user, token.getId());
         String newRefreshToken = jwtService.generateRefreshToken(user);
 
         // Rotate the same token record to avoid a delete/save gap.
@@ -202,7 +202,7 @@ public class AuthServiceImpl implements AuthService {
                 .build();
     }
 
-    private String issueRefreshToken(User user, HttpServletRequest httpRequest) {
+    private IssuedSession issueRefreshToken(User user, HttpServletRequest httpRequest) {
         String refreshToken = jwtService.generateRefreshToken(user);
         RefreshToken refreshTokenEntity = RefreshToken.builder()
                 .user(user)
@@ -212,24 +212,19 @@ public class AuthServiceImpl implements AuthService {
                 .userAgent(resolveUserAgent(httpRequest))
                 .lastUsedAt(LocalDateTime.now())
                 .build();
-        refreshTokenRepository.save(refreshTokenEntity);
-        return refreshToken;
+        RefreshToken savedSession = refreshTokenRepository.save(refreshTokenEntity);
+        return new IssuedSession(savedSession, refreshToken);
     }
+
+    private record IssuedSession(RefreshToken session, String refreshToken) {}
 
     private LocalDateTime refreshTokenExpiresAt() {
         return LocalDateTime.now().plus(Duration.ofMillis(jwtService.getRefreshExpirationMs()));
     }
 
     private RefreshToken handleMissingRefreshToken(String requestRefreshToken) {
-        try {
-            String subject = jwtService.extractUsername(requestRefreshToken);
-            userRepository.findByEmail(subject)
-                    .or(() -> userRepository.findByUsername(subject))
-                    .ifPresent(refreshTokenRepository::deleteByUser);
-        } catch (Exception ignored) {
-            // Invalid or malformed refresh token. Do not disclose whether it matched an account.
-        }
-
+        // A missing token belongs to one revoked/rotated session. Never revoke every
+        // session for the account here, otherwise one stale device logs out all others.
         throw new UnauthorizedException("Refresh token was reused or revoked. Please sign in again.");
     }
 
@@ -320,14 +315,14 @@ public class AuthServiceImpl implements AuthService {
                 }
 
                 // Generate tokens
-                String accessToken = jwtService.generateAccessToken(user);
-                String refreshToken = issueRefreshToken(user, httpRequest);
+                IssuedSession issuedSession = issueRefreshToken(user, httpRequest);
+                String accessToken = jwtService.generateAccessToken(user, issuedSession.session().getId());
 
                 UserProfileResponse userProfile = userService.mapToProfileResponse(user);
 
                 return LoginResponse.builder()
                         .accessToken(accessToken)
-                        .refreshToken(refreshToken)
+                        .refreshToken(issuedSession.refreshToken())
                         .user(userProfile)
                         .build();
             } else {
@@ -376,12 +371,10 @@ public class AuthServiceImpl implements AuthService {
             return saveQrStatus(session, QrLoginStatus.EXPIRED, null);
         }
 
-        user.setStatus("ONLINE");
-        userRepository.save(user);
-
+        IssuedSession issuedSession = issueRefreshToken(user, httpRequest);
         LoginResponse loginResponse = LoginResponse.builder()
-                .accessToken(jwtService.generateAccessToken(user))
-                .refreshToken(issueRefreshToken(user, httpRequest))
+                .accessToken(jwtService.generateAccessToken(user, issuedSession.session().getId()))
+                .refreshToken(issuedSession.refreshToken())
                 .user(userService.mapToProfileResponse(user))
                 .build();
 
@@ -443,9 +436,6 @@ public class AuthServiceImpl implements AuthService {
         if (request != null && request.getRefreshToken() != null) {
             refreshTokenRepository.findByToken(request.getRefreshToken())
                     .ifPresent(token -> {
-                        User user = token.getUser();
-                        user.setStatus("OFFLINE");
-                        userRepository.save(user);
                         refreshTokenRepository.delete(token);
                     });
         }
@@ -464,6 +454,21 @@ public class AuthServiceImpl implements AuthService {
         RefreshToken session = refreshTokenRepository.findByIdAndUserId(id, currentUser.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Session not found"));
         refreshTokenRepository.delete(session);
+        messagingTemplate.convertAndSendToUser(
+                currentUser.getUsername(),
+                "/queue/private",
+                Map.of("type", "SESSION_REVOKED", "sessionId", id)
+        );
+    }
+
+    public void revokeAllSessions() {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        refreshTokenRepository.deleteByUser(currentUser);
+        messagingTemplate.convertAndSendToUser(
+                currentUser.getUsername(),
+                "/queue/private",
+                Map.of("type", "ALL_SESSIONS_REVOKED")
+        );
     }
 
     private SessionResponse mapToSessionResponse(RefreshToken token) {

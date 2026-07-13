@@ -300,7 +300,10 @@ public class GroupServiceImpl implements GroupService {
         Group group = getGroupOrThrow(groupId);
         GroupRole newRole = request.getRole();
 
-        if (newRole == GroupRole.OWNER || newRole == GroupRole.LEADER || newRole == GroupRole.ADMIN) {
+        if (newRole == GroupRole.OWNER) {
+            return transferOwnership(group, currentUser, userId);
+        }
+        if (newRole == GroupRole.LEADER || newRole == GroupRole.ADMIN) {
             throw new BadRequestException("Cannot assign leader role from this action");
         }
         if (group.getOwner().getId().equals(userId)) {
@@ -338,6 +341,41 @@ public class GroupServiceImpl implements GroupService {
 
         List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
         return mapToGroupResponse(group, members);
+    }
+
+    private GroupResponse transferOwnership(Group group, User currentUser, String newOwnerId) {
+        if (!group.getOwner().getId().equals(currentUser.getId())) {
+            throw new UnauthorizedException("Only the current group owner can transfer ownership");
+        }
+        if (currentUser.getId().equals(newOwnerId)) {
+            throw new BadRequestException("You are already the group owner");
+        }
+
+        GroupMember currentOwnerMembership = groupMemberRepository
+                .findByGroupIdAndUserId(group.getId(), currentUser.getId())
+                .orElseThrow(() -> new BadRequestException("Current owner membership was not found"));
+        GroupMember newOwnerMembership = groupMemberRepository
+                .findByGroupIdAndUserId(group.getId(), newOwnerId)
+                .orElseThrow(() -> new BadRequestException("New owner must be a member of the group"));
+
+        currentOwnerMembership.setRole(GroupRole.MEMBER);
+        newOwnerMembership.setRole(GroupRole.OWNER);
+        group.setOwner(newOwnerMembership.getUser());
+
+        groupMemberRepository.save(currentOwnerMembership);
+        groupMemberRepository.save(newOwnerMembership);
+        groupRepository.save(group);
+
+        List<Channel> channels = channelRepository.findAllByGroupId(group.getId());
+        if (!channels.isEmpty() && channels.get(0).getConversation() != null) {
+            createAndBroadcastSystemMessage(
+                    channels.get(0).getConversation(),
+                    currentUser,
+                    "đã chuyển quyền Trưởng nhóm cho " + newOwnerMembership.getUser().getUsername() + "."
+            );
+        }
+
+        return mapToGroupResponse(group, groupMemberRepository.findAllByGroupId(group.getId()));
     }
 
     public GroupResponse getGroupById(String groupId) {

@@ -16,6 +16,8 @@ import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
@@ -29,6 +31,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
+    private final RefreshTokenRepository refreshTokenRepository;
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
@@ -52,6 +55,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
                 if (accessor != null && StompCommand.CONNECT.equals(accessor.getCommand())) {
                     authenticate(accessor);
+                } else if (accessor != null && accessor.getUser() instanceof UsernamePasswordAuthenticationToken authentication) {
+                    validateActiveSession(authentication);
                 }
                 return message;
             }
@@ -99,10 +104,24 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
             throw new org.springframework.messaging.MessageDeliveryException("Token is invalid or expired");
         }
 
-        return new UsernamePasswordAuthenticationToken(
+        UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                 userDetails,
                 null,
                 userDetails.getAuthorities()
         );
+        authentication.setDetails(jwtService.extractSessionId(jwt));
+        validateActiveSession(authentication);
+        return authentication;
+    }
+
+    private void validateActiveSession(UsernamePasswordAuthenticationToken authentication) {
+        String sessionId = authentication.getDetails() instanceof String value ? value : null;
+        if (sessionId == null) {
+            return; // Legacy access tokens expire naturally within the configured 15 minutes.
+        }
+        if (!(authentication.getPrincipal() instanceof User user)
+                || !refreshTokenRepository.existsByIdAndUserId(sessionId, user.getId())) {
+            throw new org.springframework.messaging.MessageDeliveryException("Session was revoked");
+        }
     }
 }

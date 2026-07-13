@@ -17,6 +17,8 @@ import java.util.List;
 @Repository
 public interface MessageRepository extends MongoRepository<Message, String> {
 
+    boolean existsByConversationId(String conversationId);
+
     Page<Message> findByConversationIdOrderByCreatedAtDesc(String conversationId, Pageable pageable);
 
     @Query(value = "{'$and':[{'$or':[{'conversationId':?0},{'conversation':?0}]},{'deletedByUsers':{'$ne':?1}}]}", sort = "{'createdAt':-1}")
