@@ -314,8 +314,8 @@ public class FriendServiceImpl implements FriendService {
                             .username(candidate.getUsername())
                             .avatarUrl(candidate.getAvatarUrl())
                             .bio(candidate.getBio())
-                            .status(presenceService.getUserStatus(candidate.getId()))
-                            .lastSeen(presenceService.getUserLastSeen(candidate.getId()))
+                            .status(candidate.isShowActivityStatus() ? presenceService.getUserStatus(candidate.getId()) : "HIDDEN")
+                            .lastSeen(candidate.isShowActivityStatus() ? presenceService.getUserLastSeen(candidate.getId()) : null)
                             .mutualFriendsCount(entry.getValue())
                             .isRequestSent(sentRequestUserIds.contains(candidateId))
                             .build();
@@ -330,8 +330,8 @@ public class FriendServiceImpl implements FriendService {
                 .username(user.getUsername())
                 .avatarUrl(user.getAvatarUrl())
                 .bio(user.getBio())
-                .status(presenceService.getUserStatus(user.getId()))
-                .lastSeen(presenceService.getUserLastSeen(user.getId()))
+                .status(user.isShowActivityStatus() ? presenceService.getUserStatus(user.getId()) : "HIDDEN")
+                .lastSeen(user.isShowActivityStatus() ? presenceService.getUserLastSeen(user.getId()) : null)
                 .createdAt(user.getCreatedAt())
                 .build();
     }

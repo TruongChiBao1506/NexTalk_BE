@@ -31,6 +31,7 @@ import org.springframework.web.bind.annotation.*;
 import java.security.Principal;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequiredArgsConstructor
@@ -63,6 +64,13 @@ public class MessageController {
     @Operation(summary = "Get the latest message for multiple conversations")
     public ResponseEntity<ApiResponse<List<MessageResponse>>> getLatestMessages(@RequestBody List<String> conversationIds) {
         return ResponseEntity.ok(ApiResponse.success(messageService.getLatestMessages(conversationIds), "Latest messages retrieved successfully"));
+    }
+
+    @GetMapping("/api/messages/unread-counts")
+    public ResponseEntity<ApiResponse<Map<String, Long>>> getUnreadCounts(Principal principal) {
+        return ResponseEntity.ok(ApiResponse.success(
+                messageService.getUnreadCounts(principal.getName()),
+                "Unread message counts retrieved successfully"));
     }
 
     @PostMapping("/api/messages/status/delivered")

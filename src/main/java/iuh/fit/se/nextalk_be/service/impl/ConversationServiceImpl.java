@@ -58,10 +58,6 @@ public class ConversationServiceImpl implements ConversationService {
         User friend = userRepository.findById(friendId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + friendId));
 
-        if (userBlockRepository.existsBetweenUsers(currentUser.getId(), friendId)) {
-            throw new BadRequestException("Cannot create a private conversation because one of you has blocked the other");
-        }
-
         Optional<Conversation> existing = conversationRepository
                 .findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId())
                 .stream()
@@ -71,12 +67,24 @@ public class ConversationServiceImpl implements ConversationService {
                         .anyMatch(friendId::equals))
                 .findFirst();
 
+        // Việc chặn chỉ ngăn gửi tin mới; hai bên vẫn được xem lại lịch sử hội thoại.
         if (existing.isPresent()) {
             Conversation conversation = existing.get();
             if (conversation.getDeletedByUsers() != null && conversation.getDeletedByUsers().remove(currentUser.getId())) {
                 conversation = conversationRepository.save(conversation);
             }
             return mapToConversationResponse(conversation);
+        }
+
+        if (userBlockRepository.existsBetweenUsers(currentUser.getId(), friendId)) {
+            throw new BadRequestException("Cannot create a private conversation because one of you has blocked the other");
+        }
+
+        boolean areFriends = friendshipRepository.findFriendshipBetweenUsers(currentUser.getId(), friendId)
+                .filter(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
+                .isPresent();
+        if (friend.isBlockStrangerMessages() && !areFriends) {
+            throw new BadRequestException("Người dùng này chỉ nhận tin nhắn từ bạn bè.");
         }
 
         Conversation conversation = Conversation.builder()
@@ -160,7 +168,7 @@ public class ConversationServiceImpl implements ConversationService {
                         .username(m.getUsername())
                         .avatarUrl(m.getAvatarUrl())
                         .bio(m.getBio())
-                        .status(m.getStatus())
+                        .status(m.isShowActivityStatus() ? m.getStatus() : "HIDDEN")
                         .isVerified(m.isVerified())
                         .createdAt(m.getCreatedAt())
                         .updatedAt(m.getUpdatedAt())
@@ -278,7 +286,7 @@ public class ConversationServiceImpl implements ConversationService {
     private String buildNicknameSystemContent(User actor, User target, String oldNickname, String newNickname) {
         boolean self = actor.getId().equals(target.getId());
         String setTargetLabel = self ? "của mình" : "cho " + target.getUsername();
-        String deleteTargetLabel = self ? "của mình" : "của " + target.getUsername();
+        String deleteTargetLabel = self ? "của bạn" : "của " + target.getUsername();
         if (newNickname.isBlank()) return "đã xóa biệt danh " + deleteTargetLabel + ".";
         if (oldNickname == null || oldNickname.isBlank()) {
             return "đã đặt biệt danh " + setTargetLabel + " là \"" + newNickname + "\".";
@@ -378,6 +386,11 @@ public class ConversationServiceImpl implements ConversationService {
         boolean areFriends = friendshipRepository.findRelation(currentUser.getId(), otherMemberId)
                 .map(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
                 .orElse(false);
+
+        User otherMember = userRepository.findById(otherMemberId).orElse(null);
+        if (otherMember != null && otherMember.isBlockStrangerMessages() && !areFriends) {
+            return false;
+        }
 
         boolean hasAcceptedChatRequest = chatRequestRepository
                 .findBySenderIdAndReceiverIdAndStatus(currentUser.getId(), otherMemberId, ChatRequestStatus.ACCEPTED)

@@ -22,4 +22,8 @@ public class UpdateProfileRequest {
     private String birthday;
 
     private Boolean enableBirthdayNotification;
+
+    private Boolean showActivityStatus;
+
+    private Boolean blockStrangerMessages;
 }

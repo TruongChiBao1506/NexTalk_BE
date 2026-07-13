@@ -282,6 +282,9 @@ public class MessageServiceImpl implements MessageService {
                 MessageStatus statusRecord = MessageStatus.builder()
                         .message(savedMessage)
                         .user(member)
+                        .messageId(savedMessage.getId())
+                        .conversationId(conversation.getId())
+                        .userId(member.getId())
                         .status("SENT")
                         .build();
                 initialStatuses.add(statusRecord);
@@ -509,7 +512,12 @@ public class MessageServiceImpl implements MessageService {
             throw new BadRequestException("You cannot message this user because one of you has blocked the other.");
         }
 
-
+        boolean areFriends = friendshipRepository.findFriendshipBetweenUsers(currentUser.getId(), otherMember.getId())
+                .filter(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
+                .isPresent();
+        if (otherMember.isBlockStrangerMessages() && !areFriends) {
+            throw new BadRequestException("Người dùng này chỉ nhận tin nhắn từ bạn bè.");
+        }
     }
 
     // @Transactional(readOnly = true)
@@ -630,6 +638,20 @@ public class MessageServiceImpl implements MessageService {
                 }
             }
         }
+    }
+
+    @Override
+    public Map<String, Long> getUnreadCounts(String username) {
+        User user = userRepository.findByEmail(username)
+                .or(() -> userRepository.findByUsername(username))
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        return messageStatusRepository.findAllByUserIdAndStatusIn(
+                        user.getId(), List.of("SENT", "DELIVERED"))
+                .stream()
+                .filter(status -> status.getConversationId() != null)
+                .collect(Collectors.groupingBy(
+                        iuh.fit.se.nextalk_be.entity.MessageStatus::getConversationId,
+                        Collectors.counting()));
     }
 
     private MessageResponse mapToMessageResponse(Message message) {

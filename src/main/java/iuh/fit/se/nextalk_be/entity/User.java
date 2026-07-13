@@ -35,6 +35,20 @@ public class User extends BaseEntity implements UserDetails {
 
     private String status; // ONLINE, OFFLINE, AWAY
 
+    @Builder.Default
+    private Boolean showActivityStatus = true;
+
+    public boolean isShowActivityStatus() {
+        return showActivityStatus == null || showActivityStatus;
+    }
+
+    @Builder.Default
+    private Boolean blockStrangerMessages = false;
+
+    public boolean isBlockStrangerMessages() {
+        return Boolean.TRUE.equals(blockStrangerMessages);
+    }
+
     private String chatPin;
 
     /** Birthday stored as YYYY-MM-dd (e.g. 2000-07-11) */

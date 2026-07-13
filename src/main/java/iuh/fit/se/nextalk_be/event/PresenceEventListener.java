@@ -50,8 +50,8 @@ public class PresenceEventListener {
                         PresenceUpdateResponse response = PresenceUpdateResponse.builder()
                                 .userId(user.getId())
                                 .username(user.getUsername())
-                                .status(currentStatus)
-                                .lastSeen(LocalDateTime.now())
+                                .status(user.isShowActivityStatus() ? currentStatus : "HIDDEN")
+                                .lastSeen(user.isShowActivityStatus() ? LocalDateTime.now() : null)
                                 .build();
                         messagingTemplate.convertAndSend("/topic/presence", response);
                     });
@@ -103,8 +103,8 @@ public class PresenceEventListener {
                         PresenceUpdateResponse response = PresenceUpdateResponse.builder()
                                 .userId(user.getId())
                                 .username(user.getUsername())
-                                .status(currentStatus)
-                                .lastSeen(lastSeen != null ? lastSeen : LocalDateTime.now())
+                                .status(user.isShowActivityStatus() ? currentStatus : "HIDDEN")
+                                .lastSeen(user.isShowActivityStatus() ? (lastSeen != null ? lastSeen : LocalDateTime.now()) : null)
                                 .build();
                         messagingTemplate.convertAndSend("/topic/presence", response);
                     });

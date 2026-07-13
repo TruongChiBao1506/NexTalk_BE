@@ -23,5 +23,7 @@ public interface MessageStatusRepository extends MongoRepository<MessageStatus, 
 
     List<MessageStatus> findAllByConversationIdAndUserIdAndStatusIn(String conversationId, String userId, Collection<String> statuses);
 
+    List<MessageStatus> findAllByUserIdAndStatusIn(String userId, Collection<String> statuses);
+
     List<MessageStatus> findByConversationIdIsNull(Pageable pageable);
 }

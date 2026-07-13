@@ -64,6 +64,7 @@ public interface MessageService {
     public void broadcastTypingIndicator(TypingIndicatorRequest request, String senderEmail);
     public Page<MessageResponse> getConversationMessages(String conversationId, Pageable pageable);
     public List<MessageResponse> getLatestMessages(List<String> conversationIds);
+    public Map<String, Long> getUnreadCounts(String username);
     public void markConversationMessagesAsDelivered(String conversationId, String username);
     public void markConversationMessagesAsSeen(String conversationId, String username);
     public void createAndBroadcastCallHistoryMessage( Conversation conversation, User actor, String content, Map<String, Object> metadata );

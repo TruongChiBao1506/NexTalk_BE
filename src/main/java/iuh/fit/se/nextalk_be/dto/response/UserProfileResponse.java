@@ -17,6 +17,8 @@ public class UserProfileResponse {
     private String bio;
     private String status;
     private LocalDateTime lastSeen;
+    private boolean showActivityStatus;
+    private boolean blockStrangerMessages;
     @com.fasterxml.jackson.annotation.JsonProperty("isVerified")
     private boolean isVerified;
     private boolean hasChatPin;

@@ -62,6 +62,13 @@ public class ChatRequestServiceImpl implements ChatRequestService {
         User receiver = userRepository.findById(request.getReceiverId())
                 .orElseThrow(() -> new ResourceNotFoundException("Receiver not found"));
 
+        boolean areFriends = friendshipRepository.findFriendshipBetweenUsers(currentUser.getId(), receiver.getId())
+                .filter(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
+                .isPresent();
+        if (receiver.isBlockStrangerMessages() && !areFriends) {
+            throw new BadRequestException("Người dùng này chỉ nhận tin nhắn từ bạn bè.");
+        }
+
         if (userBlockRepository.existsBetweenUsers(currentUser.getId(), receiver.getId())) {
             throw new BadRequestException("Cannot send a chat request because one of you has blocked the other");
         }

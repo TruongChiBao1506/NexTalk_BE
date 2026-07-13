@@ -112,6 +112,24 @@ public class UserServiceImpl implements UserService {
             currentUser.setEnableBirthdayNotification(request.getEnableBirthdayNotification());
         }
 
+        if (request.getShowActivityStatus() != null) {
+            currentUser.setShowActivityStatus(request.getShowActivityStatus());
+            String visibleStatus = currentUser.isShowActivityStatus()
+                    ? presenceService.getUserStatus(currentUser.getId())
+                    : "HIDDEN";
+            PresenceUpdateResponse presenceUpdate = PresenceUpdateResponse.builder()
+                    .userId(currentUser.getId())
+                    .username(currentUser.getUsername())
+                    .status(visibleStatus)
+                    .lastSeen(currentUser.isShowActivityStatus() ? presenceService.getUserLastSeen(currentUser.getId()) : null)
+                    .build();
+            messagingTemplate.convertAndSend("/topic/presence", presenceUpdate);
+        }
+
+        if (request.getBlockStrangerMessages() != null) {
+            currentUser.setBlockStrangerMessages(request.getBlockStrangerMessages());
+        }
+
         User savedUser = userRepository.save(currentUser);
         return mapToProfileResponse(savedUser);
     }
@@ -136,8 +154,8 @@ public class UserServiceImpl implements UserService {
         PresenceUpdateResponse response = PresenceUpdateResponse.builder()
                 .userId(user.getId())
                 .username(user.getUsername())
-                .status(status)
-                .lastSeen(lastSeen != null ? lastSeen : LocalDateTime.now())
+                .status(user.isShowActivityStatus() ? status : "HIDDEN")
+                .lastSeen(user.isShowActivityStatus() ? (lastSeen != null ? lastSeen : LocalDateTime.now()) : null)
                 .build();
         messagingTemplate.convertAndSend("/topic/presence", response);
 
@@ -218,8 +236,10 @@ public class UserServiceImpl implements UserService {
                 .username(user.getUsername())
                 .avatarUrl(user.getAvatarUrl())
                 .bio(user.getBio())
-                .status(presenceService.getUserStatus(user.getId()))
-                .lastSeen(presenceService.getUserLastSeen(user.getId()))
+                .status(user.isShowActivityStatus() ? presenceService.getUserStatus(user.getId()) : "HIDDEN")
+                .lastSeen(user.isShowActivityStatus() ? presenceService.getUserLastSeen(user.getId()) : null)
+                .showActivityStatus(user.isShowActivityStatus())
+                .blockStrangerMessages(user.isBlockStrangerMessages())
                 .isVerified(user.isVerified())
                 .hasChatPin(user.getChatPin() != null && !user.getChatPin().isEmpty())
                 .birthday(user.getBirthday())
