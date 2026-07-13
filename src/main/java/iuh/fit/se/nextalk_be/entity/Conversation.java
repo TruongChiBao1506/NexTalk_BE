@@ -11,6 +11,8 @@ import org.springframework.data.mongodb.core.mapping.DocumentReference;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.HashMap;
+import java.util.Map;
 
 @Getter
 @Setter
@@ -43,7 +45,13 @@ public class Conversation extends BaseEntity {
     @Builder.Default
     private Set<String> hiddenByUsers = new HashSet<>();
 
+    @Builder.Default
+    private Set<String> mutedByUsers = new HashSet<>();
+
     private String themeColor;
     
     private String wallpaperUrl;
+
+    @Builder.Default
+    private Map<String, String> nicknames = new HashMap<>();
 }

@@ -421,6 +421,17 @@ public class GroupServiceImpl implements GroupService {
                 .orElseThrow(() -> new ResourceNotFoundException("Invalid invite code"));
 
         int memberCount = groupMemberRepository.countByGroupId(group.getId());
+        
+        // Fetch up to 4 members for the public group info preview avatar
+        List<GroupMemberResponse> previewMembers = groupMemberRepository.findAllByGroupId(group.getId()).stream()
+                .limit(4)
+                .map(m -> GroupMemberResponse.builder()
+                        .userId(m.getUser().getId())
+                        .username(m.getUser().getUsername())
+                        .avatarUrl(m.getUser().getAvatarUrl())
+                        .role(m.getRole().name())
+                        .build())
+                .collect(Collectors.toList());
 
         return PublicGroupInfoResponse.builder()
                 .id(group.getId())
@@ -429,6 +440,7 @@ public class GroupServiceImpl implements GroupService {
                 .ownerUsername(group.getOwner() != null ? group.getOwner().getUsername() : "Unknown")
                 .memberCount(memberCount)
                 .requiresApproval(group.isRequiresApproval())
+                .members(previewMembers)
                 .build();
     }
 
@@ -455,10 +467,37 @@ public class GroupServiceImpl implements GroupService {
             groupInvitationRepository.save(invitation);
         } else {
             doAddMember(group, currentUser.getId(), currentUser);
-            List<Channel> channels = channelRepository.findAllByGroupId(group.getId());
-            if (!channels.isEmpty()) {
-                createAndBroadcastSystemMessage(channels.get(0).getConversation(), currentUser, "đã tham gia nhóm bằng liên kết.");
+        }
+    }
+
+    public void leaveGroup(String groupId) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Group group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new ResourceNotFoundException("Group not found: " + groupId));
+
+        // Owner cannot leave – must transfer ownership or delete the group
+        if (group.getOwner() != null && group.getOwner().getId().equals(currentUser.getId())) {
+            throw new BadRequestException("Trưởng nhóm không thể thoát nhóm. Hãy chuyển quyền trưởng nhóm hoặc xóa nhóm.");
+        }
+
+        if (!groupMemberRepository.existsByGroupIdAndUserId(groupId, currentUser.getId())) {
+            throw new BadRequestException("Bạn không phải thành viên của nhóm này.");
+        }
+
+        groupMemberRepository.deleteByGroupIdAndUserId(groupId, currentUser.getId());
+
+        // Also remove from conversation members of all channels
+        List<Channel> channels = channelRepository.findAllByGroupId(groupId);
+        for (Channel ch : channels) {
+            if (ch.getConversation() != null) {
+                ch.getConversation().getMembers().removeIf(m -> m.getId().equals(currentUser.getId()));
+                conversationRepository.save(ch.getConversation());
             }
+        }
+
+        // Broadcast system message to first public channel
+        if (!channels.isEmpty() && channels.get(0).getConversation() != null) {
+            createAndBroadcastSystemMessage(channels.get(0).getConversation(), currentUser, "đã rời khỏi nhóm.");
         }
     }
 

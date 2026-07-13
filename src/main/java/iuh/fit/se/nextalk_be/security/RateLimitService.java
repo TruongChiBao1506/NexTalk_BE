@@ -38,7 +38,10 @@ public class RateLimitService {
             }
 
             if (timestamps.size() >= maxRequests) {
-                throw new RateLimitExceededException("Too many requests. Please wait a moment and try again.");
+                long retryAfterMillis = Math.max(1, timestamps.peekFirst() + window.toMillis() - now);
+                long retryAfterSeconds = Math.max(1, (retryAfterMillis + 999) / 1000);
+                throw new RateLimitExceededException(
+                        "Too many requests. Please wait a moment and try again.", retryAfterSeconds);
             }
 
             timestamps.addLast(now);

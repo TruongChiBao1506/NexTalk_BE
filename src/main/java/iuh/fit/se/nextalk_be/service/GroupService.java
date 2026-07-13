@@ -53,4 +53,5 @@ public interface GroupService {
     public GroupResponse refreshInviteCode(String groupId);
     public PublicGroupInfoResponse getPublicGroupInfoByInviteCode(String code);
     public void joinGroupByInviteCode(String code);
+    public void leaveGroup(String groupId);
 }

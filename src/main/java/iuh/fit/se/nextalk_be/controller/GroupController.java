@@ -113,4 +113,11 @@ public class GroupController {
         groupService.joinGroupByInviteCode(code);
         return ResponseEntity.ok(ApiResponse.success(null, "Joined group successfully or request is pending"));
     }
+
+    @PostMapping("/{id}/leave")
+    @Operation(summary = "Leave a group (non-owners only)")
+    public ResponseEntity<ApiResponse<Void>> leaveGroup(@PathVariable("id") String id) {
+        groupService.leaveGroup(id);
+        return ResponseEntity.ok(ApiResponse.success(null, "Left group successfully"));
+    }
 }

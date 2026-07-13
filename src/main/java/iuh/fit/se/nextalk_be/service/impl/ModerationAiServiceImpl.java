@@ -71,7 +71,7 @@ public class ModerationAiServiceImpl implements ModerationAiService {
         try {
             List<Message> messages = List.of();
             if (report.getConversationId() != null) {
-                messages = messageRepository.findByConversationIdAndDeletedByUsersNotContainingOrderByCreatedAtDesc(
+                messages = messageRepository.findVisibleConversationMessages(
                         report.getConversationId(),
                         report.getReporter().getId(),
                         PageRequest.of(0, 50)

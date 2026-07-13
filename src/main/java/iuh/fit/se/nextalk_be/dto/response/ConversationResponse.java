@@ -7,6 +7,7 @@ import lombok.*;
 
 import java.time.LocalDateTime;
 import java.util.Set;
+import java.util.Map;
 
 @Getter
 @Setter
@@ -22,10 +23,12 @@ public class ConversationResponse {
     private boolean blockedMe;
     private boolean pinned;
     private boolean hidden;
+    private boolean muted;
     private int selfDestructSeconds;
     private Set<UserProfileResponse> members;
     private String themeColor;
     private String wallpaperUrl;
+    private Map<String, String> nicknames;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

@@ -34,5 +34,7 @@ public interface ConversationService {
     public void deleteForCurrentUser(String id);
     public List<ConversationResponse> searchConversations(String query);
     public ConversationResponse updateHidden(String id, boolean hidden);
+    ConversationResponse updateMuted(String id, boolean muted);
     public ConversationResponse updateTheme(String id, iuh.fit.se.nextalk_be.dto.request.UpdateThemeRequest request);
+    ConversationResponse updateNickname(String id, String userId, String nickname);
 }

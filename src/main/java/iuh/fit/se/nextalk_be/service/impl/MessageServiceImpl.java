@@ -49,6 +49,8 @@ import iuh.fit.se.nextalk_be.service.UserService;
 
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -66,6 +68,7 @@ import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class MessageServiceImpl implements MessageService {
     private static final Pattern QUILL_MENTION_ID_PATTERN = Pattern.compile("data-id=[\"']([^\"']+)[\"']");
     private static final Pattern PLAIN_MENTION_PATTERN = Pattern.compile("(^|\\s)@([\\p{L}\\p{N}_\\.\\-]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
@@ -91,10 +94,28 @@ public class MessageServiceImpl implements MessageService {
     private final LinkPreviewService linkPreviewService;
     private final AiBotService aiBotService;
 
+    @Value("${app.rate-limit.ai-bot.limit:10}")
+    private int aiBotRateLimit;
+
+    @Value("${app.rate-limit.ai-bot.window-seconds:60}")
+    private long aiBotRateWindowSeconds;
+
     // @Transactional
     public MessageResponse sendMessage(MessageRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         return sendMessageWithUser(request, currentUser);
+    }
+
+    @Override
+    public List<MessageResponse> getLatestMessages(List<String> conversationIds) {
+        if (conversationIds == null || conversationIds.isEmpty()) return List.of();
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Set<String> allowedIds = conversationRepository.findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId()).stream()
+                .map(Conversation::getId)
+                .filter(conversationIds::contains)
+                .collect(Collectors.toSet());
+        if (allowedIds.isEmpty()) return List.of();
+        return mapMessagesToResponses(messageRepository.findLatestVisibleByConversationIds(new ArrayList<>(allowedIds), currentUser.getId()));
     }
 
     // @Transactional
@@ -246,6 +267,12 @@ public class MessageServiceImpl implements MessageService {
             message.setExpiresAt(LocalDateTime.now().plusSeconds(conversation.getSelfDestructSeconds()));
         }
 
+        boolean triggersAiBot = shouldTriggerAiBot(message, conversation);
+        if (triggersAiBot) {
+            rateLimitService.check("ai:bot", currentUser.getId(), aiBotRateLimit,
+                    Duration.ofSeconds(aiBotRateWindowSeconds));
+        }
+
         Message savedMessage = messageRepository.save(message);
 
         // Create initial SENT status for all other conversation members
@@ -325,32 +352,40 @@ public class MessageServiceImpl implements MessageService {
                             priorityPrefix + (contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
                 }
 
-                notificationService.createAndSend(
-                        member,
-                        isMentioned ? NotificationType.MENTION : NotificationType.NEW_MESSAGE,
-                        notificationContent,
-                        conversation.getId().toString()
-                );
+                boolean muted = conversation.getMutedByUsers() != null
+                        && conversation.getMutedByUsers().contains(member.getId());
+                if (!muted) {
+                    notificationService.createAndSend(
+                            member,
+                            isMentioned ? NotificationType.MENTION : NotificationType.NEW_MESSAGE,
+                            notificationContent,
+                            conversation.getId().toString()
+                    );
+                }
 
-                // Send FCM push if member is offline
-                if ("OFFLINE".equals(presenceService.getUserStatus(member.getId()))) {
-                    User dbMember = userRepository.findById(member.getId()).orElse(member);
-                    if (dbMember.getFcmTokens() != null && !dbMember.getFcmTokens().isEmpty()) {
-                        String pushTitle = pushTitlePrefix + (isMentioned
-                                ? currentUser.getUsername() + " đã nhắc tới bạn"
-                                : "Tin nhắn mới từ " + currentUser.getUsername());
-                        String pushBody = priorityPrefix + contentPreview;
-                        if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
-                            pushTitle = pushTitlePrefix + "NexTalk";
-                            pushBody = isMentioned ? "Bạn được nhắc trong một cuộc trò chuyện" : "Bạn có tin nhắn mới";
-                        }
-                        fcmService.sendPushNotificationToTokens(dbMember.getFcmTokens(), pushTitle, pushBody);
+                // Always send to registered mobile devices. Presence is eventually
+                // consistent and can remain ONLINE briefly after the app backgrounds.
+                // The mobile client suppresses chat pushes while it is foregrounded.
+                User dbMember = userRepository.findById(member.getId()).orElse(member);
+                if (!muted && dbMember.getFcmTokens() != null && !dbMember.getFcmTokens().isEmpty()) {
+                    String pushBody = priorityPrefix + contentPreview;
+                    if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
+                        pushBody = isMentioned ? "Bạn được nhắc trong một cuộc trò chuyện" : "Bạn có tin nhắn mới";
                     }
+                    fcmService.sendChatPushNotificationToTokens(
+                            dbMember.getFcmTokens(),
+                            conversation.getId(),
+                            conversation.getName(),
+                            currentUser.getId(),
+                            currentUser.getUsername(),
+                            currentUser.getAvatarUrl(),
+                            pushBody
+                    );
                 }
             }
         }
 
-        if (shouldTriggerAiBot(savedMessage, conversation)) {
+        if (triggersAiBot) {
             aiBotService.answerMentionAsync(conversation, savedMessage, currentUser);
         }
 
@@ -479,6 +514,7 @@ public class MessageServiceImpl implements MessageService {
 
     // @Transactional(readOnly = true)
     public Page<MessageResponse> getConversationMessages(String conversationId, Pageable pageable) {
+        long lookupStartedAt = System.nanoTime();
         User currentUser = userService.getCurrentAuthenticatedUser();
 
         Conversation conversation = conversationRepository.findById(conversationId)
@@ -491,14 +527,21 @@ public class MessageServiceImpl implements MessageService {
             throw new BadRequestException("You are not a member of this conversation");
         }
 
-        Page<Message> messages = messageRepository.findByConversationIdAndDeletedByUsersNotContainingOrderByCreatedAtDesc(
+        long queryStartedAt = System.nanoTime();
+        org.springframework.data.domain.Slice<Message> messages = messageRepository.findVisibleConversationMessages(
                 conversationId, currentUser.getId(), pageable
         );
+        long mappingStartedAt = System.nanoTime();
         List<MessageResponse> content = mapMessagesToResponses(messages.getContent());
         content = content.stream()
                 .filter(message -> message.getExpiresAt() == null || message.getExpiresAt().isAfter(LocalDateTime.now()))
                 .toList();
-        return new PageImpl<>(content, pageable, messages.getTotalElements());
+        long estimatedTotal = pageable.getOffset() + content.size() + (messages.hasNext() ? 1 : 0);
+        log.debug("Message history timing conversation={} lookupMs={} queryMs={} mapMs={} count={}", conversationId,
+                (queryStartedAt - lookupStartedAt) / 1_000_000,
+                (mappingStartedAt - queryStartedAt) / 1_000_000,
+                (System.nanoTime() - mappingStartedAt) / 1_000_000, content.size());
+        return new PageImpl<>(content, pageable, estimatedTotal);
     }
 
     // @Transactional
@@ -516,16 +559,8 @@ public class MessageServiceImpl implements MessageService {
             throw new BadRequestException("User is not a member of this conversation");
         }
 
-        List<Message> messages = messageRepository.findAllByConversationId(conversationId);
-        if (messages.isEmpty()) {
-            return;
-        }
-
-        List<String> messageIds = messages.stream().map(Message::getId).toList();
-
-        List<MessageStatus> statusesToUpdate = messageStatusRepository.findAllByUserIdAndMessageIdInAndStatusIn(
-                user.getId(), messageIds, List.of("SENT")
-        );
+        List<MessageStatus> statusesToUpdate = messageStatusRepository.findAllByConversationIdAndUserIdAndStatusIn(
+                conversationId, user.getId(), List.of("SENT"));
 
         if (!statusesToUpdate.isEmpty()) {
             for (MessageStatus status : statusesToUpdate) {
@@ -568,16 +603,8 @@ public class MessageServiceImpl implements MessageService {
             throw new BadRequestException("User is not a member of this conversation");
         }
 
-        List<Message> messages = messageRepository.findAllByConversationId(conversationId);
-        if (messages.isEmpty()) {
-            return;
-        }
-
-        List<String> messageIds = messages.stream().map(Message::getId).toList();
-
-        List<MessageStatus> statusesToUpdate = messageStatusRepository.findAllByUserIdAndMessageIdInAndStatusIn(
-                user.getId(), messageIds, List.of("SENT", "DELIVERED")
-        );
+        List<MessageStatus> statusesToUpdate = messageStatusRepository.findAllByConversationIdAndUserIdAndStatusIn(
+                conversationId, user.getId(), List.of("SENT", "DELIVERED"));
 
         if (!statusesToUpdate.isEmpty()) {
             for (MessageStatus status : statusesToUpdate) {
@@ -655,7 +682,7 @@ public class MessageServiceImpl implements MessageService {
 
         List<MessageStatusResponse> statusResponses = statusRecords.stream()
                 .map(status -> {
-                    String userId = status.getUser().getId();
+                    String userId = status.getUserId() != null ? status.getUserId() : status.getUser().getId();
                     String username = usernameMap.getOrDefault(userId, "unknown");
                     return MessageStatusResponse.builder()
                             .userId(userId)
@@ -666,12 +693,14 @@ public class MessageServiceImpl implements MessageService {
                 })
                 .toList();
 
-        String senderId = message.getSender().getId();
-        String senderUsername = usernameMap.getOrDefault(senderId, "unknown");
+        String senderId = message.getSenderId() != null ? message.getSenderId() : message.getSender().getId();
+        String senderUsername = message.getSenderUsername() != null
+                ? message.getSenderUsername()
+                : usernameMap.getOrDefault(senderId, "unknown");
 
         return MessageResponse.builder()
                 .id(message.getId())
-                .conversationId(message.getConversation().getId())
+                .conversationId(message.getConversationId() != null ? message.getConversationId() : message.getConversation().getId())
                 .senderId(senderId)
                 .senderUsername(senderUsername)
                 .content(message.getContent())
@@ -698,23 +727,24 @@ public class MessageServiceImpl implements MessageService {
             return Collections.emptyList();
         }
 
+        long statusStartedAt = System.nanoTime();
         List<String> messageIds = messageList.stream().map(Message::getId).toList();
         List<MessageStatus> allStatuses = messageStatusRepository.findAllByMessageIdIn(messageIds);
+        long usersStartedAt = System.nanoTime();
 
         // Collect all user IDs to batch fetch usernames
         Set<String> userIds = new HashSet<>();
         for (Message msg : messageList) {
-            if (msg.getSender() != null) {
-                userIds.add(msg.getSender().getId());
-            }
+            if (msg.getSenderId() != null) userIds.add(msg.getSenderId());
+            else if (msg.getSender() != null) userIds.add(msg.getSender().getId());
         }
         for (MessageStatus status : allStatuses) {
-            if (status.getUser() != null) {
-                userIds.add(status.getUser().getId());
-            }
+            if (status.getUserId() != null) userIds.add(status.getUserId());
+            else if (status.getUser() != null) userIds.add(status.getUser().getId());
         }
 
         List<User> users = userRepository.findAllById(userIds);
+        long dtoStartedAt = System.nanoTime();
         Map<String, String> usernameMap = new HashMap<>();
         for (User u : users) {
             usernameMap.put(u.getId(), u.getUsername());
@@ -723,9 +753,9 @@ public class MessageServiceImpl implements MessageService {
         // Group statuses by Message ID
         Map<String, List<MessageStatus>> statusMap = new HashMap<>();
         for (MessageStatus status : allStatuses) {
-            if (status.getMessage() != null) {
-                statusMap.computeIfAbsent(status.getMessage().getId(), k -> new ArrayList<>()).add(status);
-            }
+            String messageId = status.getMessageId() != null ? status.getMessageId()
+                    : status.getMessage() != null ? status.getMessage().getId() : null;
+            if (messageId != null) statusMap.computeIfAbsent(messageId, k -> new ArrayList<>()).add(status);
         }
 
         List<MessageResponse> responses = new ArrayList<>();
@@ -736,6 +766,11 @@ public class MessageServiceImpl implements MessageService {
                     usernameMap
             ));
         }
+        log.debug("Message mapping timing statusMs={} usersMs={} dtoMs={} messages={} statuses={} users={}",
+                (usersStartedAt - statusStartedAt) / 1_000_000,
+                (dtoStartedAt - usersStartedAt) / 1_000_000,
+                (System.nanoTime() - dtoStartedAt) / 1_000_000,
+                messageList.size(), allStatuses.size(), users.size());
         return responses;
     }
 
@@ -1452,5 +1487,38 @@ public class MessageServiceImpl implements MessageService {
                 .filter(m -> m.getExpiresAt() == null || m.getExpiresAt().isAfter(LocalDateTime.now()))
                 .toList();
         return mapMessagesToResponses(filtered);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteMessagesForMe(List<String> messageIds) {
+        if (messageIds == null || messageIds.isEmpty()) return;
+        for (String id : messageIds) {
+            deleteMessageForMe(id);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public List<MessageResponse> recallMessages(List<String> messageIds) {
+        if (messageIds == null || messageIds.isEmpty()) return Collections.emptyList();
+        List<MessageResponse> responses = new ArrayList<>();
+        for (String id : messageIds) {
+            responses.add(recallMessage(id));
+        }
+        return responses;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public List<MessageResponse> shareMessages(iuh.fit.se.nextalk_be.dto.request.BatchShareMessageRequest request) {
+        if (request.getMessageIds() == null || request.getMessageIds().isEmpty()) return Collections.emptyList();
+        List<MessageResponse> responses = new ArrayList<>();
+        for (String id : request.getMessageIds()) {
+            iuh.fit.se.nextalk_be.dto.request.ShareMessageRequest singleShareReq = new iuh.fit.se.nextalk_be.dto.request.ShareMessageRequest();
+            singleShareReq.setTargetConversationIds(request.getTargetConversationIds());
+            responses.addAll(shareMessage(id, singleShareReq));
+        }
+        return responses;
     }
 }

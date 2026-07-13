@@ -4,10 +4,13 @@ import iuh.fit.se.nextalk_be.service.ConversationService;
 import iuh.fit.se.nextalk_be.dto.request.ChatRequestStatus;
 import iuh.fit.se.nextalk_be.dto.response.ConversationResponse;
 import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.ConversationType;
 import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
 import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.entity.Message;
+import iuh.fit.se.nextalk_be.entity.MessageType;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.repository.ChannelRepository;
@@ -16,6 +19,7 @@ import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.FriendshipRepository;
 import iuh.fit.se.nextalk_be.repository.UserBlockRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
+import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.service.UserService;
 
 
@@ -23,6 +27,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -39,6 +44,8 @@ public class ConversationServiceImpl implements ConversationService {
     private final UserBlockRepository userBlockRepository;
     private final PasswordEncoder passwordEncoder;
     private final ChannelRepository channelRepository;
+    private final MessageRepository messageRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
     @Transactional
     public ConversationResponse getOrCreatePrivateConversation(String friendId) {
@@ -183,13 +190,100 @@ public class ConversationServiceImpl implements ConversationService {
                 .blockedMe(blockedMe)
                 .pinned(conversation.getPinnedByUsers() != null && conversation.getPinnedByUsers().contains(currentUser.getId()))
                 .hidden(conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(currentUser.getId()))
+                .muted(conversation.getMutedByUsers() != null && conversation.getMutedByUsers().contains(currentUser.getId()))
                 .selfDestructSeconds(conversation.getSelfDestructSeconds())
                 .themeColor(conversation.getThemeColor())
                 .wallpaperUrl(conversation.getWallpaperUrl())
+                .nicknames(conversation.getNicknames() != null ? new HashMap<>(conversation.getNicknames()) : new HashMap<>())
                 .members(memberResponses)
                 .createdAt(conversation.getCreatedAt())
                 .updatedAt(conversation.getUpdatedAt())
                 .build();
+    }
+
+    @Override
+    public ConversationResponse updateNickname(String id, String targetUserId, String nickname) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Conversation conversation = conversationRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + id));
+
+        boolean currentUserIsMember = conversation.getMembers().stream().anyMatch(member -> member.getId().equals(currentUser.getId()));
+        boolean targetIsMember = conversation.getMembers().stream().anyMatch(member -> member.getId().equals(targetUserId));
+        if (!currentUserIsMember || !targetIsMember) {
+            throw new BadRequestException("Both users must be members of the conversation");
+        }
+
+        User targetUser = conversation.getMembers().stream()
+                .filter(member -> member.getId().equals(targetUserId))
+                .findFirst()
+                .orElseThrow(() -> new ResourceNotFoundException("Target user not found in conversation"));
+
+        String normalized = nickname == null ? "" : nickname.trim().replaceAll("\\s+", " ");
+        if (normalized.length() > 40) throw new BadRequestException("Nickname must not exceed 40 characters");
+        if (conversation.getNicknames() == null) conversation.setNicknames(new HashMap<>());
+        String oldNickname = conversation.getNicknames().getOrDefault(targetUserId, "");
+        if (Objects.equals(oldNickname, normalized)) return mapToConversationResponse(conversation);
+        if (normalized.isBlank()) conversation.getNicknames().remove(targetUserId);
+        else conversation.getNicknames().put(targetUserId, normalized);
+        Conversation savedConversation = conversationRepository.save(conversation);
+        ConversationResponse conversationResponse = mapToConversationResponse(savedConversation);
+
+        Map<String, Object> updateEvent = new HashMap<>();
+        updateEvent.put("type", "CONVERSATION_UPDATE");
+        updateEvent.put("data", conversationResponse);
+        for (User member : savedConversation.getMembers()) {
+            messagingTemplate.convertAndSendToUser(member.getUsername(), "/queue/private", updateEvent);
+        }
+
+        String content = buildNicknameSystemContent(currentUser, targetUser, oldNickname, normalized);
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("systemType", "NICKNAME_UPDATED");
+        metadata.put("actorId", currentUser.getId());
+        metadata.put("actorUsername", currentUser.getUsername());
+        metadata.put("targetUserId", targetUser.getId());
+        metadata.put("targetUsername", targetUser.getUsername());
+        metadata.put("oldNickname", oldNickname);
+        metadata.put("newNickname", normalized);
+
+        Message savedMessage = messageRepository.save(Message.builder()
+                .conversation(savedConversation)
+                .conversationId(savedConversation.getId())
+                .sender(currentUser)
+                .senderId(currentUser.getId())
+                .senderUsername(currentUser.getUsername())
+                .content(content)
+                .messageType(MessageType.SYSTEM)
+                .metadata(metadata)
+                .build());
+
+        MessageResponse messageResponse = MessageResponse.builder()
+                .id(savedMessage.getId())
+                .conversationId(savedConversation.getId())
+                .senderId(currentUser.getId())
+                .senderUsername(currentUser.getUsername())
+                .content(content)
+                .messageType(MessageType.SYSTEM.name())
+                .attachments(Collections.emptyList())
+                .statuses(Collections.emptyList())
+                .reactions(Collections.emptyList())
+                .metadata(metadata)
+                .createdAt(savedMessage.getCreatedAt())
+                .build();
+        for (User member : savedConversation.getMembers()) {
+            messagingTemplate.convertAndSendToUser(member.getUsername(), "/queue/private", messageResponse);
+        }
+        return conversationResponse;
+    }
+
+    private String buildNicknameSystemContent(User actor, User target, String oldNickname, String newNickname) {
+        boolean self = actor.getId().equals(target.getId());
+        String setTargetLabel = self ? "của mình" : "cho " + target.getUsername();
+        String deleteTargetLabel = self ? "của mình" : "của " + target.getUsername();
+        if (newNickname.isBlank()) return "đã xóa biệt danh " + deleteTargetLabel + ".";
+        if (oldNickname == null || oldNickname.isBlank()) {
+            return "đã đặt biệt danh " + setTargetLabel + " là \"" + newNickname + "\".";
+        }
+        return "đã đổi biệt danh " + deleteTargetLabel + " từ \"" + oldNickname + "\" thành \"" + newNickname + "\".";
     }
 
 
@@ -381,6 +475,15 @@ public class ConversationServiceImpl implements ConversationService {
             conversation.getHiddenByUsers().remove(currentUser.getId());
         }
 
+        return mapToConversationResponse(conversationRepository.save(conversation));
+    }
+
+    public ConversationResponse updateMuted(String id, boolean muted) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Conversation conversation = getConversationForMember(id, currentUser);
+        if (conversation.getMutedByUsers() == null) conversation.setMutedByUsers(new HashSet<>());
+        if (muted) conversation.getMutedByUsers().add(currentUser.getId());
+        else conversation.getMutedByUsers().remove(currentUser.getId());
         return mapToConversationResponse(conversationRepository.save(conversation));
     }
 

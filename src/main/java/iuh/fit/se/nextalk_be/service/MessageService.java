@@ -63,6 +63,7 @@ public interface MessageService {
     public MessageResponse sendMessage(MessageRequest request, String senderEmail);
     public void broadcastTypingIndicator(TypingIndicatorRequest request, String senderEmail);
     public Page<MessageResponse> getConversationMessages(String conversationId, Pageable pageable);
+    public List<MessageResponse> getLatestMessages(List<String> conversationIds);
     public void markConversationMessagesAsDelivered(String conversationId, String username);
     public void markConversationMessagesAsSeen(String conversationId, String username);
     public void createAndBroadcastCallHistoryMessage( Conversation conversation, User actor, String content, Map<String, Object> metadata );
@@ -79,4 +80,9 @@ public interface MessageService {
     public MessageResponse reactToMessage(String messageId, ReactMessageRequest request);
     public List<MessageResponse> shareMessage(String messageId, ShareMessageRequest request);
     public List<MessageResponse> searchMessages(String query, String conversationId);
+    
+    // Batch operations
+    public void deleteMessagesForMe(List<String> messageIds);
+    public List<MessageResponse> recallMessages(List<String> messageIds);
+    public List<MessageResponse> shareMessages(iuh.fit.se.nextalk_be.dto.request.BatchShareMessageRequest request);
 }

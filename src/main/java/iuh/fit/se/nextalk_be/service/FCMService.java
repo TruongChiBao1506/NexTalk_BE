@@ -16,4 +16,8 @@ import java.util.List;
 public interface FCMService {
     @PostConstruct public void initialize();
     public void sendPushNotificationToTokens(List<String> tokens, String title, String body);
+    void sendChatPushNotificationToTokens(List<String> tokens, String conversationId, String conversationName,
+                                          String senderId, String senderName, String senderAvatarUrl, String body);
+    public    void sendCallPushNotificationToTokens(List<String> tokens, String callerName, String channelId, String callId, String callerId);
+    void sendCallCancelPushNotificationToTokens(List<String> tokens, String callId);
 }

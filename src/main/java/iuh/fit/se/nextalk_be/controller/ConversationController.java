@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.controller;
 
 import iuh.fit.se.nextalk_be.dto.request.UpdateSelfDestructRequest;
 import iuh.fit.se.nextalk_be.dto.request.UpdateThemeRequest;
+import iuh.fit.se.nextalk_be.dto.request.UpdateNicknameRequest;
 import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
 import iuh.fit.se.nextalk_be.dto.response.ConversationResponse;
 import iuh.fit.se.nextalk_be.dto.response.ConversationSummaryResponse;
@@ -102,6 +103,16 @@ public class ConversationController {
         return ResponseEntity.ok(ApiResponse.success(response, hidden ? "Conversation hidden successfully" : "Conversation unhidden successfully"));
     }
 
+    @PutMapping("/{id}/muted")
+    @Operation(summary = "Mute/unmute notifications for the current user")
+    public ResponseEntity<ApiResponse<ConversationResponse>> updateMuted(
+            @PathVariable("id") String id,
+            @RequestParam("muted") boolean muted
+    ) {
+        ConversationResponse response = conversationService.updateMuted(id, muted);
+        return ResponseEntity.ok(ApiResponse.success(response, muted ? "Conversation muted" : "Conversation unmuted"));
+    }
+
     @PostMapping("/{id}/summary")
     @Operation(summary = "Summarize the latest messages of a conversation via n8n webhook")
     public ResponseEntity<ApiResponse<ConversationSummaryResponse>> summarizeConversation(@PathVariable("id") String id) {
@@ -117,5 +128,15 @@ public class ConversationController {
     ) {
         ConversationResponse response = conversationService.updateTheme(id, request);
         return ResponseEntity.ok(ApiResponse.success(response, "Conversation theme updated successfully"));
+    }
+
+    @PutMapping("/{id}/nicknames/{userId}")
+    @Operation(summary = "Set or remove a member nickname inside a conversation")
+    public ResponseEntity<ApiResponse<ConversationResponse>> updateNickname(
+            @PathVariable("id") String id,
+            @PathVariable("userId") String userId,
+            @Valid @RequestBody UpdateNicknameRequest request) {
+        ConversationResponse response = conversationService.updateNickname(id, userId, request.getNickname());
+        return ResponseEntity.ok(ApiResponse.success(response, "Nickname updated successfully"));
     }
 }

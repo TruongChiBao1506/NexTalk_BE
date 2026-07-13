@@ -59,6 +59,12 @@ public class MessageController {
         return ResponseEntity.ok(ApiResponse.success(responsePage.getContent(), "Messages retrieved successfully"));
     }
 
+    @PostMapping("/api/messages/latest")
+    @Operation(summary = "Get the latest message for multiple conversations")
+    public ResponseEntity<ApiResponse<List<MessageResponse>>> getLatestMessages(@RequestBody List<String> conversationIds) {
+        return ResponseEntity.ok(ApiResponse.success(messageService.getLatestMessages(conversationIds), "Latest messages retrieved successfully"));
+    }
+
     @PostMapping("/api/messages/status/delivered")
     @Operation(summary = "Mark conversation messages as delivered for current user")
     public ResponseEntity<ApiResponse<Void>> markConversationMessagesAsDelivered(
@@ -185,6 +191,27 @@ public class MessageController {
     public ResponseEntity<ApiResponse<MessageResponse>> deletePoll(@PathVariable("id") String id) {
         MessageResponse response = messageService.deletePoll(id);
         return ResponseEntity.ok(ApiResponse.success(response, "Poll deleted successfully"));
+    }
+
+    @DeleteMapping("/api/messages/batch")
+    @Operation(summary = "Batch delete messages for current user")
+    public ResponseEntity<ApiResponse<Void>> deleteMessagesForMe(@Valid @RequestBody iuh.fit.se.nextalk_be.dto.request.BatchMessageIdsRequest request) {
+        messageService.deleteMessagesForMe(request.getMessageIds());
+        return ResponseEntity.ok(ApiResponse.success(null, "Messages deleted for me successfully"));
+    }
+
+    @PostMapping("/api/messages/batch/recall")
+    @Operation(summary = "Batch recall messages for everyone")
+    public ResponseEntity<ApiResponse<List<MessageResponse>>> recallMessages(@Valid @RequestBody iuh.fit.se.nextalk_be.dto.request.BatchMessageIdsRequest request) {
+        List<MessageResponse> response = messageService.recallMessages(request.getMessageIds());
+        return ResponseEntity.ok(ApiResponse.success(response, "Messages recalled successfully"));
+    }
+
+    @PostMapping("/api/messages/batch/share")
+    @Operation(summary = "Batch share messages to one or more conversations")
+    public ResponseEntity<ApiResponse<List<MessageResponse>>> shareMessages(@Valid @RequestBody iuh.fit.se.nextalk_be.dto.request.BatchShareMessageRequest request) {
+        List<MessageResponse> response = messageService.shareMessages(request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Messages shared successfully"));
     }
 
     @GetMapping("/api/messages/search")

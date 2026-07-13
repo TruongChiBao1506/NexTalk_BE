@@ -14,6 +14,7 @@ import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.service.MessageService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import iuh.fit.se.nextalk_be.service.VoiceChannelService;
+import iuh.fit.se.nextalk_be.service.FCMService;
 
 
 import io.agora.media.RtcTokenBuilder2;
@@ -26,6 +27,8 @@ import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -56,6 +59,7 @@ public class CallController {
     private final SimpMessagingTemplate messagingTemplate;
     private final MessageService messageService;
     private final VoiceChannelService voiceChannelService;
+    private final FCMService fcmService;
     private final Map<String, CallSession> activeCallSessions = new ConcurrentHashMap<>();
 
     @Value("${app.agora.app-id}")
@@ -443,9 +447,34 @@ public class CallController {
         }
     }
 
+    @PostMapping("/reject")
+    public ResponseEntity<ApiResponse<Void>> rejectCallRest(@RequestBody CallSignal signal, Principal principal) {
+        if (principal == null) return ResponseEntity.badRequest().build();
+        User responder = findUserByPrincipal(principal);
+        if (responder == null) return ResponseEntity.badRequest().build();
+
+        signal.setReceiverId(responder.getId());
+        handleCallRejected(signal);
+
+        String callerUsername = userRepository.findById(signal.getCallerId())
+                .map(User::getUsername)
+                .orElse(null);
+
+        if (callerUsername != null) {
+            messagingTemplate.convertAndSendToUser(
+                    callerUsername,
+                    "/queue/calls",
+                    signal
+            );
+        }
+        return ResponseEntity.ok(ApiResponse.success(null, "Call rejected"));
+    }
+
     private void forwardCallSignal(CallSignal signal, String senderId) {
         Conversation conversation = conversationRepository.findById(signal.getConversationId()).orElse(null);
         if (conversation == null) return;
+
+        List<String> offlineMemberTokens = new ArrayList<>();
 
         for (User member : conversation.getMembers()) {
             if (!member.getId().equals(senderId)) {
@@ -457,6 +486,18 @@ public class CallController {
                         "/queue/calls",
                         signal
                 );
+
+                if (("INVITE".equalsIgnoreCase(signal.getSignalType()) || "CANCEL".equalsIgnoreCase(signal.getSignalType())) && member.getFcmTokens() != null) {
+                    offlineMemberTokens.addAll(member.getFcmTokens());
+                }
+            }
+        }
+
+        if (!offlineMemberTokens.isEmpty()) {
+            if ("CANCEL".equalsIgnoreCase(signal.getSignalType())) {
+                fcmService.sendCallCancelPushNotificationToTokens(offlineMemberTokens, signal.getCallId());
+            } else {
+                fcmService.sendCallPushNotificationToTokens(offlineMemberTokens, signal.getCallerName(), signal.getConversationId(), signal.getCallId(), signal.getCallerId());
             }
         }
     }

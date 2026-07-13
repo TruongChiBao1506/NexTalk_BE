@@ -23,7 +23,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AppException.class)
     public ResponseEntity<ApiResponse<Void>> handleAppException(AppException ex) {
         ApiResponse<Void> response = ApiResponse.error(ex.getMessage());
-        return new ResponseEntity<>(response, ex.getStatus());
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(ex.getStatus());
+        if (ex instanceof RateLimitExceededException rateLimit) {
+            builder.header("Retry-After", String.valueOf(rateLimit.getRetryAfterSeconds()));
+        }
+        return builder.body(response);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

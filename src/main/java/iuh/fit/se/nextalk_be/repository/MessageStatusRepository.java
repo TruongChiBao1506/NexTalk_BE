@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.entity.MessageStatus;
 
 
 import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
 import java.util.Collection;
@@ -19,4 +20,8 @@ public interface MessageStatusRepository extends MongoRepository<MessageStatus, 
     List<MessageStatus> findAllByUserIdAndMessageIdIn(String userId, Collection<String> messageIds);
 
     List<MessageStatus> findAllByUserIdAndMessageIdInAndStatusIn(String userId, Collection<String> messageIds, Collection<String> statuses);
+
+    List<MessageStatus> findAllByConversationIdAndUserIdAndStatusIn(String conversationId, String userId, Collection<String> statuses);
+
+    List<MessageStatus> findByConversationIdIsNull(Pageable pageable);
 }

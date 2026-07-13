@@ -14,4 +14,5 @@ public class PublicGroupInfoResponse {
     private String ownerUsername;
     private int memberCount;
     private boolean requiresApproval;
+    private java.util.List<iuh.fit.se.nextalk_be.dto.response.GroupMemberResponse> members;
 }

@@ -25,6 +25,7 @@ import java.util.Map;
 @AllArgsConstructor
 @Document(collection = "messages")
 @CompoundIndex(name = "msg_conv_created_idx", def = "{'conversation': 1, 'createdAt': -1}")
+@CompoundIndex(name = "msg_conv_created_v2", def = "{'conversationId': 1, 'createdAt': -1}")
 public class Message extends BaseEntity {
 
     @DocumentReference(lazy = true)
@@ -32,6 +33,10 @@ public class Message extends BaseEntity {
 
     @DocumentReference(lazy = true)
     private User sender;
+
+    private String conversationId;
+    private String senderId;
+    private String senderUsername;
 
     private String content;
 
