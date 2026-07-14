@@ -50,7 +50,8 @@ public interface GroupService {
     public GroupResponse updateMemberRole(String groupId, String userId, UpdateMemberRoleRequest request);
     public GroupResponse getGroupById(String groupId);
     public List<GroupResponse> getMyGroups();
-    public GroupResponse refreshInviteCode(String groupId);
+    public    GroupResponse refreshInviteCode(String groupId);
+    GroupResponse toggleTaskManagement(String groupId, String userId, boolean isEnabled);
     public PublicGroupInfoResponse getPublicGroupInfoByInviteCode(String code);
     public void joinGroupByInviteCode(String code);
     public void leaveGroup(String groupId);

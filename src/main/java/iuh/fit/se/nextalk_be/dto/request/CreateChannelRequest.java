@@ -16,5 +16,6 @@ public class CreateChannelRequest {
     private String name;
     private ChannelType type = ChannelType.TEXT;
     private boolean isPrivate = false;
+    private boolean isTaskEnabled = true;
     private Set<String> memberIds = new HashSet<>();
 }

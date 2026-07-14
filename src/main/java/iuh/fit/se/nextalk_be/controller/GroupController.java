@@ -120,4 +120,14 @@ public class GroupController {
         groupService.leaveGroup(id);
         return ResponseEntity.ok(ApiResponse.success(null, "Left group successfully"));
     }
+
+    @PatchMapping("/{id}/settings/tasks")
+    @Operation(summary = "Toggle task management for a group (OWNER/LEADER only)")
+    public ResponseEntity<ApiResponse<GroupResponse>> toggleTaskManagement(
+            @PathVariable("id") String id,
+            @RequestParam("enabled") boolean enabled,
+            @RequestAttribute("userId") String userId) {
+        GroupResponse response = groupService.toggleTaskManagement(id, userId, enabled);
+        return ResponseEntity.ok(ApiResponse.success(response, "Task management toggled successfully"));
+    }
 }

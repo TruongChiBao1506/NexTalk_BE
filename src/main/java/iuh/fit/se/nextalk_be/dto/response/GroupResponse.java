@@ -23,6 +23,7 @@ public class GroupResponse {
     private String ownerUsername;
     private List<ChannelResponse> channels;
     private boolean requiresApproval;
+    private boolean isTaskEnabled;
     private String inviteCode;
     private int pendingApprovalCount;
     private List<GroupMemberResponse> members;

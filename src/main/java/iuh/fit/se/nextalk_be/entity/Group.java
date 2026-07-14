@@ -25,6 +25,9 @@ public class Group extends BaseEntity {
 
     private boolean requiresApproval;
 
+    @Builder.Default
+    private boolean isTaskEnabled = true;
+
     @org.springframework.data.mongodb.core.index.Indexed(unique = true, sparse = true)
     private String inviteCode;
 }

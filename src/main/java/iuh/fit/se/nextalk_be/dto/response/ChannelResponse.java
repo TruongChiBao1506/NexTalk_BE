@@ -18,6 +18,9 @@ public class ChannelResponse {
     
     @JsonProperty("isPrivate")
     private boolean isPrivate;
+    
+    @JsonProperty("isTaskEnabled")
+    private boolean isTaskEnabled;
     private String groupId;
     private String conversationId;
     private LocalDateTime createdAt;

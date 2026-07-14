@@ -12,5 +12,6 @@ public class UpdateChannelRequest {
     private String name;
     private ChannelType type;
     private Boolean isPrivate;
+    private Boolean isTaskEnabled;
     private Set<String> memberIds;
 }

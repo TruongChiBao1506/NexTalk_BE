@@ -630,6 +630,7 @@ public class GroupServiceImpl implements GroupService {
                 .members(memberResponses)
                 .memberCount(memberResponses.size())
                 .requiresApproval(group.isRequiresApproval())
+                .isTaskEnabled(group.isTaskEnabled())
                 .inviteCode(group.getInviteCode())
                 .pendingApprovalCount(pendingApprovalCount)
                 .createdAt(group.getCreatedAt())
@@ -666,5 +667,48 @@ public class GroupServiceImpl implements GroupService {
                     response
             );
         }
+    }
+    @Override
+    @org.springframework.transaction.annotation.Transactional
+    public GroupResponse toggleTaskManagement(String groupId, String userId, boolean isEnabled) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new iuh.fit.se.nextalk_be.exception.ResourceNotFoundException("User not found"));
+
+        Group group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new iuh.fit.se.nextalk_be.exception.ResourceNotFoundException("Group not found"));
+
+        GroupMember groupMember = groupMemberRepository.findByGroupIdAndUserId(groupId, userId)
+                .orElseThrow(() -> new iuh.fit.se.nextalk_be.exception.ResourceNotFoundException("User is not in the group"));
+
+        if (groupMember.getRole() != iuh.fit.se.nextalk_be.entity.GroupRole.OWNER && groupMember.getRole() != iuh.fit.se.nextalk_be.entity.GroupRole.LEADER) {
+            throw new org.springframework.security.access.AccessDeniedException("Only OWNER or LEADER can toggle task management");
+        }
+
+        if (group.isTaskEnabled() == isEnabled) {
+            return mapToGroupResponse(group, groupMemberRepository.findAllByGroupId(groupId));
+        }
+
+        group.setTaskEnabled(isEnabled);
+        Group saved = groupRepository.save(group);
+
+        // Send system message
+        String actionText = isEnabled ? "bật" : "tắt";
+        String messageContent = user.getUsername() + " đã " + actionText + " tính năng Quản lý công việc cho nhóm này.";
+        
+        // Find main conversation to broadcast
+        List<Channel> channels = channelRepository.findAllByGroupId(groupId);
+        Channel mainChannel = channels.stream()
+                .filter(ch -> "Chung".equals(ch.getName()) && ch.getType() == ChannelType.TEXT)
+                .findFirst()
+                .or(() -> channels.stream()
+                        .filter(ch -> ch.getType() == ChannelType.TEXT && !ch.isPrivate())
+                        .findFirst())
+                .orElse(null);
+                
+        if (mainChannel != null && mainChannel.getConversation() != null) {
+            createAndBroadcastSystemMessage(mainChannel.getConversation(), user, messageContent);
+        }
+
+        return mapToGroupResponse(saved, groupMemberRepository.findAllByGroupId(groupId));
     }
 }
