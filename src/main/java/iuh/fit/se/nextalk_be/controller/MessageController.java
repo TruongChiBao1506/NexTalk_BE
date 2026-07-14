@@ -112,6 +112,16 @@ public class MessageController {
         return ResponseEntity.ok(ApiResponse.success(response, "Message recalled successfully"));
     }
 
+    @PostMapping("/api/messages/{id}/attachment/recall")
+    @Operation(summary = "Recall a single attachment from a message")
+    public ResponseEntity<ApiResponse<MessageResponse>> recallAttachment(
+            @PathVariable("id") String id,
+            @RequestParam("attachmentUrl") String attachmentUrl
+    ) {
+        MessageResponse response = messageService.recallAttachment(id, attachmentUrl);
+        return ResponseEntity.ok(ApiResponse.success(response, "Attachment recalled successfully"));
+    }
+
     @DeleteMapping("/api/messages/{id}")
     @Operation(summary = "Delete a message for current user")
     public ResponseEntity<ApiResponse<Void>> deleteMessageForMe(@PathVariable("id") String id) {

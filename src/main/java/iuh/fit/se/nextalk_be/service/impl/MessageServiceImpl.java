@@ -679,6 +679,7 @@ public class MessageServiceImpl implements MessageService {
                 .conversationId(message.getConversation().getId())
                 .senderId(message.getSender().getId())
                 .senderUsername(message.getSender().getUsername())
+                .clientMessageId(getClientMessageId(message))
                 .content(message.getContent())
                 .messageType(message.getMessageType().name())
                 .attachments(message.getAttachments() != null ? message.getAttachments() : new ArrayList<>())
@@ -728,6 +729,7 @@ public class MessageServiceImpl implements MessageService {
                 .conversationId(message.getConversationId() != null ? message.getConversationId() : message.getConversation().getId())
                 .senderId(senderId)
                 .senderUsername(senderUsername)
+                .clientMessageId(getClientMessageId(message))
                 .content(message.getContent())
                 .messageType(message.getMessageType().name())
                 .attachments(message.getAttachments() != null ? message.getAttachments() : new ArrayList<>())
@@ -745,6 +747,16 @@ public class MessageServiceImpl implements MessageService {
                 .reactions(message.getReactions() != null ? message.getReactions() : new ArrayList<>())
                 .metadata(message.getMetadata() != null ? message.getMetadata() : Map.of())
                 .build();
+    }
+
+    private String getClientMessageId(Message message) {
+        if (message.getMetadata() == null) {
+            return null;
+        }
+        Object value = message.getMetadata().get("clientMessageId");
+        return value instanceof String clientMessageId && !clientMessageId.isBlank()
+                ? clientMessageId
+                : null;
     }
 
     private List<MessageResponse> mapMessagesToResponses(List<Message> messageList) {
@@ -1302,6 +1314,37 @@ public class MessageServiceImpl implements MessageService {
         message.setContent("Tin nhắn đã bị thu hồi");
         Message savedMessage = messageRepository.save(message);
 
+        MessageResponse response = mapToMessageResponse(savedMessage);
+        broadcastMessageUpdate(message.getConversation(), response);
+        return response;
+    }
+
+    public MessageResponse recallAttachment(String messageId, String attachmentUrl) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Message message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message not found with ID: " + messageId));
+
+        if (!message.getSender().getId().equals(currentUser.getId())
+                && !canModerateMessage(message.getConversation(), currentUser, message.getSender())) {
+            throw new BadRequestException("You can only recall attachments from your own messages");
+        }
+        if (message.isRecalled()) {
+            throw new BadRequestException("Cannot recall attachments from a recalled message");
+        }
+
+        List<MessageAttachment> attachments = message.getAttachments();
+        if (attachments != null && !attachments.isEmpty() && attachmentUrl != null && !attachmentUrl.isBlank()) {
+            attachments.removeIf(a -> attachmentUrl.trim().equalsIgnoreCase(a.getUrl().trim()));
+            message.setAttachments(attachments);
+        }
+
+        String textContent = toPlainText(message.getContent());
+        if ((message.getAttachments() == null || message.getAttachments().isEmpty()) && textContent.isBlank()) {
+            message.setRecalled(true);
+            message.setContent("Tin nhắn đã bị thu hồi");
+        }
+
+        Message savedMessage = messageRepository.save(message);
         MessageResponse response = mapToMessageResponse(savedMessage);
         broadcastMessageUpdate(message.getConversation(), response);
         return response;

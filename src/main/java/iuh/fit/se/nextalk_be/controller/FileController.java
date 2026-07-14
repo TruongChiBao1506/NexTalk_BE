@@ -15,9 +15,14 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.Valid;
+import iuh.fit.se.nextalk_be.dto.request.DirectUploadConfirmRequest;
+import iuh.fit.se.nextalk_be.dto.request.DirectUploadPrepareRequest;
+import iuh.fit.se.nextalk_be.dto.response.DirectUploadPrepareResponse;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -37,6 +42,35 @@ public class FileController {
     private final CloudinaryService cloudinaryService;
     private final RateLimitService rateLimitService;
     private final RestTemplate restTemplate;
+
+    @PostMapping("/direct-upload/prepare")
+    @Operation(summary = "Check for a duplicate and create a signed direct Cloudinary upload")
+    public ResponseEntity<ApiResponse<DirectUploadPrepareResponse>> prepareDirectUpload(
+            @Valid @RequestBody DirectUploadPrepareRequest request) {
+        rateLimitService.check("file:prepare", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(10));
+        if (request.getSize() != null && request.getSize() > 50L * 1024 * 1024) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("File exceeds the 50 MB limit", null));
+        }
+        DirectUploadPrepareResponse response = cloudinaryService.prepareDirectUpload(request);
+        return ResponseEntity.ok(ApiResponse.success(response,
+                response.isDeduplicated() ? "Existing file reused" : "Upload signature created"));
+    }
+
+    @PostMapping("/direct-upload/confirm")
+    @Operation(summary = "Verify and store a completed direct Cloudinary upload")
+    public ResponseEntity<ApiResponse<FileUploadResponse>> confirmDirectUpload(
+            @Valid @RequestBody DirectUploadConfirmRequest request) {
+        rateLimitService.check("file:confirm", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(10));
+        try {
+            FileUploadResponse response = cloudinaryService.confirmDirectUpload(request);
+            return ResponseEntity.ok(ApiResponse.success(response, "Direct upload confirmed"));
+        } catch (IllegalArgumentException exception) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(exception.getMessage(), null));
+        } catch (Exception exception) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body(ApiResponse.error("Unable to verify Cloudinary upload", null));
+        }
+    }
 
     @PostMapping("/upload")
     @Operation(summary = "Upload a file to Cloudinary")

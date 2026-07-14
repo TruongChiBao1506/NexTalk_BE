@@ -1,7 +1,6 @@
 package iuh.fit.se.nextalk_be.service;
 
 import iuh.fit.se.nextalk_be.dto.request.AddPollOptionRequest;
-import iuh.fit.se.nextalk_be.dto.request.ChatRequestStatus;
 import iuh.fit.se.nextalk_be.dto.request.CreatePollRequest;
 import iuh.fit.se.nextalk_be.dto.request.EditMessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.MessageRequest;
@@ -10,53 +9,13 @@ import iuh.fit.se.nextalk_be.dto.request.ReactMessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.ShareMessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.TypingIndicatorRequest;
 import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
-import iuh.fit.se.nextalk_be.dto.response.MessageStatusResponse;
-import iuh.fit.se.nextalk_be.dto.response.MessageStatusUpdateResponse;
-import iuh.fit.se.nextalk_be.entity.Channel;
 import iuh.fit.se.nextalk_be.entity.Conversation;
-import iuh.fit.se.nextalk_be.entity.ConversationType;
-import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
-import iuh.fit.se.nextalk_be.entity.Group;
-import iuh.fit.se.nextalk_be.entity.GroupRole;
-import iuh.fit.se.nextalk_be.entity.Message;
-import iuh.fit.se.nextalk_be.entity.MessageAttachment;
-import iuh.fit.se.nextalk_be.entity.MessageReaction;
-import iuh.fit.se.nextalk_be.entity.MessageStatus;
-import iuh.fit.se.nextalk_be.entity.MessageType;
-import iuh.fit.se.nextalk_be.entity.NotificationType;
 import iuh.fit.se.nextalk_be.entity.User;
-import iuh.fit.se.nextalk_be.event.TypingIndicatorEvent;
-import iuh.fit.se.nextalk_be.exception.BadRequestException;
-import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
-import iuh.fit.se.nextalk_be.repository.ChannelRepository;
-import iuh.fit.se.nextalk_be.repository.ChatRequestRepository;
-import iuh.fit.se.nextalk_be.repository.ConversationRepository;
-import iuh.fit.se.nextalk_be.repository.FriendshipRepository;
-import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
-import iuh.fit.se.nextalk_be.repository.GroupRepository;
-import iuh.fit.se.nextalk_be.repository.MessageRepository;
-import iuh.fit.se.nextalk_be.repository.MessageStatusRepository;
-import iuh.fit.se.nextalk_be.repository.UserBlockRepository;
-import iuh.fit.se.nextalk_be.repository.UserRepository;
-import iuh.fit.se.nextalk_be.security.RateLimitService;
-import iuh.fit.se.nextalk_be.service.FCMService;
-import iuh.fit.se.nextalk_be.service.NotificationService;
-import iuh.fit.se.nextalk_be.service.PresenceService;
-import iuh.fit.se.nextalk_be.service.UserService;
-import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.data.domain.PageImpl;
-import java.util.stream.Collectors;
-import java.util.function.Function;
-import java.time.*;
-import java.time.format.DateTimeParseException;
-import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+
+import java.util.List;
+import java.util.Map;
 
 public interface MessageService {
     public MessageResponse sendMessage(MessageRequest request);
@@ -67,7 +26,7 @@ public interface MessageService {
     public Map<String, Long> getUnreadCounts(String username);
     public void markConversationMessagesAsDelivered(String conversationId, String username);
     public void markConversationMessagesAsSeen(String conversationId, String username);
-    public void createAndBroadcastCallHistoryMessage( Conversation conversation, User actor, String content, Map<String, Object> metadata );
+    public void createAndBroadcastCallHistoryMessage(Conversation conversation, User actor, String content, Map<String, Object> metadata);
     public MessageResponse createPoll(CreatePollRequest request);
     public MessageResponse votePoll(String messageId, PollVoteRequest request);
     public MessageResponse addPollOption(String messageId, AddPollOptionRequest request);
@@ -75,13 +34,14 @@ public interface MessageService {
     public MessageResponse deletePoll(String messageId);
     public MessageResponse editMessage(String messageId, EditMessageRequest request);
     public MessageResponse recallMessage(String messageId);
+    public MessageResponse recallAttachment(String messageId, String attachmentUrl);
     public void deleteMessageForMe(String messageId);
     public MessageResponse pinMessage(String messageId, boolean pin);
     public List<MessageResponse> getPinnedMessages(String conversationId);
     public MessageResponse reactToMessage(String messageId, ReactMessageRequest request);
     public List<MessageResponse> shareMessage(String messageId, ShareMessageRequest request);
     public List<MessageResponse> searchMessages(String query, String conversationId);
-    
+
     // Batch operations
     public void deleteMessagesForMe(List<String> messageIds);
     public List<MessageResponse> recallMessages(List<String> messageIds);
