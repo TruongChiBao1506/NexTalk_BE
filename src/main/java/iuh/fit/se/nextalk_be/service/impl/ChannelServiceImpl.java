@@ -83,49 +83,6 @@ public class ChannelServiceImpl implements ChannelService {
                     }
                 }
             }
-    private final GroupMemberRepository groupMemberRepository;
-    private final ConversationRepository conversationRepository;
-    private final UserService userService;
-    private final UserRepository userRepository;
-
-    public ChannelResponse createChannel(String groupId, CreateChannelRequest request) {
-        User currentUser = userService.getCurrentAuthenticatedUser();
-        Group group = groupRepository.findById(groupId)
-                .orElseThrow(() -> new ResourceNotFoundException("Group not found"));
-
-        if (!isLeaderRole(getRole(group, currentUser).orElse(null))) {
-            throw new UnauthorizedException("Only group leaders can create channels");
-        }
-
-        Conversation conversation = Conversation.builder()
-                .type(ConversationType.GROUP)
-                .name(request.getName())
-                .owner(currentUser)
-                .members(new HashSet<>())
-                .build();
-
-        if (!request.isPrivate()) {
-            List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
-            Set<User> conversationMembers = members.stream().map(GroupMember::getUser).collect(Collectors.toSet());
-            conversationMembers.add(group.getOwner());
-            conversation.setMembers(conversationMembers);
-        } else {
-            Set<User> privateMembers = new HashSet<>();
-            privateMembers.add(currentUser);
-            
-            if (request.getMemberIds() != null && !request.getMemberIds().isEmpty()) {
-                List<GroupMember> groupMembers = groupMemberRepository.findAllByGroupId(groupId);
-                Set<String> validUserIds = groupMembers.stream()
-                        .map(gm -> gm.getUser().getId())
-                        .collect(Collectors.toSet());
-                validUserIds.add(group.getOwner().getId());
-                
-                for (String memberId : request.getMemberIds()) {
-                    if (validUserIds.contains(memberId)) {
-                        userRepository.findById(memberId).ifPresent(privateMembers::add);
-                    }
-                }
-            }
             
             conversation.setMembers(privateMembers);
         }
