@@ -13,11 +13,22 @@ import org.springframework.data.mongodb.repository.Aggregation;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Set;
 
 @Repository
 public interface MessageRepository extends MongoRepository<Message, String> {
 
     boolean existsByConversationId(String conversationId);
+
+    @Aggregation(pipeline = {
+            "{'$match': {'conversationId': {'$in': ?0}}}",
+            "{'$group': {'_id': '$conversationId'}}",
+            "{'$project': {'_id': 0, 'conversationId': '$_id'}}"
+    })
+    List<ConversationIdResult> findConversationIdsHavingMessages(Set<String> conversationIds);
+
+    record ConversationIdResult(String conversationId) {
+    }
 
     Page<Message> findByConversationIdOrderByCreatedAtDesc(String conversationId, Pageable pageable);
 

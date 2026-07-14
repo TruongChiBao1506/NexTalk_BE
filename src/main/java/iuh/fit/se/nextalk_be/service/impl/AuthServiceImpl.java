@@ -33,6 +33,7 @@ import iuh.fit.se.nextalk_be.security.JwtService;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.MailService;
 import iuh.fit.se.nextalk_be.service.UserService;
+import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
 
 
 import lombok.RequiredArgsConstructor;
@@ -76,6 +77,7 @@ public class AuthServiceImpl implements AuthService {
     private final AuthenticationManager authenticationManager;
     private final RateLimitService rateLimitService;
     private final SimpMessagingTemplate messagingTemplate;
+    private final WebSocketSessionRegistry webSocketSessionRegistry;
 
     @Value("${server.port:8080}")
     private String serverPort;
@@ -436,6 +438,7 @@ public class AuthServiceImpl implements AuthService {
         if (request != null && request.getRefreshToken() != null) {
             refreshTokenRepository.findByToken(request.getRefreshToken())
                     .ifPresent(token -> {
+                        removeSessionFcmToken(token);
                         refreshTokenRepository.delete(token);
                     });
         }
@@ -453,22 +456,38 @@ public class AuthServiceImpl implements AuthService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         RefreshToken session = refreshTokenRepository.findByIdAndUserId(id, currentUser.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Session not found"));
+        removeSessionFcmToken(session);
         refreshTokenRepository.delete(session);
         messagingTemplate.convertAndSendToUser(
                 currentUser.getUsername(),
                 "/queue/private",
                 Map.of("type", "SESSION_REVOKED", "sessionId", id)
         );
+        webSocketSessionRegistry.closeLoginSession(id);
     }
 
     public void revokeAllSessions() {
         User currentUser = userService.getCurrentAuthenticatedUser();
+        List<RefreshToken> sessions = refreshTokenRepository.findByUserIdOrderByCreatedAtDesc(currentUser.getId());
+        sessions.forEach(this::removeSessionFcmToken);
         refreshTokenRepository.deleteByUser(currentUser);
         messagingTemplate.convertAndSendToUser(
                 currentUser.getUsername(),
                 "/queue/private",
                 Map.of("type", "ALL_SESSIONS_REVOKED")
         );
+        webSocketSessionRegistry.closeLoginSessions(sessions.stream().map(RefreshToken::getId).toList());
+    }
+
+    private void removeSessionFcmToken(RefreshToken session) {
+        if (session.getFcmToken() == null || session.getFcmToken().isBlank() || session.getUser() == null) {
+            return;
+        }
+        userRepository.findById(session.getUser().getId()).ifPresent(user -> {
+            if (user.getFcmTokens() != null && user.getFcmTokens().remove(session.getFcmToken())) {
+                userRepository.save(user);
+            }
+        });
     }
 
     private SessionResponse mapToSessionResponse(RefreshToken token) {

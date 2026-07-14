@@ -54,6 +54,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         || (userDetails instanceof User user
                         && refreshTokenRepository.existsByIdAndUserId(sessionId, user.getId()));
                 if (jwtService.isTokenValid(jwt, userDetails) && activeSession) {
+                    if (sessionId != null) {
+                        request.setAttribute("loginSessionId", sessionId);
+                    }
                     UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                             userDetails,
                             null,

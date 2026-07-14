@@ -3,6 +3,7 @@ package iuh.fit.se.nextalk_be.controller;
 import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
+import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
 
 
 import lombok.Data;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
+import jakarta.servlet.http.HttpServletRequest;
 
 @RestController
 @RequestMapping("/api/fcm")
@@ -23,6 +25,7 @@ import java.util.ArrayList;
 public class FCMController {
 
     private final UserRepository userRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
 
     @Data
     public static class FCMTokenRequest {
@@ -30,7 +33,7 @@ public class FCMController {
     }
 
     @PostMapping("/token")
-    public ResponseEntity<ApiResponse<Void>> updateToken(@AuthenticationPrincipal User user, @RequestBody FCMTokenRequest request) {
+    public ResponseEntity<ApiResponse<Void>> updateToken(@AuthenticationPrincipal User user, @RequestBody FCMTokenRequest request, HttpServletRequest httpRequest) {
         if (user == null || request.getToken() == null || request.getToken().isEmpty()) {
             return ResponseEntity.badRequest().body(ApiResponse.error("Invalid token"));
         }
@@ -44,13 +47,20 @@ public class FCMController {
                 currentUser.getFcmTokens().add(request.getToken());
                 userRepository.save(currentUser);
             }
+            Object sessionId = httpRequest.getAttribute("loginSessionId");
+            if (sessionId instanceof String id) {
+                refreshTokenRepository.findByIdAndUserId(id, currentUser.getId()).ifPresent(session -> {
+                    session.setFcmToken(request.getToken());
+                    refreshTokenRepository.save(session);
+                });
+            }
         }
 
         return ResponseEntity.ok(ApiResponse.success(null, "Token updated successfully"));
     }
 
     @DeleteMapping("/token")
-    public ResponseEntity<ApiResponse<Void>> deleteToken(@AuthenticationPrincipal User user, @RequestBody FCMTokenRequest request) {
+    public ResponseEntity<ApiResponse<Void>> deleteToken(@AuthenticationPrincipal User user, @RequestBody FCMTokenRequest request, HttpServletRequest httpRequest) {
         if (user == null || request.getToken() == null || request.getToken().isEmpty()) {
             return ResponseEntity.badRequest().body(ApiResponse.error("Invalid token"));
         }
@@ -59,6 +69,13 @@ public class FCMController {
         if (currentUser != null && currentUser.getFcmTokens() != null) {
             currentUser.getFcmTokens().remove(request.getToken());
             userRepository.save(currentUser);
+            Object sessionId = httpRequest.getAttribute("loginSessionId");
+            if (sessionId instanceof String id) {
+                refreshTokenRepository.findByIdAndUserId(id, currentUser.getId()).ifPresent(session -> {
+                    session.setFcmToken(null);
+                    refreshTokenRepository.save(session);
+                });
+            }
         }
 
         return ResponseEntity.ok(ApiResponse.success(null, "Token deleted successfully"));

@@ -12,6 +12,9 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -42,7 +45,7 @@ public class PresenceServiceImpl implements PresenceService {
 
     public void addSession(String userId, String sessionId) {
         String sessionsKey = SESSIONS_KEY_PREFIX + userId;
-        redisTemplate.opsForSet().add(sessionsKey, sessionId);
+        redisTemplate.opsForHash().put(sessionsKey, sessionId, String.valueOf(System.currentTimeMillis()));
 
         String currentStatus = getUserStatus(userId);
         if (!"ONLINE".equalsIgnoreCase(currentStatus) && !"AWAY".equalsIgnoreCase(currentStatus)) {
@@ -52,12 +55,12 @@ public class PresenceServiceImpl implements PresenceService {
 
     public boolean removeSession(String userId, String sessionId) {
         String sessionsKey = SESSIONS_KEY_PREFIX + userId;
-        Long removed = redisTemplate.opsForSet().remove(sessionsKey, sessionId);
+        Long removed = redisTemplate.opsForHash().delete(sessionsKey, sessionId);
         if (removed == null || removed == 0) {
             return false;
         }
 
-        Long count = redisTemplate.opsForSet().size(sessionsKey);
+        Long count = redisTemplate.opsForHash().size(sessionsKey);
         if (count == null || count == 0) {
             setUserStatus(userId, "OFFLINE");
             setLastSeen(userId, LocalDateTime.now());
@@ -103,5 +106,41 @@ public class PresenceServiceImpl implements PresenceService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    public void touchSession(String userId, String sessionId) {
+        redisTemplate.opsForHash().put(
+                SESSIONS_KEY_PREFIX + userId,
+                sessionId,
+                String.valueOf(System.currentTimeMillis())
+        );
+    }
+
+    public List<String> expireStaleSessions(long staleBeforeEpochMillis) {
+        List<String> offlineUserIds = new ArrayList<>();
+        java.util.Set<String> keys = redisTemplate.keys(SESSIONS_KEY_PREFIX + "*");
+        if (keys == null) return offlineUserIds;
+
+        for (String key : keys) {
+            Map<Object, Object> sessions = redisTemplate.opsForHash().entries(key);
+            sessions.forEach((sessionId, lastHeartbeat) -> {
+                try {
+                    if (Long.parseLong(String.valueOf(lastHeartbeat)) < staleBeforeEpochMillis) {
+                        redisTemplate.opsForHash().delete(key, sessionId);
+                    }
+                } catch (NumberFormatException ignored) {
+                    redisTemplate.opsForHash().delete(key, sessionId);
+                }
+            });
+
+            Long remaining = redisTemplate.opsForHash().size(key);
+            if (remaining == null || remaining == 0) {
+                String userId = key.substring(SESSIONS_KEY_PREFIX.length());
+                setUserStatus(userId, "OFFLINE");
+                setLastSeen(userId, LocalDateTime.now());
+                offlineUserIds.add(userId);
+            }
+        }
+        return offlineUserIds;
     }
 }

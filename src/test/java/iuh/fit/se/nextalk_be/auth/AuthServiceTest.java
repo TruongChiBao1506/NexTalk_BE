@@ -13,8 +13,12 @@ import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.repository.EmailVerificationRepository;
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
+import iuh.fit.se.nextalk_be.repository.QrLoginSessionRepository;
+import iuh.fit.se.nextalk_be.repository.PasswordResetTokenRepository;
 import iuh.fit.se.nextalk_be.security.JwtService;
-import iuh.fit.se.nextalk_be.service.AuthService;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
+import iuh.fit.se.nextalk_be.service.impl.AuthServiceImpl;
+import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
 import iuh.fit.se.nextalk_be.service.MailService;
 import iuh.fit.se.nextalk_be.service.UserService;
 
@@ -29,9 +33,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -51,6 +57,12 @@ public class AuthServiceTest {
     private EmailVerificationRepository emailVerificationRepository;
 
     @Mock
+    private QrLoginSessionRepository qrLoginSessionRepository;
+
+    @Mock
+    private PasswordResetTokenRepository passwordResetTokenRepository;
+
+    @Mock
     private PasswordEncoder passwordEncoder;
 
     @Mock
@@ -66,10 +78,19 @@ public class AuthServiceTest {
     private AuthenticationManager authenticationManager;
 
     @Mock
+    private RateLimitService rateLimitService;
+
+    @Mock
+    private SimpMessagingTemplate messagingTemplate;
+
+    @Mock
+    private WebSocketSessionRegistry webSocketSessionRegistry;
+
+    @Mock
     private HttpServletRequest httpRequest;
 
     @InjectMocks
-    private AuthService authService;
+    private AuthServiceImpl authService;
 
     private RegisterRequest registerRequest;
     private User user;
@@ -148,14 +169,17 @@ public class AuthServiceTest {
         LoginRequest loginRequest = new LoginRequest("test@gmail.com", "password123");
 
         when(userRepository.findByEmail(loginRequest.getEmail())).thenReturn(Optional.of(user));
-        when(jwtService.generateAccessToken(user)).thenReturn("accessToken");
         when(jwtService.generateRefreshToken(user)).thenReturn("refreshToken");
         when(jwtService.getRefreshExpirationMs()).thenReturn(604800000L);
-        when(httpRequest.getHeader("X-Forwarded-For")).thenReturn(null);
-        when(httpRequest.getHeader("X-Real-IP")).thenReturn(null);
-        when(httpRequest.getRemoteAddr()).thenReturn("127.0.0.1");
+        when(rateLimitService.clientIdentity(httpRequest)).thenReturn("127.0.0.1");
         when(httpRequest.getHeader("User-Agent")).thenReturn("JUnit Browser");
         when(userService.mapToProfileResponse(user)).thenReturn(UserProfileResponse.builder().email(user.getEmail()).build());
+        when(refreshTokenRepository.save(any(RefreshToken.class))).thenAnswer(invocation -> {
+            RefreshToken token = invocation.getArgument(0);
+            token.setId("session-1");
+            return token;
+        });
+        when(jwtService.generateAccessToken(user, "session-1")).thenReturn("accessToken");
 
         LoginResponse response = authService.login(loginRequest, httpRequest);
 
@@ -179,5 +203,42 @@ public class AuthServiceTest {
 
         assertThrows(BadRequestException.class, () -> authService.login(loginRequest, httpRequest));
         verify(refreshTokenRepository, never()).save(any(RefreshToken.class));
+    }
+
+    @Test
+    void revokeSession_RemovesOnlyTargetSessionAndItsFcmToken() {
+        user.setFcmTokens(new java.util.ArrayList<>(List.of("fcm-a", "fcm-b")));
+        RefreshToken session = RefreshToken.builder().user(user).token("refresh-a").fcmToken("fcm-a").build();
+        session.setId("session-a");
+
+        when(userService.getCurrentAuthenticatedUser()).thenReturn(user);
+        when(refreshTokenRepository.findByIdAndUserId("session-a", user.getId())).thenReturn(Optional.of(session));
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        authService.revokeSession("session-a");
+
+        assertEquals(List.of("fcm-b"), user.getFcmTokens());
+        verify(refreshTokenRepository).delete(session);
+        verify(refreshTokenRepository, never()).deleteByUser(any());
+        verify(messagingTemplate).convertAndSendToUser(eq(user.getUsername()), eq("/queue/private"), any());
+        verify(webSocketSessionRegistry).closeLoginSession("session-a");
+    }
+
+    @Test
+    void revokeAllSessions_RemovesEverySessionAndFcmToken() {
+        user.setFcmTokens(new java.util.ArrayList<>(List.of("fcm-a", "fcm-b")));
+        RefreshToken first = RefreshToken.builder().user(user).fcmToken("fcm-a").build();
+        RefreshToken second = RefreshToken.builder().user(user).fcmToken("fcm-b").build();
+
+        when(userService.getCurrentAuthenticatedUser()).thenReturn(user);
+        when(refreshTokenRepository.findByUserIdOrderByCreatedAtDesc(user.getId())).thenReturn(List.of(first, second));
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        authService.revokeAllSessions();
+
+        assertTrue(user.getFcmTokens().isEmpty());
+        verify(refreshTokenRepository).deleteByUser(user);
+        verify(messagingTemplate).convertAndSendToUser(eq(user.getUsername()), eq("/queue/private"), any());
+        verify(webSocketSessionRegistry).closeLoginSessions(any());
     }
 }

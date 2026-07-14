@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 
@@ -17,4 +18,6 @@ public interface PresenceService {
     public String getUserStatus(String userId);
     public void setLastSeen(String userId, LocalDateTime lastSeenTime);
     public LocalDateTime getUserLastSeen(String userId);
+    public void touchSession(String userId, String sessionId);
+    public List<String> expireStaleSessions(long staleBeforeEpochMillis);
 }

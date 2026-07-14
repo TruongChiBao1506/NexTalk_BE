@@ -88,6 +88,9 @@ public class ConversationController {
     @GetMapping("/search")
     @Operation(summary = "Search conversations by name or username (partial match)")
     public ResponseEntity<ApiResponse<List<ConversationResponse>>> searchConversations(@RequestParam("query") String query) {
+        if (query != null && query.trim().matches("\\d{4}")) {
+            rateLimitService.check("chat-pin:unlock", rateLimitService.currentUserIdentity(), 5, Duration.ofMinutes(1));
+        }
         rateLimitService.check("conversation:search", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(1));
         List<ConversationResponse> response = conversationService.searchConversations(query);
         return ResponseEntity.ok(ApiResponse.success(response, "Conversations retrieved successfully"));

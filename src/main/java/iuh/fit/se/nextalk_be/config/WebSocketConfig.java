@@ -18,6 +18,12 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
+import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
+import org.springframework.web.socket.WebSocketHandler;
+import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.handler.WebSocketHandlerDecorator;
+import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
@@ -32,6 +38,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final WebSocketSessionRegistry webSocketSessionRegistry;
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
@@ -55,10 +62,30 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
                 if (accessor != null && StompCommand.CONNECT.equals(accessor.getCommand())) {
                     authenticate(accessor);
+                    String loginSessionId = accessor.getUser() instanceof UsernamePasswordAuthenticationToken auth
+                            && auth.getDetails() instanceof String value ? value : null;
+                    webSocketSessionRegistry.bindLoginSession(loginSessionId, accessor.getSessionId());
                 } else if (accessor != null && accessor.getUser() instanceof UsernamePasswordAuthenticationToken authentication) {
                     validateActiveSession(authentication);
                 }
                 return message;
+            }
+        });
+    }
+
+    @Override
+    public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
+        registration.addDecoratorFactory(handler -> new WebSocketHandlerDecorator(handler) {
+            @Override
+            public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+                webSocketSessionRegistry.registerSocket(session);
+                super.afterConnectionEstablished(session);
+            }
+
+            @Override
+            public void afterConnectionClosed(WebSocketSession session, CloseStatus closeStatus) throws Exception {
+                webSocketSessionRegistry.unregisterSocket(session.getId());
+                super.afterConnectionClosed(session, closeStatus);
             }
         });
     }

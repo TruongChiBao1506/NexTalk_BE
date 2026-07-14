@@ -32,4 +32,6 @@ public class RefreshToken extends BaseEntity {
     private String ipAddress;
 
     private LocalDateTime lastUsedAt;
+
+    private String fcmToken;
 }

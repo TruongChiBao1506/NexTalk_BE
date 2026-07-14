@@ -101,13 +101,22 @@ public class ConversationServiceImpl implements ConversationService {
 
         List<Conversation> conversations = conversationRepository.findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId());
         List<Conversation> deduplicated = deduplicateConversations(conversations, currentUser.getId());
+        Set<String> privateConversationIds = deduplicated.stream()
+                .filter(conversation -> conversation.getType() == ConversationType.PRIVATE)
+                .map(Conversation::getId)
+                .collect(Collectors.toSet());
+        Set<String> privateConversationIdsHavingMessages = privateConversationIds.isEmpty()
+                ? Collections.emptySet()
+                : messageRepository.findConversationIdsHavingMessages(privateConversationIds).stream()
+                        .map(MessageRepository.ConversationIdResult::conversationId)
+                        .collect(Collectors.toSet());
 
         return deduplicated.stream()
                 // Opening a profile/search result creates a private conversation shell
                 // so the composer has an id. Do not expose that shell in either user's
                 // inbox until the first message is actually sent.
                 .filter(conversation -> conversation.getType() != ConversationType.PRIVATE
-                        || messageRepository.existsByConversationId(conversation.getId()))
+                        || privateConversationIdsHavingMessages.contains(conversation.getId()))
                 .filter(conversation -> conversation.getDeletedByUsers() == null
                         || !conversation.getDeletedByUsers().contains(currentUser.getId()))
                 .filter(conversation -> conversation.getHiddenByUsers() == null
@@ -416,6 +425,8 @@ public class ConversationServiceImpl implements ConversationService {
         if (currentUser.getChatPin() != null && trimmedQuery.length() == 4) {
             if (trimmedQuery.matches("\\d{4}") && passwordEncoder.matches(trimmedQuery, currentUser.getChatPin())) {
                 isPinMatch = true;
+            } else if (trimmedQuery.matches("\\d{4}")) {
+                throw new BadRequestException("Mã PIN không chính xác");
             }
         }
 

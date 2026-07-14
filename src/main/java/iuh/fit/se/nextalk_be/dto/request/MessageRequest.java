@@ -5,6 +5,7 @@ import iuh.fit.se.nextalk_be.entity.MessageAttachment;
 
 
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.*;
 
 import java.util.List;
@@ -28,4 +29,7 @@ public class MessageRequest {
     private String parentId;
 
     private String priority; // IMPORTANT, URGENT
+
+    @Size(max = 100, message = "Client message ID must not exceed 100 characters")
+    private String clientMessageId;
 }

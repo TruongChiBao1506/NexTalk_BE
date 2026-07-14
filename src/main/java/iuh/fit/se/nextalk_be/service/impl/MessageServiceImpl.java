@@ -237,6 +237,9 @@ public class MessageServiceImpl implements MessageService {
         }
 
         Map<String, Object> metadata = new HashMap<>();
+        if (request.getClientMessageId() != null && !request.getClientMessageId().isBlank()) {
+            metadata.put("clientMessageId", request.getClientMessageId().trim());
+        }
         if (request.getPriority() != null && !request.getPriority().isBlank()) {
             metadata.put("priority", request.getPriority().toUpperCase());
         }
