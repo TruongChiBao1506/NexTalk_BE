@@ -27,6 +27,7 @@ import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
 import iuh.fit.se.nextalk_be.repository.ChannelRepository;
+import iuh.fit.se.nextalk_be.repository.ChannelTaskRepository;
 import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.GroupInvitationRepository;
 import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
@@ -53,6 +54,7 @@ public class GroupServiceImpl implements GroupService {
     private final GroupInvitationRepository groupInvitationRepository;
     private final ConversationRepository conversationRepository;
     private final ChannelRepository channelRepository;
+    private final ChannelTaskRepository channelTaskRepository;
     private final UserRepository userRepository;
     private final UserService userService;
     private final NotificationService notificationService;
@@ -191,6 +193,7 @@ public class GroupServiceImpl implements GroupService {
 
         groupMemberRepository.deleteAll(groupMemberRepository.findAllByGroupId(groupId));
         groupInvitationRepository.deleteAllByGroupId(groupId);
+        channelTaskRepository.deleteAllByGroupId(groupId);
         
         List<Channel> channels = channelRepository.findAllByGroupId(groupId);
         for (Channel ch : channels) {

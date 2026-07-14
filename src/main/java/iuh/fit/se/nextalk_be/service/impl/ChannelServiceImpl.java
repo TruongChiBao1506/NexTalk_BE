@@ -16,6 +16,7 @@ import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
 import iuh.fit.se.nextalk_be.repository.ChannelRepository;
+import iuh.fit.se.nextalk_be.repository.ChannelTaskRepository;
 import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.repository.GroupRepository;
@@ -37,6 +38,7 @@ import java.util.stream.Collectors;
 public class ChannelServiceImpl implements ChannelService {
 
     private final ChannelRepository channelRepository;
+    private final ChannelTaskRepository channelTaskRepository;
     private final GroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
     private final ConversationRepository conversationRepository;
@@ -204,6 +206,7 @@ public class ChannelServiceImpl implements ChannelService {
         if (channel.getConversation() != null) {
             conversationRepository.delete(channel.getConversation());
         }
+        channelTaskRepository.deleteAllByChannelId(channelId);
         channelRepository.delete(channel);
     }
 
