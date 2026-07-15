@@ -46,5 +46,13 @@ public class ChannelTask extends BaseEntity {
     private Set<User> assignees = new HashSet<>();
 
     @Builder.Default
+    private boolean isPinned = false;
+
+    private LocalDateTime pinnedAt;
+
+    @Builder.Default
     private java.util.List<Subtask> subtasks = new java.util.ArrayList<>();
+
+    @Builder.Default
+    private java.util.List<TaskAttachment> attachments = new java.util.ArrayList<>();
 }

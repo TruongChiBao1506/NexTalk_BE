@@ -49,6 +49,15 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
 
         return channelTaskRepository.findAllByChannelIdOrderByCreatedAtDesc(channel.getId())
                 .stream()
+                .sorted((t1, t2) -> {
+                    if (t1.isPinned() != t2.isPinned()) {
+                        return Boolean.compare(t2.isPinned(), t1.isPinned());
+                    }
+                    if (t1.isPinned() && t1.getPinnedAt() != null && t2.getPinnedAt() != null) {
+                        return t2.getPinnedAt().compareTo(t1.getPinnedAt());
+                    }
+                    return t2.getCreatedAt().compareTo(t1.getCreatedAt());
+                })
                 .map(this::mapToResponse)
                 .toList();
     }
@@ -81,6 +90,19 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                             .build())
                     .collect(Collectors.toList());
             task.setSubtasks(subtasks);
+        }
+        if (request.getAttachments() != null) {
+            List<iuh.fit.se.nextalk_be.entity.TaskAttachment> attachments = request.getAttachments().stream()
+                    .filter(a -> a.getUrl() != null && !a.getUrl().isBlank())
+                    .map(a -> iuh.fit.se.nextalk_be.entity.TaskAttachment.builder()
+                            .id(a.getId() != null && !a.getId().isBlank() ? a.getId() : UUID.randomUUID().toString())
+                            .url(a.getUrl().trim())
+                            .name(a.getName() != null ? a.getName().trim() : "File")
+                            .type(a.getType() != null ? a.getType().trim() : "FILE")
+                            .size(a.getSize())
+                            .build())
+                    .collect(Collectors.toList());
+            task.setAttachments(attachments);
         }
 
         if (task.getStatus() == ChannelTaskStatus.DONE) {
@@ -134,6 +156,19 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 taskActivityService.logActivity(groupId, channelId, task.getId(), currentUser, iuh.fit.se.nextalk_be.entity.TaskActivityType.SUBTASK_COMPLETED, "đã cập nhật công việc phụ trong \"" + task.getTitle() + "\".");
             } catch (Exception ignored) {}
         }
+        if (request.getAttachments() != null) {
+            List<iuh.fit.se.nextalk_be.entity.TaskAttachment> attachments = request.getAttachments().stream()
+                    .filter(a -> a.getUrl() != null && !a.getUrl().isBlank())
+                    .map(a -> iuh.fit.se.nextalk_be.entity.TaskAttachment.builder()
+                            .id(a.getId() != null && !a.getId().isBlank() ? a.getId() : UUID.randomUUID().toString())
+                            .url(a.getUrl().trim())
+                            .name(a.getName() != null ? a.getName().trim() : "File")
+                            .type(a.getType() != null ? a.getType().trim() : "FILE")
+                            .size(a.getSize())
+                            .build())
+                    .collect(Collectors.toList());
+            task.setAttachments(attachments);
+        }
 
         task.setUpdatedAt(LocalDateTime.now());
         return mapToResponse(channelTaskRepository.save(task));
@@ -152,6 +187,30 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
             taskActivityService.logActivity(groupId, channelId, task.getId(), currentUser, iuh.fit.se.nextalk_be.entity.TaskActivityType.STATUS_CHANGED, "đã chuyển trạng thái công việc \"" + task.getTitle() + "\" sang " + status.name() + ".");
         } catch (Exception ignored) {}
         return mapToResponse(channelTaskRepository.save(task));
+    }
+
+    @Override
+    public ChannelTaskResponse togglePinTask(String groupId, String channelId, String taskId) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Channel channel = getAccessibleChannel(groupId, channelId, currentUser);
+        ChannelTask task = getTaskInChannel(taskId, channel);
+
+        ensureCanModifyTask(groupId, task, currentUser);
+
+        boolean nextPinned = !task.isPinned();
+        task.setPinned(nextPinned);
+        task.setPinnedAt(nextPinned ? LocalDateTime.now() : null);
+        task.setUpdatedAt(LocalDateTime.now());
+
+        ChannelTask saved = channelTaskRepository.save(task);
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try {
+                String msg = nextPinned ? "đã ghim công việc \"" + task.getTitle() + "\"." : "đã bỏ ghim công việc \"" + task.getTitle() + "\".";
+                taskActivityService.logActivity(groupId, channelId, taskId, currentUser, iuh.fit.se.nextalk_be.entity.TaskActivityType.ASSIGNEE_UPDATED, msg);
+            } catch (Exception ignored) {}
+        });
+
+        return mapToResponse(saved);
     }
 
     @Override
@@ -329,6 +388,9 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 .dueAt(task.getDueAt() != null ? task.getDueAt().atZone(ZoneId.systemDefault()).toInstant().toString() : null)
                 .completedAt(task.getCompletedAt())
                 .subtasks(mapSubtasks(task.getSubtasks()))
+                .attachments(mapAttachments(task.getAttachments()))
+                .isPinned(task.isPinned())
+                .pinnedAt(task.getPinnedAt())
                 .createdAt(task.getCreatedAt())
                 .updatedAt(task.getUpdatedAt())
                 .build();
@@ -356,6 +418,21 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                         .id(s.getId())
                         .title(s.getTitle())
                         .isCompleted(s.isCompleted())
+                        .build())
+                .collect(Collectors.toList());
+    }
+
+    private List<iuh.fit.se.nextalk_be.dto.response.TaskAttachmentResponse> mapAttachments(List<iuh.fit.se.nextalk_be.entity.TaskAttachment> attachments) {
+        if (attachments == null) {
+            return List.of();
+        }
+        return attachments.stream()
+                .map(a -> iuh.fit.se.nextalk_be.dto.response.TaskAttachmentResponse.builder()
+                        .id(a.getId())
+                        .url(a.getUrl())
+                        .name(a.getName())
+                        .type(a.getType())
+                        .size(a.getSize())
                         .build())
                 .collect(Collectors.toList());
     }

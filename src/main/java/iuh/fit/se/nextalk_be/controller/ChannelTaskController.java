@@ -62,6 +62,16 @@ public class ChannelTaskController {
                 "Task status updated successfully"));
     }
 
+    @PatchMapping("/{taskId}/pin")
+    public ResponseEntity<ApiResponse<ChannelTaskResponse>> togglePinTask(
+            @PathVariable String groupId,
+            @PathVariable String channelId,
+            @PathVariable String taskId) {
+        return ResponseEntity.ok(ApiResponse.success(
+                channelTaskService.togglePinTask(groupId, channelId, taskId),
+                "Task pin status toggled successfully"));
+    }
+
     @DeleteMapping("/{taskId}")
     public ResponseEntity<ApiResponse<Void>> deleteTask(
             @PathVariable String groupId,

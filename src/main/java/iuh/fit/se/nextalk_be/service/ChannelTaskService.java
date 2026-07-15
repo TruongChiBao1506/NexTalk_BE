@@ -12,5 +12,6 @@ public interface ChannelTaskService {
     ChannelTaskResponse createTask(String groupId, String channelId, CreateChannelTaskRequest request);
     ChannelTaskResponse updateTask(String groupId, String channelId, String taskId, UpdateChannelTaskRequest request);
     ChannelTaskResponse updateStatus(String groupId, String channelId, String taskId, ChannelTaskStatus status);
+    ChannelTaskResponse togglePinTask(String groupId, String channelId, String taskId);
     void deleteTask(String groupId, String channelId, String taskId);
 }

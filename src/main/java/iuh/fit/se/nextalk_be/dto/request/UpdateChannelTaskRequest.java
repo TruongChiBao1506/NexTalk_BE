@@ -19,4 +19,5 @@ public class UpdateChannelTaskRequest {
     private String dueAt;
     private Set<String> assigneeIds;
     private java.util.List<SubtaskRequest> subtasks;
+    private java.util.List<TaskAttachmentRequest> attachments;
 }
