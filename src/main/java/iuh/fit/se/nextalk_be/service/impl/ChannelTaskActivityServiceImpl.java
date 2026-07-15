@@ -168,13 +168,16 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
 
     private TaskActivityResponse mapToResponse(ChannelTaskActivity activity, String currentUserId) {
         boolean isRead = activity.getReadByUserIds() != null && activity.getReadByUserIds().contains(currentUserId);
+        String username = activity.getActor() != null && activity.getActor().getUsername() != null && !activity.getActor().getUsername().isBlank()
+                ? activity.getActor().getUsername()
+                : (activity.getType() == TaskActivityType.DUE_APPROACHING || activity.getType() == TaskActivityType.TASK_OVERDUE ? "Cảnh báo Deadline" : "Hệ thống");
         return TaskActivityResponse.builder()
                 .id(activity.getId())
                 .groupId(activity.getGroupId())
                 .channelId(activity.getChannelId())
                 .taskId(activity.getTaskId())
                 .actorId(activity.getActor() != null ? activity.getActor().getId() : null)
-                .actorUsername(activity.getActor() != null ? activity.getActor().getUsername() : "Hệ thống")
+                .actorUsername(username)
                 .actorAvatarUrl(activity.getActor() != null ? activity.getActor().getAvatarUrl() : null)
                 .type(activity.getType())
                 .content(activity.getContent())
