@@ -30,4 +30,6 @@ public class CreateChannelTaskRequest {
     private java.util.List<SubtaskRequest> subtasks;
 
     private java.util.List<TaskAttachmentRequest> attachments;
+
+    private String sourceMessageId;
 }

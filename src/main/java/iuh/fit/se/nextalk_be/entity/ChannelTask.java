@@ -55,4 +55,6 @@ public class ChannelTask extends BaseEntity {
 
     @Builder.Default
     private java.util.List<TaskAttachment> attachments = new java.util.ArrayList<>();
+
+    private TaskSourceMessage sourceMessage;
 }

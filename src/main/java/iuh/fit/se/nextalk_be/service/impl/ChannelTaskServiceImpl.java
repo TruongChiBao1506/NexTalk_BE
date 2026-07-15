@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.dto.request.CreateChannelTaskRequest;
 import iuh.fit.se.nextalk_be.dto.request.UpdateChannelTaskRequest;
 import iuh.fit.se.nextalk_be.dto.response.ChannelTaskAssigneeResponse;
 import iuh.fit.se.nextalk_be.dto.response.ChannelTaskResponse;
+import iuh.fit.se.nextalk_be.dto.response.TaskSourceMessageResponse;
 import iuh.fit.se.nextalk_be.entity.*;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
@@ -12,11 +13,13 @@ import iuh.fit.se.nextalk_be.repository.ChannelRepository;
 import iuh.fit.se.nextalk_be.repository.ChannelTaskRepository;
 import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.repository.GroupRepository;
+import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.service.ChannelTaskService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.jsoup.Jsoup;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -39,6 +42,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
     private final GroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
     private final UserRepository userRepository;
+    private final MessageRepository messageRepository;
     private final UserService userService;
     private final iuh.fit.se.nextalk_be.service.ChannelTaskActivityService taskActivityService;
 
@@ -79,6 +83,10 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 .dueAt(parseOptionalDateTime(request.getDueAt(), "Invalid due date"))
                 .assignees(resolveAssignees(groupId, channel, request.getAssigneeIds()))
                 .build();
+
+        if (request.getSourceMessageId() != null && !request.getSourceMessageId().isBlank()) {
+            task.setSourceMessage(resolveSourceMessage(channel, currentUser, request.getSourceMessageId()));
+        }
 
         if (request.getSubtasks() != null) {
             List<Subtask> subtasks = request.getSubtasks().stream()
@@ -389,10 +397,67 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 .completedAt(task.getCompletedAt())
                 .subtasks(mapSubtasks(task.getSubtasks()))
                 .attachments(mapAttachments(task.getAttachments()))
+                .sourceMessage(mapSourceMessage(task.getSourceMessage()))
                 .isPinned(task.isPinned())
                 .pinnedAt(task.getPinnedAt())
                 .createdAt(task.getCreatedAt())
                 .updatedAt(task.getUpdatedAt())
+                .build();
+    }
+
+    private TaskSourceMessage resolveSourceMessage(Channel channel, User currentUser, String sourceMessageId) {
+        Message message = messageRepository.findById(sourceMessageId.trim())
+                .orElseThrow(() -> new ResourceNotFoundException("Source message not found"));
+
+        String channelConversationId = channel.getConversation() != null ? channel.getConversation().getId() : null;
+        String messageConversationId = message.getConversationId();
+        if (messageConversationId == null && message.getConversation() != null) {
+            messageConversationId = message.getConversation().getId();
+        }
+        if (channelConversationId == null || !channelConversationId.equals(messageConversationId)) {
+            throw new BadRequestException("Source message does not belong to this channel");
+        }
+        if (message.isRecalled()
+                || (message.getDeletedByUsers() != null && message.getDeletedByUsers().contains(currentUser.getId()))) {
+            throw new BadRequestException("Source message is no longer available");
+        }
+
+        String preview = Jsoup.parse(message.getContent() != null ? message.getContent() : "").text().trim();
+        if (preview.isBlank() && message.getAttachments() != null && !message.getAttachments().isEmpty()) {
+            MessageAttachment attachment = message.getAttachments().get(0);
+            preview = attachment.getName() != null && !attachment.getName().isBlank()
+                    ? attachment.getName().trim()
+                    : "Attachment";
+        }
+        if (preview.length() > 500) {
+            preview = preview.substring(0, 500);
+        }
+
+        return TaskSourceMessage.builder()
+                .messageId(message.getId())
+                .conversationId(messageConversationId)
+                .channelId(channel.getId())
+                .senderId(message.getSenderId() != null ? message.getSenderId()
+                        : message.getSender() != null ? message.getSender().getId() : null)
+                .senderUsername(message.getSenderUsername() != null ? message.getSenderUsername()
+                        : message.getSender() != null ? message.getSender().getUsername() : null)
+                .preview(preview)
+                .createdAt(message.getCreatedAt())
+                .build();
+    }
+
+    private TaskSourceMessageResponse mapSourceMessage(TaskSourceMessage source) {
+        if (source == null) {
+            return null;
+        }
+        return TaskSourceMessageResponse.builder()
+                .messageId(source.getMessageId())
+                .conversationId(source.getConversationId())
+                .channelId(source.getChannelId())
+                .senderId(source.getSenderId())
+                .senderUsername(source.getSenderUsername())
+                .preview(source.getPreview())
+                .createdAt(source.getCreatedAt())
                 .build();
     }
 

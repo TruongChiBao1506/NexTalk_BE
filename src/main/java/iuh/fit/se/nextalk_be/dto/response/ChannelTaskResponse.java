@@ -27,6 +27,7 @@ public class ChannelTaskResponse {
     private LocalDateTime completedAt;
     private List<SubtaskResponse> subtasks;
     private List<TaskAttachmentResponse> attachments;
+    private TaskSourceMessageResponse sourceMessage;
     @com.fasterxml.jackson.annotation.JsonProperty("isPinned")
     private boolean isPinned;
     private LocalDateTime pinnedAt;
