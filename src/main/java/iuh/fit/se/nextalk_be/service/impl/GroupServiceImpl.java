@@ -585,8 +585,7 @@ public class GroupServiceImpl implements GroupService {
             case MEMBER -> "Thành viên";
         };
     }
-
-    private GroupResponse mapToGroupResponse(Group group, List<GroupMember> members) {
+    private GroupResponse mapToGroupResponse(Group group, List<GroupMember> members) {
         List<GroupMemberResponse> memberResponses = members.stream()
                 .map(m -> GroupMemberResponse.builder()
                         .userId(m.getUser().getId())
@@ -602,6 +601,7 @@ public class GroupServiceImpl implements GroupService {
                         .name(ch.getName())
                         .type(ch.getType())
                         .isPrivate(ch.isPrivate())
+                        .isTaskEnabled(ch.isTaskEnabled())
                         .groupId(ch.getGroup() != null ? ch.getGroup().getId() : null)
                         .conversationId(ch.getConversation() != null ? ch.getConversation().getId() : null)
                         .createdAt(ch.getCreatedAt())

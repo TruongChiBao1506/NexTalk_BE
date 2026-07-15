@@ -15,7 +15,10 @@ public class CreateChannelRequest {
     @NotBlank(message = "Channel name cannot be blank")
     private String name;
     private ChannelType type = ChannelType.TEXT;
+    @com.fasterxml.jackson.annotation.JsonProperty("isPrivate")
     private boolean isPrivate = false;
-    private boolean isTaskEnabled = true;
+
+    @com.fasterxml.jackson.annotation.JsonProperty("isTaskEnabled")
+    private boolean isTaskEnabled = false;
     private Set<String> memberIds = new HashSet<>();
 }

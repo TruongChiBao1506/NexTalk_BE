@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.service.ChannelService;
 import iuh.fit.se.nextalk_be.dto.request.CreateChannelRequest;
 import iuh.fit.se.nextalk_be.dto.request.UpdateChannelRequest;
 import iuh.fit.se.nextalk_be.dto.response.ChannelResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
 import iuh.fit.se.nextalk_be.entity.Channel;
 import iuh.fit.se.nextalk_be.entity.ChannelType;
 import iuh.fit.se.nextalk_be.entity.Conversation;
@@ -11,6 +12,8 @@ import iuh.fit.se.nextalk_be.entity.ConversationType;
 import iuh.fit.se.nextalk_be.entity.Group;
 import iuh.fit.se.nextalk_be.entity.GroupMember;
 import iuh.fit.se.nextalk_be.entity.GroupRole;
+import iuh.fit.se.nextalk_be.entity.Message;
+import iuh.fit.se.nextalk_be.entity.MessageType;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
@@ -20,18 +23,18 @@ import iuh.fit.se.nextalk_be.repository.ChannelTaskRepository;
 import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.repository.GroupRepository;
+import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.service.UserService;
-
-
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
 
 @Service
 @RequiredArgsConstructor
@@ -44,6 +47,8 @@ public class ChannelServiceImpl implements ChannelService {
     private final ConversationRepository conversationRepository;
     private final UserService userService;
     private final UserRepository userRepository;
+    private final MessageRepository messageRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
     public ChannelResponse createChannel(String groupId, CreateChannelRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
@@ -128,8 +133,14 @@ public class ChannelServiceImpl implements ChannelService {
         if (request.getType() != null) {
             channel.setType(request.getType());
         }
-        if (request.getIsTaskEnabled() != null) {
-            channel.setTaskEnabled(request.getIsTaskEnabled());
+        if (request.getIsTaskEnabled() != null && request.getIsTaskEnabled() != channel.isTaskEnabled()) {
+            boolean isEnabled = request.getIsTaskEnabled();
+            channel.setTaskEnabled(isEnabled);
+            if (channel.getConversation() != null) {
+                String actionStr = isEnabled ? "bật" : "tắt";
+                String messageContent = "đã " + actionStr + " tính năng Quản lý công việc.";
+                createAndBroadcastSystemMessage(channel.getConversation(), currentUser, messageContent);
+            }
         }
         if (request.getIsPrivate() != null) {
             channel.setPrivate(request.getIsPrivate());
@@ -262,5 +273,36 @@ public class ChannelServiceImpl implements ChannelService {
                 .createdAt(channel.getCreatedAt())
                 .updatedAt(channel.getUpdatedAt())
                 .build();
+    }
+
+    private void createAndBroadcastSystemMessage(Conversation conversation, User actor, String content) {
+        Message systemMessage = Message.builder()
+                .conversation(conversation)
+                .sender(actor)
+                .content(content)
+                .messageType(MessageType.SYSTEM)
+                .build();
+
+        Message savedSystemMessage = messageRepository.save(systemMessage);
+        MessageResponse response = MessageResponse.builder()
+                .id(savedSystemMessage.getId())
+                .conversationId(conversation.getId())
+                .senderId(actor.getId())
+                .senderUsername(actor.getUsername())
+                .content(savedSystemMessage.getContent())
+                .messageType(savedSystemMessage.getMessageType().name())
+                .attachments(List.of())
+                .createdAt(savedSystemMessage.getCreatedAt())
+                .statuses(List.of())
+                .reactions(List.of())
+                .build();
+
+        for (User member : conversation.getMembers()) {
+            messagingTemplate.convertAndSendToUser(
+                    member.getUsername(),
+                    "/queue/private",
+                    response
+            );
+        }
     }
 }

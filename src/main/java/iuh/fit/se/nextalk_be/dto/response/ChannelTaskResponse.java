@@ -25,6 +25,7 @@ public class ChannelTaskResponse {
     private List<ChannelTaskAssigneeResponse> assignees;
     private String dueAt;
     private LocalDateTime completedAt;
+    private List<SubtaskResponse> subtasks;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

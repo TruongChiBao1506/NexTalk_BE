@@ -18,4 +18,5 @@ public class UpdateChannelTaskRequest {
     private ChannelTaskPriority priority;
     private String dueAt;
     private Set<String> assigneeIds;
+    private java.util.List<SubtaskRequest> subtasks;
 }

@@ -26,4 +26,6 @@ public class CreateChannelTaskRequest {
     private String dueAt;
 
     private Set<String> assigneeIds;
+
+    private java.util.List<SubtaskRequest> subtasks;
 }

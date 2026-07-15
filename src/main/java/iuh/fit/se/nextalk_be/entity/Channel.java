@@ -27,7 +27,7 @@ public class Channel extends BaseEntity {
     private boolean isPrivate = false;
 
     @Builder.Default
-    private boolean isTaskEnabled = true;
+    private boolean isTaskEnabled = false;
 
     @DocumentReference(lazy = true)
     private Group group;

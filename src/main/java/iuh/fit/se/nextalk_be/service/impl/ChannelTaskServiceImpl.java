@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -69,6 +70,18 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 .assignees(resolveAssignees(groupId, channel, request.getAssigneeIds()))
                 .build();
 
+        if (request.getSubtasks() != null) {
+            List<Subtask> subtasks = request.getSubtasks().stream()
+                    .filter(s -> s.getTitle() != null && !s.getTitle().isBlank())
+                    .map(s -> Subtask.builder()
+                            .id(s.getId() != null && !s.getId().isBlank() ? s.getId() : UUID.randomUUID().toString())
+                            .title(s.getTitle().trim())
+                            .isCompleted(Boolean.TRUE.equals(s.getIsCompleted()))
+                            .build())
+                    .collect(Collectors.toList());
+            task.setSubtasks(subtasks);
+        }
+
         if (task.getStatus() == ChannelTaskStatus.DONE) {
             task.setCompletedAt(LocalDateTime.now());
         }
@@ -100,6 +113,17 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         }
         if (request.getStatus() != null) {
             applyStatus(task, request.getStatus());
+        }
+        if (request.getSubtasks() != null) {
+            List<Subtask> subtasks = request.getSubtasks().stream()
+                    .filter(s -> s.getTitle() != null && !s.getTitle().isBlank())
+                    .map(s -> Subtask.builder()
+                            .id(s.getId() != null && !s.getId().isBlank() ? s.getId() : UUID.randomUUID().toString())
+                            .title(s.getTitle().trim())
+                            .isCompleted(Boolean.TRUE.equals(s.getIsCompleted()))
+                            .build())
+                    .collect(Collectors.toList());
+            task.setSubtasks(subtasks);
         }
 
         task.setUpdatedAt(LocalDateTime.now());
@@ -292,6 +316,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 .assignees(mapAssignees(task.getAssignees()))
                 .dueAt(task.getDueAt() != null ? task.getDueAt().atZone(ZoneId.systemDefault()).toInstant().toString() : null)
                 .completedAt(task.getCompletedAt())
+                .subtasks(mapSubtasks(task.getSubtasks()))
                 .createdAt(task.getCreatedAt())
                 .updatedAt(task.getUpdatedAt())
                 .build();
@@ -308,5 +333,18 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                         .avatarUrl(user.getAvatarUrl())
                         .build())
                 .toList();
+    }
+
+    private List<iuh.fit.se.nextalk_be.dto.response.SubtaskResponse> mapSubtasks(List<Subtask> subtasks) {
+        if (subtasks == null) {
+            return List.of();
+        }
+        return subtasks.stream()
+                .map(s -> iuh.fit.se.nextalk_be.dto.response.SubtaskResponse.builder()
+                        .id(s.getId())
+                        .title(s.getTitle())
+                        .isCompleted(s.isCompleted())
+                        .build())
+                .collect(Collectors.toList());
     }
 }

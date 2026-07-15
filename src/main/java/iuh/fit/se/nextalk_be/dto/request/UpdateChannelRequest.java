@@ -11,7 +11,10 @@ import java.util.Set;
 public class UpdateChannelRequest {
     private String name;
     private ChannelType type;
+    @com.fasterxml.jackson.annotation.JsonProperty("isPrivate")
     private Boolean isPrivate;
+
+    @com.fasterxml.jackson.annotation.JsonProperty("isTaskEnabled")
     private Boolean isTaskEnabled;
     private Set<String> memberIds;
 }

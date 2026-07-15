@@ -44,4 +44,7 @@ public class ChannelTask extends BaseEntity {
     @Builder.Default
     @DocumentReference(lazy = true)
     private Set<User> assignees = new HashSet<>();
+
+    @Builder.Default
+    private java.util.List<Subtask> subtasks = new java.util.ArrayList<>();
 }
