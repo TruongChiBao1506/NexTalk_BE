@@ -184,6 +184,7 @@ public class MessageServiceImpl implements MessageService {
             throw new BadRequestException("You are not a member of this conversation");
         }
 
+        ensureChannelPostingAllowed(conversation, currentUser);
         ensurePrivateMessageAllowed(conversation, currentUser);
         if (conversation.getDeletedByUsers() != null && !conversation.getDeletedByUsers().isEmpty()) {
             conversation.getDeletedByUsers().clear();
