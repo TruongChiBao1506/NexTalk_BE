@@ -21,6 +21,8 @@ public class ChannelResponse {
     
     @JsonProperty("isTaskEnabled")
     private boolean isTaskEnabled;
+    @JsonProperty("isPostingRestricted")
+    private boolean isPostingRestricted;
     private String groupId;
     private String conversationId;
     private LocalDateTime createdAt;

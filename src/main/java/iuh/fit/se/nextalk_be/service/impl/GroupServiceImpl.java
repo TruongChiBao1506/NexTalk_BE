@@ -602,6 +602,7 @@ public class GroupServiceImpl implements GroupService {
                         .type(ch.getType())
                         .isPrivate(ch.isPrivate())
                         .isTaskEnabled(ch.isTaskEnabled())
+                        .isPostingRestricted(ch.isPostingRestricted())
                         .groupId(ch.getGroup() != null ? ch.getGroup().getId() : null)
                         .conversationId(ch.getConversation() != null ? ch.getConversation().getId() : null)
                         .createdAt(ch.getCreatedAt())

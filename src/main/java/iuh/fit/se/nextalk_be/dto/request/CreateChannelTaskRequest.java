@@ -23,6 +23,8 @@ public class CreateChannelTaskRequest {
 
     private ChannelTaskPriority priority;
 
+    private String startAt;
+
     private String dueAt;
 
     private Set<String> assigneeIds;

@@ -28,6 +28,8 @@ public class ChannelTask extends BaseEntity {
     @Builder.Default
     private ChannelTaskPriority priority = ChannelTaskPriority.MEDIUM;
 
+    private LocalDateTime startAt;
+
     private LocalDateTime dueAt;
 
     private LocalDateTime completedAt;

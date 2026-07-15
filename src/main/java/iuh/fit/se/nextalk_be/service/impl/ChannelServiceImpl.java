@@ -99,6 +99,7 @@ public class ChannelServiceImpl implements ChannelService {
                 .type(request.getType() != null ? request.getType() : ChannelType.TEXT)
                 .isPrivate(request.isPrivate())
                 .isTaskEnabled(request.isTaskEnabled())
+                .isPostingRestricted(request.isPostingRestricted())
                 .group(group)
                 .conversation(savedConversation)
                 .build();
@@ -139,6 +140,16 @@ public class ChannelServiceImpl implements ChannelService {
             if (channel.getConversation() != null) {
                 String actionStr = isEnabled ? "bật" : "tắt";
                 String messageContent = "đã " + actionStr + " tính năng Quản lý công việc.";
+                createAndBroadcastSystemMessage(channel.getConversation(), currentUser, messageContent);
+            }
+        }
+        if (request.getIsPostingRestricted() != null && request.getIsPostingRestricted() != channel.isPostingRestricted()) {
+            boolean isRestricted = request.getIsPostingRestricted();
+            channel.setPostingRestricted(isRestricted);
+            if (channel.getConversation() != null) {
+                String messageContent = isRestricted
+                        ? "đã bật chế độ chỉ Trưởng nhóm và Phó nhóm được nhắn."
+                        : "đã tắt chế độ giới hạn người nhắn.";
                 createAndBroadcastSystemMessage(channel.getConversation(), currentUser, messageContent);
             }
         }
@@ -268,6 +279,7 @@ public class ChannelServiceImpl implements ChannelService {
                 .type(channel.getType())
                 .isPrivate(channel.isPrivate())
                 .isTaskEnabled(channel.isTaskEnabled())
+                .isPostingRestricted(channel.isPostingRestricted())
                 .groupId(channel.getGroup() != null ? channel.getGroup().getId() : null)
                 .conversationId(channel.getConversation() != null ? channel.getConversation().getId() : null)
                 .createdAt(channel.getCreatedAt())

@@ -23,6 +23,7 @@ public class ChannelTaskResponse {
     private String createdById;
     private String createdByUsername;
     private List<ChannelTaskAssigneeResponse> assignees;
+    private String startAt;
     private String dueAt;
     private LocalDateTime completedAt;
     private List<SubtaskResponse> subtasks;

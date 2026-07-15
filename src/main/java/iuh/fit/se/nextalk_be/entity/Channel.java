@@ -29,6 +29,9 @@ public class Channel extends BaseEntity {
     @Builder.Default
     private boolean isTaskEnabled = false;
 
+    @Builder.Default
+    private boolean isPostingRestricted = false;
+
     @DocumentReference(lazy = true)
     private Group group;
 

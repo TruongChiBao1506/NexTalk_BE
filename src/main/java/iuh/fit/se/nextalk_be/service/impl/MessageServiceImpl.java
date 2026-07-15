@@ -140,6 +140,7 @@ public class MessageServiceImpl implements MessageService {
             throw new BadRequestException("You are not a member of this conversation");
         }
 
+        ensureChannelPostingAllowed(conversation, currentUser);
         ensurePrivateMessageAllowed(conversation, currentUser);
 
         TypingIndicatorEvent event = TypingIndicatorEvent.builder()
@@ -1126,6 +1127,16 @@ public class MessageServiceImpl implements MessageService {
         return getGroupRole(conversation, currentUser)
                 .map(role -> isLeaderRole(role) || role == GroupRole.DEPUTY)
                 .orElse(false);
+    }
+
+    private void ensureChannelPostingAllowed(Conversation conversation, User currentUser) {
+        Channel channel = channelRepository.findByConversationId(conversation.getId()).orElse(null);
+        if (channel == null || !channel.isPostingRestricted()) return;
+
+        GroupRole role = getGroupRole(conversation, currentUser).orElse(null);
+        if (role == null || (!isLeaderRole(role) && role != GroupRole.DEPUTY)) {
+            throw new BadRequestException("Only group leaders and deputies can send messages in this channel");
+        }
     }
 
     private boolean canModerateMessage(Conversation conversation, User actor, User messageSender) {

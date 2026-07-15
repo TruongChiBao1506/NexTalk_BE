@@ -16,6 +16,7 @@ public class UpdateChannelTaskRequest {
     private String description;
     private ChannelTaskStatus status;
     private ChannelTaskPriority priority;
+    private String startAt;
     private String dueAt;
     private Set<String> assigneeIds;
     private java.util.List<SubtaskRequest> subtasks;

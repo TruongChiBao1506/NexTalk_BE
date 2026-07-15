@@ -16,5 +16,7 @@ public class UpdateChannelRequest {
 
     @com.fasterxml.jackson.annotation.JsonProperty("isTaskEnabled")
     private Boolean isTaskEnabled;
+    @com.fasterxml.jackson.annotation.JsonProperty("isPostingRestricted")
+    private Boolean isPostingRestricted;
     private Set<String> memberIds;
 }

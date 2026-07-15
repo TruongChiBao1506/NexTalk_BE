@@ -80,6 +80,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 .description(trimToNull(request.getDescription()))
                 .status(request.getStatus() != null ? request.getStatus() : ChannelTaskStatus.TODO)
                 .priority(request.getPriority() != null ? request.getPriority() : ChannelTaskPriority.MEDIUM)
+                .startAt(parseOptionalDateTime(request.getStartAt(), "Invalid start date"))
                 .dueAt(parseOptionalDateTime(request.getDueAt(), "Invalid due date"))
                 .assignees(resolveAssignees(groupId, channel, request.getAssigneeIds()))
                 .build();
@@ -117,6 +118,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
             task.setCompletedAt(LocalDateTime.now());
         }
 
+        validateSchedule(task);
         ChannelTask savedTask = channelTaskRepository.save(task);
         try {
             taskActivityService.logActivity(groupId, channelId, savedTask.getId(), currentUser, iuh.fit.se.nextalk_be.entity.TaskActivityType.TASK_CREATED, "đã tạo công việc \"" + savedTask.getTitle() + "\".");
@@ -140,6 +142,9 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         }
         if (request.getPriority() != null) {
             task.setPriority(request.getPriority());
+        }
+        if (request.getStartAt() != null) {
+            task.setStartAt(parseOptionalDateTime(request.getStartAt(), "Invalid start date"));
         }
         if (request.getDueAt() != null) {
             task.setDueAt(parseOptionalDateTime(request.getDueAt(), "Invalid due date"));
@@ -178,6 +183,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
             task.setAttachments(attachments);
         }
 
+        validateSchedule(task);
         task.setUpdatedAt(LocalDateTime.now());
         return mapToResponse(channelTaskRepository.save(task));
     }
@@ -381,6 +387,12 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         }
     }
 
+    private void validateSchedule(ChannelTask task) {
+        if (task.getStartAt() != null && task.getDueAt() != null && task.getDueAt().isBefore(task.getStartAt())) {
+            throw new BadRequestException("Due date must not be before start date");
+        }
+    }
+
     private ChannelTaskResponse mapToResponse(ChannelTask task) {
         return ChannelTaskResponse.builder()
                 .id(task.getId())
@@ -393,6 +405,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 .createdById(task.getCreatedBy() != null ? task.getCreatedBy().getId() : null)
                 .createdByUsername(task.getCreatedBy() != null ? task.getCreatedBy().getUsername() : null)
                 .assignees(mapAssignees(task.getAssignees()))
+                .startAt(task.getStartAt() != null ? task.getStartAt().atZone(ZoneId.systemDefault()).toInstant().toString() : null)
                 .dueAt(task.getDueAt() != null ? task.getDueAt().atZone(ZoneId.systemDefault()).toInstant().toString() : null)
                 .completedAt(task.getCompletedAt())
                 .subtasks(mapSubtasks(task.getSubtasks()))
