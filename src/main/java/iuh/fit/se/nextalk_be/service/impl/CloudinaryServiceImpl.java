@@ -52,7 +52,12 @@ public class CloudinaryServiceImpl implements CloudinaryService {
                 "overwrite", true
         );
         String signature = cloudinary.apiSignRequest(signedParams, cloudinary.config.apiSecret);
-        String uploadUrl = cloudinary.config.uploadPrefix + "/v1_1/" + cloudinary.config.cloudName
+        String uploadPrefix = cloudinary.config.uploadPrefix;
+        if (uploadPrefix == null || uploadPrefix.isBlank() || "null".equalsIgnoreCase(uploadPrefix)) {
+            uploadPrefix = "https://api.cloudinary.com";
+        }
+        uploadPrefix = uploadPrefix.replaceAll("/+$", "");
+        String uploadUrl = uploadPrefix + "/v1_1/" + cloudinary.config.cloudName
                 + "/" + resourceType + "/upload";
 
         return DirectUploadPrepareResponse.builder()
