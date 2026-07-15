@@ -40,6 +40,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
     private final GroupMemberRepository groupMemberRepository;
     private final UserRepository userRepository;
     private final UserService userService;
+    private final iuh.fit.se.nextalk_be.service.ChannelTaskActivityService taskActivityService;
 
     @Override
     public List<ChannelTaskResponse> getTasks(String groupId, String channelId) {
@@ -86,7 +87,12 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
             task.setCompletedAt(LocalDateTime.now());
         }
 
-        return mapToResponse(channelTaskRepository.save(task));
+        ChannelTask savedTask = channelTaskRepository.save(task);
+        try {
+            taskActivityService.logActivity(groupId, channelId, savedTask.getId(), currentUser, iuh.fit.se.nextalk_be.entity.TaskActivityType.TASK_CREATED, "đã tạo công việc \"" + savedTask.getTitle() + "\".");
+        } catch (Exception ignored) {}
+
+        return mapToResponse(savedTask);
     }
 
     @Override
@@ -124,6 +130,9 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                             .build())
                     .collect(Collectors.toList());
             task.setSubtasks(subtasks);
+            try {
+                taskActivityService.logActivity(groupId, channelId, task.getId(), currentUser, iuh.fit.se.nextalk_be.entity.TaskActivityType.SUBTASK_COMPLETED, "đã cập nhật công việc phụ trong \"" + task.getTitle() + "\".");
+            } catch (Exception ignored) {}
         }
 
         task.setUpdatedAt(LocalDateTime.now());
@@ -139,6 +148,9 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
 
         applyStatus(task, status);
         task.setUpdatedAt(LocalDateTime.now());
+        try {
+            taskActivityService.logActivity(groupId, channelId, task.getId(), currentUser, iuh.fit.se.nextalk_be.entity.TaskActivityType.STATUS_CHANGED, "đã chuyển trạng thái công việc \"" + task.getTitle() + "\" sang " + status.name() + ".");
+        } catch (Exception ignored) {}
         return mapToResponse(channelTaskRepository.save(task));
     }
 
