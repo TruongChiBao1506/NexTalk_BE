@@ -166,6 +166,23 @@ public class CallController {
         User user = findUserByPrincipal(principal);
         if (user == null) return;
 
+        // A user can move directly between voice channels. Notify listeners of
+        // the old channel as well, otherwise clients keep rendering a ghost
+        // member until they reload their presence snapshot.
+        String[] previousChannelInfo = voiceChannelService.leaveCurrentChannel(user.getId());
+        if (previousChannelInfo != null && !previousChannelInfo[0].equals(event.getChannelId())) {
+            String previousChannelId = previousChannelInfo[0];
+            String previousGroupId = previousChannelInfo[1];
+            VoiceChannelEvent leaveEvent = VoiceChannelEvent.builder()
+                    .type("LEAVE")
+                    .channelId(previousChannelId)
+                    .groupId(previousGroupId)
+                    .userId(user.getId())
+                    .currentMembers(voiceChannelService.getChannelMembers(previousChannelId))
+                    .build();
+            messagingTemplate.convertAndSend("/topic/group." + previousGroupId + ".voice", leaveEvent);
+        }
+
         voiceChannelService.joinChannel(event.getChannelId(), user.getId(), event.getGroupId());
         
         event.setType("JOIN");
