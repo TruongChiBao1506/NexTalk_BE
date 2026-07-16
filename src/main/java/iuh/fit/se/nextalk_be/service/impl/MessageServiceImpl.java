@@ -46,6 +46,7 @@ import iuh.fit.se.nextalk_be.service.LinkPreviewService;
 import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.PresenceService;
 import iuh.fit.se.nextalk_be.service.UserService;
+import iuh.fit.se.nextalk_be.service.VoiceChannelService;
 
 
 import lombok.RequiredArgsConstructor;
@@ -74,6 +75,7 @@ public class MessageServiceImpl implements MessageService {
     private static final Pattern PLAIN_MENTION_PATTERN = Pattern.compile("(^|\\s)@([\\p{L}\\p{N}_\\.\\-]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern BOT_MENTION_PATTERN = Pattern.compile("(^|\\s)@(bot|nextalk\\s+ai|meta\\s+ai)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]*>");
+    private static final Pattern VOICE_INVITE_PATTERN = Pattern.compile("nextalk://voice/([^?\\s]+)\\?groupId=([^&\\s]+)");
 
     private final MessageRepository messageRepository;
     private final ConversationRepository conversationRepository;
@@ -93,6 +95,7 @@ public class MessageServiceImpl implements MessageService {
     private final RateLimitService rateLimitService;
     private final LinkPreviewService linkPreviewService;
     private final AiBotService aiBotService;
+    private final VoiceChannelService voiceChannelService;
 
     @Value("${app.rate-limit.ai-bot.limit:10}")
     private int aiBotRateLimit;
@@ -206,6 +209,8 @@ public class MessageServiceImpl implements MessageService {
         if (content.isEmpty() && attachments.isEmpty()) {
             throw new BadRequestException("Message content or attachments are required");
         }
+
+        validateVoiceInviteScope(content, conversation, currentUser);
 
         MessageType type = attachments.size() > 1 ? MessageType.ALBUM : MessageType.TEXT;
         if (request.getMessageType() != null) {
@@ -502,6 +507,44 @@ public class MessageServiceImpl implements MessageService {
     }
 
     private record MentionTargets(boolean mentionAll, Set<String> userIds) {}
+
+    private void validateVoiceInviteScope(String content, Conversation targetConversation, User currentUser) {
+        Matcher matcher = VOICE_INVITE_PATTERN.matcher(content);
+        if (!matcher.find()) return;
+
+        String voiceChannelId = matcher.group(1);
+        String claimedGroupId = matcher.group(2);
+        Channel voiceChannel = channelRepository.findById(voiceChannelId)
+                .orElseThrow(() -> new BadRequestException("Voice channel invitation is invalid"));
+        if (voiceChannel.getType() != iuh.fit.se.nextalk_be.entity.ChannelType.VOICE || voiceChannel.getGroup() == null) {
+            throw new BadRequestException("Voice channel invitation is invalid");
+        }
+
+        String sourceGroupId = voiceChannel.getGroup().getId();
+        if (!sourceGroupId.equals(claimedGroupId)
+                || !groupMemberRepository.existsByGroupIdAndUserId(sourceGroupId, currentUser.getId())
+                || !voiceChannelService.getChannelMembers(voiceChannelId).contains(currentUser.getId())) {
+            throw new BadRequestException("You must be in this voice channel to send an invitation");
+        }
+
+        Optional<Channel> targetChannel = channelRepository.findByConversationId(targetConversation.getId());
+        if (targetChannel.isPresent()) {
+            Channel channel = targetChannel.get();
+            if (channel.getGroup() == null || !sourceGroupId.equals(channel.getGroup().getId())) {
+                throw new BadRequestException("Voice invitations cannot be sent to another group");
+            }
+            if (channel.getType() == iuh.fit.se.nextalk_be.entity.ChannelType.VOICE) {
+                throw new BadRequestException("Voice invitations cannot be sent to a voice channel");
+            }
+            return;
+        }
+
+        if (targetConversation.getType() != ConversationType.PRIVATE
+                || targetConversation.getMembers().stream().anyMatch(member ->
+                    !groupMemberRepository.existsByGroupIdAndUserId(sourceGroupId, member.getId()))) {
+            throw new BadRequestException("Voice invitations can only be sent to members of the same group");
+        }
+    }
 
     private void ensurePrivateMessageAllowed(Conversation conversation, User currentUser) {
         if (conversation.getType() != ConversationType.PRIVATE) {
