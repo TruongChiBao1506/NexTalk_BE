@@ -149,6 +149,17 @@ public class CallController {
         return ResponseEntity.ok(ApiResponse.success(response, "Agora channel token generated successfully"));
     }
 
+    @GetMapping("/channel-members")
+    public ResponseEntity<ApiResponse<List<String>>> getVoiceChannelMembers(
+            @RequestParam("channelId") String channelId
+    ) {
+        userService.getCurrentAuthenticatedUser();
+        return ResponseEntity.ok(ApiResponse.success(
+                voiceChannelService.getChannelMembers(channelId),
+                "Voice channel members retrieved successfully"
+        ));
+    }
+
     @MessageMapping("/voice.join")
     public void joinVoiceChannel(@Payload VoiceChannelEvent event, Principal principal) {
         if (principal == null) return;
