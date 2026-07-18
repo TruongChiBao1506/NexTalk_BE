@@ -188,7 +188,9 @@ public class FCMServiceImpl implements FCMService {
     }
 
     @Override
-    public void sendCallPushNotificationToTokens(List<String> tokens, String callerName, String channelId, String callId, String callerId) {
+    public void sendCallPushNotificationToTokens(List<String> tokens, String callerName, String conversationId,
+                                                 String callId, String callerId, String receiverId, String callType,
+                                                 String groupName) {
         if (tokens == null || tokens.isEmpty()) {
             return;
         }
@@ -208,9 +210,12 @@ public class FCMServiceImpl implements FCMService {
                         .setToken(token)
                         .putData("type", "CALL")
                         .putData("callerName", callerName != null ? callerName : "Ai đó")
-                        .putData("channelId", channelId != null ? channelId : "")
+                        .putData("conversationId", conversationId != null ? conversationId : "")
                         .putData("callId", callId != null ? callId : "")
                         .putData("callerId", callerId != null ? callerId : "")
+                        .putData("receiverId", receiverId != null ? receiverId : "")
+                        .putData("callType", callType != null ? callType : "VOICE")
+                        .putData("groupName", groupName != null ? groupName : "")
                         .setAndroidConfig(com.google.firebase.messaging.AndroidConfig.builder()
                                 .setPriority(com.google.firebase.messaging.AndroidConfig.Priority.HIGH)
                                 .build())

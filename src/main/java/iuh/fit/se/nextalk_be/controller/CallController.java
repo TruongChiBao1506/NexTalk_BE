@@ -553,7 +553,16 @@ public class CallController {
             if ("CANCEL".equalsIgnoreCase(signal.getSignalType())) {
                 fcmService.sendCallCancelPushNotificationToTokens(offlineMemberTokens, signal.getCallId());
             } else {
-                fcmService.sendCallPushNotificationToTokens(offlineMemberTokens, signal.getCallerName(), signal.getConversationId(), signal.getCallId(), signal.getCallerId());
+                fcmService.sendCallPushNotificationToTokens(
+                        offlineMemberTokens,
+                        signal.getCallerName(),
+                        signal.getConversationId(),
+                        signal.getCallId(),
+                        signal.getCallerId(),
+                        signal.getReceiverId(),
+                        signal.getType(),
+                        signal.getGroupName()
+                );
             }
         }
     }
