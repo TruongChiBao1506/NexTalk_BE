@@ -38,35 +38,47 @@ public class PresenceServiceImpl implements PresenceService {
     private static final String LAST_SEEN_KEY_PREFIX = "nextalk:presence:last_seen:";
 
     public void addSession(String userId, String sessionId) {
-        String sessionsKey = SESSIONS_KEY_PREFIX + userId;
-        redisTemplate.opsForHash().put(sessionsKey, sessionId, String.valueOf(System.currentTimeMillis()));
-        redisTemplate.expire(sessionsKey, presenceTtl);
+        try {
+            String sessionsKey = SESSIONS_KEY_PREFIX + userId;
+            redisTemplate.opsForHash().put(sessionsKey, sessionId, String.valueOf(System.currentTimeMillis()));
+            redisTemplate.expire(sessionsKey, presenceTtl);
 
-        String currentStatus = getUserStatus(userId);
-        if (!"ONLINE".equalsIgnoreCase(currentStatus) && !"AWAY".equalsIgnoreCase(currentStatus)) {
-            setUserStatus(userId, "ONLINE");
+            String currentStatus = getUserStatus(userId);
+            if (!"ONLINE".equalsIgnoreCase(currentStatus) && !"AWAY".equalsIgnoreCase(currentStatus)) {
+                setUserStatus(userId, "ONLINE");
+            }
+        } catch (Exception ignored) {
+            // Presence is best-effort and must never block authentication/chat.
         }
     }
 
     public boolean removeSession(String userId, String sessionId) {
-        String sessionsKey = SESSIONS_KEY_PREFIX + userId;
-        Long removed = redisTemplate.opsForHash().delete(sessionsKey, sessionId);
-        if (removed == null || removed == 0) {
+        try {
+            String sessionsKey = SESSIONS_KEY_PREFIX + userId;
+            Long removed = redisTemplate.opsForHash().delete(sessionsKey, sessionId);
+            if (removed == null || removed == 0) {
+                return false;
+            }
+
+            Long count = redisTemplate.opsForHash().size(sessionsKey);
+            if (count == null || count == 0) {
+                setUserStatus(userId, "OFFLINE");
+                setLastSeen(userId, LocalDateTime.now());
+            }
+            return true;
+        } catch (Exception ignored) {
             return false;
         }
-
-        Long count = redisTemplate.opsForHash().size(sessionsKey);
-        if (count == null || count == 0) {
-            setUserStatus(userId, "OFFLINE");
-            setLastSeen(userId, LocalDateTime.now());
-        }
-        return true;
     }
 
     public void setUserStatus(String userId, String status) {
-        String statusKey = STATUS_KEY_PREFIX + userId;
-        redisTemplate.opsForValue().set(statusKey, status);
-        redisTemplate.expire(statusKey, presenceTtl);
+        try {
+            String statusKey = STATUS_KEY_PREFIX + userId;
+            redisTemplate.opsForValue().set(statusKey, status);
+            redisTemplate.expire(statusKey, presenceTtl);
+        } catch (Exception ignored) {
+            // MongoDB remains the durable fallback below.
+        }
 
         // Also sync to MongoDB user document so queries that map database entries are correct
         userRepository.findById(userId).ifPresent(user -> {
@@ -76,10 +88,14 @@ public class PresenceServiceImpl implements PresenceService {
     }
 
     public String getUserStatus(String userId) {
-        String statusKey = STATUS_KEY_PREFIX + userId;
-        String status = redisTemplate.opsForValue().get(statusKey);
-        if (status != null) {
-            return status;
+        try {
+            String statusKey = STATUS_KEY_PREFIX + userId;
+            String status = redisTemplate.opsForValue().get(statusKey);
+            if (status != null) {
+                return status;
+            }
+        } catch (Exception ignored) {
+            // Redis outages degrade presence to OFFLINE, not the whole request.
         }
         // No Redis presence means there is no tracked live WebSocket session.
         // MongoDB may contain a stale value from a previous process lifetime.
@@ -87,39 +103,50 @@ public class PresenceServiceImpl implements PresenceService {
     }
 
     public void setLastSeen(String userId, LocalDateTime lastSeenTime) {
-        String lastSeenKey = LAST_SEEN_KEY_PREFIX + userId;
-        redisTemplate.opsForValue().set(lastSeenKey, lastSeenTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
-        redisTemplate.expire(lastSeenKey, lastSeenTtl);
+        try {
+            String lastSeenKey = LAST_SEEN_KEY_PREFIX + userId;
+            redisTemplate.opsForValue().set(lastSeenKey, lastSeenTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+            redisTemplate.expire(lastSeenKey, lastSeenTtl);
+        } catch (Exception ignored) {
+            // Last-seen is transient and may be unavailable during Redis outages.
+        }
     }
 
     public LocalDateTime getUserLastSeen(String userId) {
-        String lastSeenKey = LAST_SEEN_KEY_PREFIX + userId;
-        String val = redisTemplate.opsForValue().get(lastSeenKey);
-        if (val == null) {
-            return null;
-        }
         try {
+            String lastSeenKey = LAST_SEEN_KEY_PREFIX + userId;
+            String val = redisTemplate.opsForValue().get(lastSeenKey);
+            if (val == null) return null;
             return LocalDateTime.parse(val, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             return null;
         }
     }
 
     public void touchSession(String userId, String sessionId) {
-        String sessionsKey = SESSIONS_KEY_PREFIX + userId;
-        redisTemplate.opsForHash().put(
-                sessionsKey,
-                sessionId,
-                String.valueOf(System.currentTimeMillis())
-        );
-        redisTemplate.expire(sessionsKey, presenceTtl);
-        redisTemplate.expire(STATUS_KEY_PREFIX + userId, presenceTtl);
+        try {
+            String sessionsKey = SESSIONS_KEY_PREFIX + userId;
+            redisTemplate.opsForHash().put(
+                    sessionsKey,
+                    sessionId,
+                    String.valueOf(System.currentTimeMillis())
+            );
+            redisTemplate.expire(sessionsKey, presenceTtl);
+            redisTemplate.expire(STATUS_KEY_PREFIX + userId, presenceTtl);
+        } catch (Exception ignored) {
+            // Heartbeat is best-effort.
+        }
     }
 
     public List<String> expireStaleSessions(long staleBeforeEpochMillis) {
         List<String> offlineUserIds = new ArrayList<>();
         ScanOptions options = ScanOptions.scanOptions().match(SESSIONS_KEY_PREFIX + "*").count(100).build();
-        Cursor<String> cursor = redisTemplate.scan(options);
+        Cursor<String> cursor;
+        try {
+            cursor = redisTemplate.scan(options);
+        } catch (Exception ignored) {
+            return offlineUserIds;
+        }
         if (cursor == null) return offlineUserIds;
         try (Cursor<String> keys = cursor) {
           while (keys.hasNext()) {
@@ -143,6 +170,8 @@ public class PresenceServiceImpl implements PresenceService {
                 offlineUserIds.add(userId);
             }
           }
+        } catch (Exception ignored) {
+            // A mid-scan Redis outage is safe to retry on the next schedule.
         }
         return offlineUserIds;
     }
