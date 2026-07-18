@@ -31,7 +31,8 @@ public class CorsConfig {
                 "Content-Type",
                 "Accept",
                 "Origin",
-                "X-Requested-With"
+                "X-Requested-With",
+                "X-Client-Platform"
         ));
 
         // Cho phép gửi credentials (cookie, Authorization header)

@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.dto.request.ChangePasswordRequest;
 import iuh.fit.se.nextalk_be.dto.request.UpdateProfileRequest;
 import iuh.fit.se.nextalk_be.dto.response.PresenceUpdateResponse;
 import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
+import iuh.fit.se.nextalk_be.dto.response.ProfileQrResponse;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.Message;
 import iuh.fit.se.nextalk_be.entity.User;
@@ -39,4 +40,8 @@ public interface UserService {
     public UserProfileResponse setupChatPin(String pin);
     public UserProfileResponse resetChatPin(String pin);
     public UserProfileResponse mapToProfileResponse(User user);
+    ProfileQrResponse getProfileQr();
+    ProfileQrResponse rotateProfileQr();
+    ProfileQrResponse setProfileQrEnabled(boolean enabled);
+    UserProfileResponse resolveProfileQr(String tokenOrLegacyUserId);
 }

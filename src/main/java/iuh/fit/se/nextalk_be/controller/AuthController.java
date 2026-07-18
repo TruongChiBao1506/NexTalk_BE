@@ -25,6 +25,12 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
+import org.springframework.util.StringUtils;
+import java.net.URI;
 
 import java.time.Duration;
 import java.util.List;
@@ -37,6 +43,20 @@ public class AuthController {
 
     private final AuthService authService;
     private final RateLimitService rateLimitService;
+
+    @Value("${app.mobile.reset-return-url:nextalk://reset-password}")
+    private String mobileResetReturnUrl;
+
+    @Value("${app.auth.refresh-cookie-secure:true}")
+    private boolean refreshCookieSecure;
+
+    @Value("${app.jwt.refresh-expiration-ms:604800000}")
+    private long refreshExpirationMs;
+
+    @Value("${app.auth.refresh-cookie-same-site:Lax}")
+    private String refreshCookieSameSite;
+
+    private static final String REFRESH_COOKIE = "nextalk_refresh";
 
     @PostMapping("/register")
     @Operation(summary = "Register a new user account")
@@ -55,11 +75,12 @@ public class AuthController {
 
     @PostMapping("/login")
     @Operation(summary = "Authenticate user and return tokens")
-    public ResponseEntity<ApiResponse<LoginResponse>> login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+    public ResponseEntity<ApiResponse<LoginResponse>> login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest,
+                                                             @RequestHeader(value = "X-Client-Platform", required = false) String platform) {
         String identity = rateLimitService.clientIdentity(httpRequest) + ":" + request.getEmail();
         rateLimitService.check("auth:login", identity, 8, Duration.ofMinutes(5));
         LoginResponse response = authService.login(request, httpRequest);
-        return ResponseEntity.ok(ApiResponse.success(response, "Login successful"));
+        return loginResponse(response, platform, "Login successful");
     }
 
     @PostMapping("/forgot-password")
@@ -73,14 +94,16 @@ public class AuthController {
 
     @GetMapping("/mobile-reset")
     @Operation(summary = "Redirect mobile deep link")
-    public ResponseEntity<String> mobileReset(@RequestParam String returnUrl, @RequestParam String token) {
-        String fullUrl = returnUrl + (returnUrl.contains("?") ? "&" : "?") + "token=" + token;
-        String html = "<html><body style='font-family: sans-serif; text-align: center; margin-top: 50px;'>" +
-                "<h2>Redirecting to NexTalk...</h2>" +
-                "<p>If nothing happens, <a href='" + fullUrl + "'>click here</a>.</p>" +
-                "<script>window.location.href = '" + fullUrl + "';</script>" +
-                "</body></html>";
-        return ResponseEntity.ok().header("Content-Type", "text/html").body(html);
+    public ResponseEntity<Void> mobileReset(@RequestParam String token) {
+        URI destination = org.springframework.web.util.UriComponentsBuilder
+                .fromUriString(mobileResetReturnUrl)
+                .queryParam("token", token)
+                .build()
+                .encode()
+                .toUri();
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .header(HttpHeaders.LOCATION, destination.toString())
+                .build();
     }
 
     @PostMapping("/reset-password")
@@ -93,24 +116,39 @@ public class AuthController {
 
     @PostMapping("/refresh")
     @Operation(summary = "Generate new access token using refresh token")
-    public ResponseEntity<ApiResponse<TokenRefreshResponse>> refresh(@Valid @RequestBody TokenRefreshRequest request, HttpServletRequest httpRequest) {
+    public ResponseEntity<ApiResponse<TokenRefreshResponse>> refresh(@RequestBody(required = false) TokenRefreshRequest request,
+                                                                      @CookieValue(value = REFRESH_COOKIE, required = false) String cookieToken,
+                                                                      HttpServletRequest httpRequest,
+                                                                      @RequestHeader(value = "X-Client-Platform", required = false) String platform) {
         rateLimitService.check("auth:refresh", rateLimitService.clientIdentity(httpRequest), 30, Duration.ofMinutes(1));
-        TokenRefreshResponse response = authService.refreshToken(request, httpRequest);
+        TokenRefreshRequest resolved = resolveRefreshRequest(request, cookieToken);
+        TokenRefreshResponse response = authService.refreshToken(resolved, httpRequest);
+        if (isWeb(platform)) {
+            String rotatedToken = response.getRefreshToken();
+            response.setRefreshToken(null);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.SET_COOKIE, refreshCookie(rotatedToken).toString())
+                    .body(ApiResponse.success(response, "Token refreshed successfully"));
+        }
         return ResponseEntity.ok(ApiResponse.success(response, "Token refreshed successfully"));
     }
 
     @PostMapping("/logout")
     @Operation(summary = "Invalidate refresh token and log user out")
-    public ResponseEntity<ApiResponse<Void>> logout(@Valid @RequestBody TokenRefreshRequest request) {
-        authService.logout(request);
-        return ResponseEntity.ok(ApiResponse.success(null, "Logged out successfully"));
+    public ResponseEntity<ApiResponse<Void>> logout(@RequestBody(required = false) TokenRefreshRequest request,
+                                                     @CookieValue(value = REFRESH_COOKIE, required = false) String cookieToken) {
+        authService.logout(resolveRefreshRequest(request, cookieToken));
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, clearRefreshCookie().toString())
+                .body(ApiResponse.success(null, "Logged out successfully"));
     }
 
     @PostMapping("/google-login")
     @Operation(summary = "Authenticate user with Google ID Token")
-    public ResponseEntity<ApiResponse<LoginResponse>> googleLogin(@Valid @RequestBody GoogleLoginRequest request, HttpServletRequest httpRequest) {
+    public ResponseEntity<ApiResponse<LoginResponse>> googleLogin(@Valid @RequestBody GoogleLoginRequest request, HttpServletRequest httpRequest,
+                                                                   @RequestHeader(value = "X-Client-Platform", required = false) String platform) {
         rateLimitService.check("auth:google-login", rateLimitService.clientIdentity(httpRequest), 10, Duration.ofMinutes(5));
-        return ResponseEntity.ok(ApiResponse.success(authService.googleLogin(request, httpRequest), "Google Login successful"));
+        return loginResponse(authService.googleLogin(request, httpRequest), platform, "Google Login successful");
     }
 
     @PostMapping("/qr/init")
@@ -122,14 +160,23 @@ public class AuthController {
 
     @GetMapping("/qr/status/{sessionId}")
     @Operation(summary = "Poll QR login session status")
-    public ResponseEntity<ApiResponse<QrLoginStatusResponse>> getQrLoginStatus(@PathVariable("sessionId") String sessionId, HttpServletRequest httpRequest) {
+    public ResponseEntity<ApiResponse<QrLoginStatusResponse>> getQrLoginStatus(@PathVariable("sessionId") String sessionId, HttpServletRequest httpRequest,
+                                                                                @RequestHeader(value = "X-Client-Platform", required = false) String platform) {
         rateLimitService.check("auth:qr:status", rateLimitService.clientIdentity(httpRequest) + ":" + sessionId, 80, Duration.ofMinutes(2));
-        return ResponseEntity.ok(ApiResponse.success(authService.getQrLoginStatus(sessionId, httpRequest), "QR login status retrieved"));
+        QrLoginStatusResponse response = authService.getQrLoginStatus(sessionId, httpRequest);
+        if (isWeb(platform) && response.getLogin() != null && response.getLogin().getRefreshToken() != null) {
+            String token = response.getLogin().getRefreshToken();
+            response.getLogin().setRefreshToken(null);
+            return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, refreshCookie(token).toString())
+                    .body(ApiResponse.success(response, "QR login status retrieved"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(response, "QR login status retrieved"));
     }
 
     @PostMapping("/qr/confirm")
     @Operation(summary = "Confirm a QR login session as the current user")
     public ResponseEntity<ApiResponse<QrLoginStatusResponse>> confirmQrLogin(@Valid @RequestBody QrLoginConfirmRequest request) {
+        rateLimitService.check("auth:qr:confirm", rateLimitService.currentUserIdentity(), 10, Duration.ofMinutes(1));
         return ResponseEntity.ok(ApiResponse.success(authService.confirmQrLogin(request), "QR login confirmed"));
     }
 
@@ -151,5 +198,36 @@ public class AuthController {
     public ResponseEntity<ApiResponse<Void>> revokeAllSessions() {
         authService.revokeAllSessions();
         return ResponseEntity.ok(ApiResponse.success(null, "All sessions revoked successfully"));
+    }
+
+    private ResponseEntity<ApiResponse<LoginResponse>> loginResponse(LoginResponse response, String platform, String message) {
+        if (!isWeb(platform)) return ResponseEntity.ok(ApiResponse.success(response, message));
+        String token = response.getRefreshToken();
+        response.setRefreshToken(null);
+        return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, refreshCookie(token).toString())
+                .body(ApiResponse.success(response, message));
+    }
+
+    private TokenRefreshRequest resolveRefreshRequest(TokenRefreshRequest request, String cookieToken) {
+        String bodyToken = request != null ? request.getRefreshToken() : null;
+        String token = StringUtils.hasText(bodyToken) ? bodyToken : cookieToken;
+        if (!StringUtils.hasText(token)) throw new iuh.fit.se.nextalk_be.exception.UnauthorizedException("Refresh token is required");
+        return TokenRefreshRequest.builder().refreshToken(token).build();
+    }
+
+    private boolean isWeb(String platform) {
+        return "web".equalsIgnoreCase(platform);
+    }
+
+    private ResponseCookie refreshCookie(String token) {
+        return ResponseCookie.from(REFRESH_COOKIE, token)
+                .httpOnly(true).secure(refreshCookieSecure).sameSite(refreshCookieSameSite)
+                .path("/api/auth").maxAge(Duration.ofMillis(refreshExpirationMs)).build();
+    }
+
+    private ResponseCookie clearRefreshCookie() {
+        return ResponseCookie.from(REFRESH_COOKIE, "")
+                .httpOnly(true).secure(refreshCookieSecure).sameSite(refreshCookieSameSite)
+                .path("/api/auth").maxAge(Duration.ZERO).build();
     }
 }

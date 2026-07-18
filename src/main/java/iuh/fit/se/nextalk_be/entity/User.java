@@ -33,6 +33,16 @@ public class User extends BaseEntity implements UserDetails {
 
     private String bio;
 
+    @Indexed(unique = true, sparse = true)
+    private String profileQrToken;
+
+    @Builder.Default
+    private Boolean profileQrEnabled = true;
+
+    public boolean isProfileQrEnabled() {
+        return profileQrEnabled == null || profileQrEnabled;
+    }
+
     private String status; // ONLINE, OFFLINE, AWAY
 
     @Builder.Default

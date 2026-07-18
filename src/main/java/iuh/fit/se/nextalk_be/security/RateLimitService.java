@@ -7,6 +7,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import lombok.RequiredArgsConstructor;
 
 import java.time.Duration;
 import java.util.ArrayDeque;
@@ -16,10 +18,12 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
+@RequiredArgsConstructor
 public class RateLimitService {
 
     private static final int MAX_TRACKED_KEYS = 25_000;
     private final Map<String, Deque<Long>> buckets = new ConcurrentHashMap<>();
+    private final StringRedisTemplate redisTemplate;
 
     public void check(String scope, String identity, int maxRequests, Duration window) {
         if (maxRequests <= 0 || window == null || window.isNegative() || window.isZero()) {
@@ -28,6 +32,32 @@ public class RateLimitService {
 
         String safeIdentity = normalizeIdentity(identity);
         String key = scope + ":" + safeIdentity;
+        if (checkRedis(key, maxRequests, window)) return;
+        checkLocal(key, maxRequests, window);
+    }
+
+    private boolean checkRedis(String key, int maxRequests, Duration window) {
+        try {
+            String redisKey = "nextalk:rate-limit:" + key;
+            Long count = redisTemplate.opsForValue().increment(redisKey);
+            if (count == null) return false;
+            if (count == 1) redisTemplate.expire(redisKey, window);
+            if (count > maxRequests) {
+                Long ttl = redisTemplate.getExpire(redisKey);
+                throw new RateLimitExceededException(
+                        "Too many requests. Please wait a moment and try again.",
+                        ttl != null && ttl > 0 ? ttl : Math.max(1, window.toSeconds()));
+            }
+            return true;
+        } catch (RateLimitExceededException exception) {
+            throw exception;
+        } catch (Exception ignored) {
+            // Keep a per-instance fallback so Redis outages do not remove all protection.
+            return false;
+        }
+    }
+
+    private void checkLocal(String key, int maxRequests, Duration window) {
         long now = System.currentTimeMillis();
         long cutoff = now - window.toMillis();
 

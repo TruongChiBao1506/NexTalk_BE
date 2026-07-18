@@ -47,6 +47,7 @@ import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.PresenceService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import iuh.fit.se.nextalk_be.service.VoiceChannelService;
+import iuh.fit.se.nextalk_be.service.MediaAuthorizationService;
 
 
 import lombok.RequiredArgsConstructor;
@@ -96,6 +97,7 @@ public class MessageServiceImpl implements MessageService {
     private final LinkPreviewService linkPreviewService;
     private final AiBotService aiBotService;
     private final VoiceChannelService voiceChannelService;
+    private final MediaAuthorizationService mediaAuthorizationService;
 
     @Value("${app.rate-limit.ai-bot.limit:10}")
     private int aiBotRateLimit;
@@ -133,6 +135,7 @@ public class MessageServiceImpl implements MessageService {
         User currentUser = userRepository.findByEmail(senderEmail)
                 .or(() -> userRepository.findByUsername(senderEmail))
                 .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
+        rateLimitService.check("message:typing", currentUser.getId(), 90, Duration.ofMinutes(1));
 
         Conversation conversation = conversationRepository.findById(request.getConversationId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + request.getConversationId()));
@@ -189,6 +192,7 @@ public class MessageServiceImpl implements MessageService {
 
         ensureChannelPostingAllowed(conversation, currentUser);
         ensurePrivateMessageAllowed(conversation, currentUser);
+        mediaAuthorizationService.authorizeForConversation(request.getAttachments(), currentUser, conversation);
         if (conversation.getDeletedByUsers() != null && !conversation.getDeletedByUsers().isEmpty()) {
             conversation.getDeletedByUsers().clear();
         }

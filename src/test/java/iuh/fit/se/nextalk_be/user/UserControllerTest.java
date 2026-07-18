@@ -22,6 +22,7 @@ import java.util.UUID;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -104,5 +105,24 @@ public class UserControllerTest {
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.success", is(false)));
+    }
+
+    @Test
+    @WithMockUser(username = "test@gmail.com")
+    void profileQrCanBeCreatedRotatedAndResolved() throws Exception {
+        String firstToken = com.jayway.jsonpath.JsonPath.read(
+                mockMvc.perform(get("/api/users/qr"))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString(), "$.data.token");
+
+        String rotatedToken = com.jayway.jsonpath.JsonPath.read(
+                mockMvc.perform(post("/api/users/qr/rotate"))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString(), "$.data.token");
+
+        org.junit.jupiter.api.Assertions.assertNotEquals(firstToken, rotatedToken);
+        mockMvc.perform(get("/api/users/qr/" + rotatedToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id", is(testUser.getId())));
     }
 }

@@ -1,6 +1,7 @@
 package iuh.fit.se.nextalk_be.file;
 
 import iuh.fit.se.nextalk_be.service.CloudinaryService;
+import iuh.fit.se.nextalk_be.service.MediaAuthorizationService;
 
 
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,9 @@ public class FileControllerTest {
 
     @MockitoBean
     private CloudinaryService cloudinaryService;
+
+    @MockitoBean
+    private MediaAuthorizationService mediaAuthorizationService;
 
     @Test
     @WithMockUser

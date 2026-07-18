@@ -8,6 +8,10 @@ import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.SetOperations;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -22,6 +26,29 @@ import static org.mockito.Mockito.when;
 @Profile("test")
 @SuppressWarnings("unchecked")
 public class TestRedisConfig {
+
+    @Bean
+    public PlatformTransactionManager transactionManager() {
+        return new AbstractPlatformTransactionManager() {
+            @Override
+            protected Object doGetTransaction() {
+                return new Object();
+            }
+
+            @Override
+            protected void doBegin(Object transaction, TransactionDefinition definition) {
+                // Standalone MongoDB used by tests does not support transactions.
+            }
+
+            @Override
+            protected void doCommit(DefaultTransactionStatus status) {
+            }
+
+            @Override
+            protected void doRollback(DefaultTransactionStatus status) {
+            }
+        };
+    }
 
     @Bean
     public RedisConnectionFactory redisConnectionFactory() {

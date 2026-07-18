@@ -9,6 +9,8 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
 
 @Document(collection = "media_assets")
 @Getter
@@ -29,4 +31,10 @@ public class MediaAsset {
     private Long size;
     private String contentType;
     private LocalDateTime createdAt;
+
+    @Builder.Default
+    private Set<String> allowedUserIds = new HashSet<>();
+
+    @Builder.Default
+    private Set<String> conversationIds = new HashSet<>();
 }

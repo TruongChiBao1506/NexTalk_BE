@@ -5,6 +5,7 @@ import iuh.fit.se.nextalk_be.dto.request.ChatPinRequest;
 import iuh.fit.se.nextalk_be.dto.request.UpdateProfileRequest;
 import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
 import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
+import iuh.fit.se.nextalk_be.dto.response.ProfileQrResponse;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.UserService;
@@ -33,6 +34,28 @@ public class UserController {
     public ResponseEntity<ApiResponse<UserProfileResponse>> getMyProfile() {
         UserProfileResponse response = userService.getMyProfile();
         return ResponseEntity.ok(ApiResponse.success(response, "Profile retrieved successfully"));
+    }
+
+    @GetMapping("/qr")
+    public ResponseEntity<ApiResponse<ProfileQrResponse>> getProfileQr() {
+        return ResponseEntity.ok(ApiResponse.success(userService.getProfileQr(), "Profile QR retrieved"));
+    }
+
+    @PostMapping("/qr/rotate")
+    public ResponseEntity<ApiResponse<ProfileQrResponse>> rotateProfileQr() {
+        rateLimitService.check("profile-qr:rotate", rateLimitService.currentUserIdentity(), 5, Duration.ofHours(1));
+        return ResponseEntity.ok(ApiResponse.success(userService.rotateProfileQr(), "Profile QR rotated"));
+    }
+
+    @PutMapping("/qr/enabled")
+    public ResponseEntity<ApiResponse<ProfileQrResponse>> setProfileQrEnabled(@RequestParam("enabled") boolean enabled) {
+        return ResponseEntity.ok(ApiResponse.success(userService.setProfileQrEnabled(enabled), "Profile QR preference updated"));
+    }
+
+    @GetMapping("/qr/{token}")
+    public ResponseEntity<ApiResponse<UserProfileResponse>> resolveProfileQr(@PathVariable("token") String token) {
+        rateLimitService.check("profile-qr:resolve", rateLimitService.currentUserIdentity(), 30, Duration.ofMinutes(1));
+        return ResponseEntity.ok(ApiResponse.success(userService.resolveProfileQr(token), "Profile QR resolved"));
     }
 
     @PutMapping("/profile")

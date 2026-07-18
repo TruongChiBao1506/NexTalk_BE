@@ -23,10 +23,26 @@ import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
 public class CloudinaryServiceImpl implements CloudinaryService {
+
+    private static final long MAX_UPLOAD_BYTES = 50L * 1024 * 1024;
+    private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
+            "image/jpeg", "image/png", "image/gif", "image/webp",
+            "video/mp4", "video/webm", "video/quicktime",
+            "audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm",
+            "application/pdf", "text/plain",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/zip"
+    );
 
     private final Cloudinary cloudinary;
     private final MediaAssetRepository mediaAssetRepository;
@@ -34,6 +50,7 @@ public class CloudinaryServiceImpl implements CloudinaryService {
 
     @Override
     public DirectUploadPrepareResponse prepareDirectUpload(DirectUploadPrepareRequest request) {
+        validateUploadMetadata(request.getContentType(), request.getSize());
         String hash = request.getHash().toLowerCase();
         MediaAsset existing = mediaAssetRepository.findById(hash).orElse(null);
         if (existing != null) {
@@ -74,6 +91,7 @@ public class CloudinaryServiceImpl implements CloudinaryService {
 
     @Override
     public FileUploadResponse confirmDirectUpload(DirectUploadConfirmRequest request) throws Exception {
+        validateUploadMetadata(request.getContentType(), request.getBytes() != null ? request.getBytes() : request.getSize());
         String hash = request.getHash().toLowerCase();
         MediaAsset existing = mediaAssetRepository.findById(hash).orElse(null);
         if (existing != null) {
@@ -86,6 +104,10 @@ public class CloudinaryServiceImpl implements CloudinaryService {
         }
         if (!request.getResourceType().matches("image|video|raw")) {
             throw new IllegalArgumentException("Unsupported Cloudinary resource type");
+        }
+        String expectedResourceType = resourceTypeFor(request.getContentType());
+        if (!"auto".equals(expectedResourceType) && !expectedResourceType.equals(request.getResourceType())) {
+            throw new IllegalArgumentException("Cloudinary resource type does not match content type");
         }
 
         if (!cloudinary.verifyApiResponseSignature(
@@ -121,6 +143,7 @@ public class CloudinaryServiceImpl implements CloudinaryService {
     }
 
     public Map uploadFile(MultipartFile file) throws IOException {
+        validateUploadMetadata(file.getContentType(), file.getSize());
         byte[] bytes = file.getBytes();
         String hash = sha256(bytes);
 
@@ -200,6 +223,15 @@ public class CloudinaryServiceImpl implements CloudinaryService {
     private String resourceTypeFor(String contentType) {
         return contentType != null && (contentType.startsWith("audio/") || contentType.startsWith("video/"))
                 ? "video" : "auto";
+    }
+
+    private void validateUploadMetadata(String contentType, Long size) {
+        if (contentType == null || !ALLOWED_CONTENT_TYPES.contains(contentType.toLowerCase())) {
+            throw new IllegalArgumentException("Unsupported file type");
+        }
+        if (size == null || size <= 0 || size > MAX_UPLOAD_BYTES) {
+            throw new IllegalArgumentException("File size must be between 1 byte and 50 MB");
+        }
     }
 
     private String publicIdFor(String hash) {

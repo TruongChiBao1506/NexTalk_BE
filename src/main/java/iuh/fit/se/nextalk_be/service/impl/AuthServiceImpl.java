@@ -85,6 +85,12 @@ public class AuthServiceImpl implements AuthService {
     @Value("${google.client.id}")
     private String googleClientId;
 
+    @Value("${app.frontend.base-url:http://localhost:3000}")
+    private String frontendBaseUrl;
+
+    @Value("${app.public-base-url:http://localhost:8080}")
+    private String publicBaseUrl;
+
     // @Transactional
     public RegisterResponse register(RegisterRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
@@ -116,7 +122,11 @@ public class AuthServiceImpl implements AuthService {
         emailVerificationRepository.save(verification);
 
         // Send email
-        String verificationLink = "http://localhost:3000/verify-email?token=" + token;
+        String verificationLink = org.springframework.web.util.UriComponentsBuilder
+                .fromUriString(configuredUrl(frontendBaseUrl, "http://localhost:3000"))
+                .path("/verify-email")
+                .queryParam("token", token)
+                .build().encode().toUriString();
         mailService.sendVerificationEmail(savedUser.getEmail(), verificationLink);
 
         return RegisterResponse.builder()
@@ -231,8 +241,11 @@ public class AuthServiceImpl implements AuthService {
     }
 
     public void forgotPassword(ForgotPasswordRequest request) {
-        User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + request.getEmail()));
+        User user = userRepository.findByEmail(request.getEmail()).orElse(null);
+        // Keep the public response indistinguishable to prevent account enumeration.
+        if (user == null) return;
+
+        passwordResetTokenRepository.deleteByUser(user);
 
         String token = UUID.randomUUID().toString();
         PasswordResetToken resetToken = PasswordResetToken.builder()
@@ -244,11 +257,17 @@ public class AuthServiceImpl implements AuthService {
 
         passwordResetTokenRepository.save(resetToken);
 
-        String resetLink = "http://localhost:3000/reset-password?token=" + token;
+        String resetLink = org.springframework.web.util.UriComponentsBuilder
+                .fromUriString(configuredUrl(frontendBaseUrl, "http://localhost:3000"))
+                .path("/reset-password")
+                .queryParam("token", token)
+                .build().encode().toUriString();
         if ("mobile".equalsIgnoreCase(request.getClient()) && request.getReturnUrl() != null) {
-            HttpServletRequest httpRequest = ((ServletRequestAttributes) RequestContextHolder.currentRequestAttributes()).getRequest();
-            String baseUrl = httpRequest.getScheme() + "://" + httpRequest.getServerName() + ":" + httpRequest.getServerPort();
-            resetLink = baseUrl + "/api/auth/mobile-reset?returnUrl=" + request.getReturnUrl() + "&token=" + token;
+            resetLink = org.springframework.web.util.UriComponentsBuilder
+                    .fromUriString(configuredUrl(publicBaseUrl, "http://localhost:8080"))
+                    .path("/api/auth/mobile-reset")
+                    .queryParam("token", token)
+                    .build().encode().toUriString();
         }
 
         mailService.sendPasswordResetEmail(user.getEmail(), resetLink);
@@ -270,6 +289,10 @@ public class AuthServiceImpl implements AuthService {
         User user = resetToken.getUser();
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
+
+        List<RefreshToken> activeSessions = refreshTokenRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
+        refreshTokenRepository.deleteByUser(user);
+        webSocketSessionRegistry.closeLoginSessions(activeSessions.stream().map(RefreshToken::getId).toList());
 
         resetToken.setUsed(true);
         passwordResetTokenRepository.save(resetToken);
@@ -464,6 +487,10 @@ public class AuthServiceImpl implements AuthService {
                 Map.of("type", "SESSION_REVOKED", "sessionId", id)
         );
         webSocketSessionRegistry.closeLoginSession(id);
+    }
+
+    private String configuredUrl(String configured, String fallback) {
+        return configured == null || configured.isBlank() ? fallback : configured;
     }
 
     public void revokeAllSessions() {

@@ -18,6 +18,8 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
+import iuh.fit.se.nextalk_be.security.WebSocketSubscriptionAuthorizer;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
@@ -29,6 +31,8 @@ import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 
 import java.util.List;
+import org.springframework.beans.factory.annotation.Value;
+import java.time.Duration;
 
 @Configuration
 @EnableWebSocketMessageBroker
@@ -39,11 +43,16 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final UserDetailsService userDetailsService;
     private final RefreshTokenRepository refreshTokenRepository;
     private final WebSocketSessionRegistry webSocketSessionRegistry;
+    private final WebSocketSubscriptionAuthorizer subscriptionAuthorizer;
+    private final RateLimitService rateLimitService;
+
+    @Value("${app.cors.allowed-origins:http://localhost:3000,http://localhost:3001}")
+    private String[] allowedOrigins;
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*")
+                .setAllowedOrigins(allowedOrigins)
                 .withSockJS();
     }
 
@@ -62,11 +71,22 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
                 if (accessor != null && StompCommand.CONNECT.equals(accessor.getCommand())) {
                     authenticate(accessor);
+                    if (accessor.getUser() instanceof UsernamePasswordAuthenticationToken auth
+                            && auth.getPrincipal() instanceof User user) {
+                        rateLimitService.check("websocket:connect", user.getId(), 20, Duration.ofMinutes(1));
+                    }
                     String loginSessionId = accessor.getUser() instanceof UsernamePasswordAuthenticationToken auth
                             && auth.getDetails() instanceof String value ? value : null;
                     webSocketSessionRegistry.bindLoginSession(loginSessionId, accessor.getSessionId());
                 } else if (accessor != null && accessor.getUser() instanceof UsernamePasswordAuthenticationToken authentication) {
                     validateActiveSession(authentication);
+                    if (StompCommand.SUBSCRIBE.equals(accessor.getCommand())) {
+                        if (!(authentication.getPrincipal() instanceof User user)) {
+                            throw new org.springframework.messaging.MessageDeliveryException("Unauthorized subscription");
+                        }
+                        rateLimitService.check("websocket:subscribe", user.getId(), 120, Duration.ofMinutes(1));
+                        subscriptionAuthorizer.authorize(user, accessor.getDestination());
+                    }
                 }
                 return message;
             }
@@ -151,4 +171,5 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
             throw new org.springframework.messaging.MessageDeliveryException("Session was revoked");
         }
     }
+
 }

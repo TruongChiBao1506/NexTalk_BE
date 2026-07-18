@@ -52,4 +52,7 @@ public interface MessageRepository extends MongoRepository<Message, String> {
     List<Message> findByConversationIdAndContentContainingIgnoreCaseAndMessageTypeAndIsRecalledFalse(String conversationId, String content, MessageType messageType);
 
     List<Message> findByConversationIdInAndContentContainingIgnoreCaseAndMessageTypeAndIsRecalledFalse(List<String> conversationIds, String content, MessageType messageType);
+
+    @Query("{'attachments.url': ?0}")
+    List<Message> findByAttachmentUrl(String url);
 }

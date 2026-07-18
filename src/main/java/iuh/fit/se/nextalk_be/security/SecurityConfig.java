@@ -14,6 +14,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 
 @Configuration
 @EnableWebSecurity
@@ -29,6 +30,15 @@ public class SecurityConfig {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .csrf(AbstractHttpConfigurer::disable)
+                .headers(headers -> headers
+                        .contentTypeOptions(contentType -> {})
+                        .frameOptions(frame -> frame.deny())
+                        .referrerPolicy(referrer -> referrer
+                                .policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
+                        .httpStrictTransportSecurity(hsts -> hsts
+                                .includeSubDomains(true)
+                                .preload(true)
+                                .maxAgeInSeconds(31536000)))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/api/auth/register",

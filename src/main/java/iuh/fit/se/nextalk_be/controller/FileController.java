@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
 import iuh.fit.se.nextalk_be.dto.response.FileUploadResponse;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.CloudinaryService;
+import iuh.fit.se.nextalk_be.service.MediaAuthorizationService;
 
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -42,6 +43,7 @@ public class FileController {
     private final CloudinaryService cloudinaryService;
     private final RateLimitService rateLimitService;
     private final RestTemplate restTemplate;
+    private final MediaAuthorizationService mediaAuthorizationService;
 
     @PostMapping("/direct-upload/prepare")
     @Operation(summary = "Check for a duplicate and create a signed direct Cloudinary upload")
@@ -52,6 +54,9 @@ public class FileController {
             return ResponseEntity.badRequest().body(ApiResponse.error("File exceeds the 50 MB limit", null));
         }
         DirectUploadPrepareResponse response = cloudinaryService.prepareDirectUpload(request);
+        if (response.isDeduplicated() && response.getFile() != null) {
+            mediaAuthorizationService.claimUpload(response.getFile().getUrl());
+        }
         return ResponseEntity.ok(ApiResponse.success(response,
                 response.isDeduplicated() ? "Existing file reused" : "Upload signature created"));
     }
@@ -63,6 +68,7 @@ public class FileController {
         rateLimitService.check("file:confirm", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(10));
         try {
             FileUploadResponse response = cloudinaryService.confirmDirectUpload(request);
+            mediaAuthorizationService.claimUpload(response.getUrl());
             return ResponseEntity.ok(ApiResponse.success(response, "Direct upload confirmed"));
         } catch (IllegalArgumentException exception) {
             return ResponseEntity.badRequest().body(ApiResponse.error(exception.getMessage(), null));
@@ -93,7 +99,11 @@ public class FileController {
                     .size(file.getSize())
                     .build();
 
+            mediaAuthorizationService.claimUpload(url);
+
             return ResponseEntity.ok(ApiResponse.success(response, "File uploaded successfully"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage(), null));
         } catch (IOException e) {
             return ResponseEntity.internalServerError().body(ApiResponse.error("Failed to upload file: " + e.getMessage(), null));
         }
@@ -105,6 +115,7 @@ public class FileController {
             @RequestParam("url") String url,
             @RequestParam("fileName") String fileName) {
         rateLimitService.check("file:download", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(10));
+        mediaAuthorizationService.assertCanDownload(url);
 
         URI source;
         try {
