@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.controller;
 
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.service.PresenceService;
+import iuh.fit.se.nextalk_be.service.VoiceChannelService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
@@ -13,6 +14,7 @@ import java.security.Principal;
 @RequiredArgsConstructor
 public class PresenceHeartbeatController {
     private final PresenceService presenceService;
+    private final VoiceChannelService voiceChannelService;
     private final UserRepository userRepository;
 
     @MessageMapping("/presence.heartbeat")
@@ -21,6 +23,9 @@ public class PresenceHeartbeatController {
         if (principal == null || webSocketSessionId == null) return;
         userRepository.findByEmail(principal.getName())
                 .or(() -> userRepository.findByUsername(principal.getName()))
-                .ifPresent(user -> presenceService.touchSession(user.getId(), webSocketSessionId));
+                .ifPresent(user -> {
+                    presenceService.touchSession(user.getId(), webSocketSessionId);
+                    voiceChannelService.touchUser(user.getId());
+                });
     }
 }

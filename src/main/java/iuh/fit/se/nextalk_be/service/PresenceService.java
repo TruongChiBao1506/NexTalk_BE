@@ -11,7 +11,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 
 public interface PresenceService {
-    @jakarta.annotation.PostConstruct public void clearAllSessionsOnStartup();
     public void addSession(String userId, String sessionId);
     public boolean removeSession(String userId, String sessionId);
     public void setUserStatus(String userId, String status);

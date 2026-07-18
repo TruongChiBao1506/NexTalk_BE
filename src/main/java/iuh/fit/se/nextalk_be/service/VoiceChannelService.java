@@ -13,4 +13,6 @@ public interface VoiceChannelService {
     public void joinChannel(String channelId, String userId, String groupId);
     public String[] leaveCurrentChannel(String userId);
     public List<String> getChannelMembers(String channelId);
+    public void touchUser(String userId);
+    public void expireStaleMembers();
 }
