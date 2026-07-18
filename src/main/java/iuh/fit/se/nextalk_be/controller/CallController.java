@@ -29,6 +29,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -251,7 +252,7 @@ public class CallController {
                     signal
             );
         }
-        notifyOtherResponderDevices(signal, responder);
+        notifyOtherResponderDevices(signal, responder, null);
     }
 
     @MessageMapping("/call.cancel")
@@ -489,14 +490,22 @@ public class CallController {
     }
 
     @PostMapping("/reject")
-    public ResponseEntity<ApiResponse<Void>> rejectCallRest(@RequestBody CallSignal signal, Principal principal) {
+    public ResponseEntity<ApiResponse<Void>> rejectCallRest(
+            @RequestBody CallSignal signal,
+            Principal principal,
+            @RequestHeader(value = "X-FCM-Token", required = false) String respondingDeviceToken
+    ) {
         signal.setAccept(false);
         signal.setReason("rejected");
-        return respondToCallRest(signal, principal);
+        return respondToCallRest(signal, principal, respondingDeviceToken);
     }
 
     @PostMapping("/respond")
-    public ResponseEntity<ApiResponse<Void>> respondToCallRest(@RequestBody CallSignal signal, Principal principal) {
+    public ResponseEntity<ApiResponse<Void>> respondToCallRest(
+            @RequestBody CallSignal signal,
+            Principal principal,
+            @RequestHeader(value = "X-FCM-Token", required = false) String respondingDeviceToken
+    ) {
         if (principal == null) return ResponseEntity.badRequest().build();
         User responder = findUserByPrincipal(principal);
         if (responder == null) return ResponseEntity.badRequest().build();
@@ -518,11 +527,11 @@ public class CallController {
                     signal
             );
         }
-        notifyOtherResponderDevices(signal, responder);
+        notifyOtherResponderDevices(signal, responder, respondingDeviceToken);
         return ResponseEntity.ok(ApiResponse.success(null, "Call response handled"));
     }
 
-    private void notifyOtherResponderDevices(CallSignal original, User responder) {
+    private void notifyOtherResponderDevices(CallSignal original, User responder, String respondingDeviceToken) {
         CallSignal handledSignal = CallSignal.builder()
                 .callId(original.getCallId())
                 .conversationId(original.getConversationId())
@@ -544,7 +553,10 @@ public class CallController {
         );
 
         if (responder.getFcmTokens() != null && !responder.getFcmTokens().isEmpty()) {
-            fcmService.sendCallCancelPushNotificationToTokens(responder.getFcmTokens(), original.getCallId());
+            List<String> otherDeviceTokens = responder.getFcmTokens().stream()
+                    .filter(token -> respondingDeviceToken == null || !respondingDeviceToken.equals(token))
+                    .toList();
+            fcmService.sendCallCancelPushNotificationToTokens(otherDeviceTokens, original.getCallId());
         }
     }
 
