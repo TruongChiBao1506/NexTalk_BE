@@ -239,11 +239,7 @@ public class CallController {
 
         // Route the reply back to the caller while keeping receiverId as the responder.
         signal.setReceiverId(responder.getId());
-        if (Boolean.TRUE.equals(signal.getAccept())) {
-            registerCallAnswer(signal, responder);
-        } else {
-            handleCallRejected(signal);
-        }
+        if (!registerCallResponse(signal, responder)) return;
         String callerUsername = userRepository.findById(signal.getCallerId())
                 .map(User::getUsername)
                 .orElse(null);
@@ -305,13 +301,28 @@ public class CallController {
         activeCallSessions.put(signal.getCallId(), session);
     }
 
-    private void registerCallAnswer(CallSignal signal, User responder) {
-        if (signal.getCallId() == null) return;
+    private boolean registerCallResponse(CallSignal signal, User responder) {
+        if (signal.getCallId() == null || signal.getConversationId() == null || signal.getCallerId() == null) return false;
         CallSession session = activeCallSessions.get(signal.getCallId());
-        if (session == null) return;
-        session.participantIds.add(responder.getId());
-        session.participantIdsSnapshot.add(responder.getId());
-        session.hadAcceptedParticipant = true;
+        if (session == null
+                || !signal.getConversationId().equals(session.conversationId)
+                || !signal.getCallerId().equals(session.initiatorId)) return false;
+
+        Conversation conversation = conversationRepository.findById(session.conversationId).orElse(null);
+        if (conversation == null || conversation.getMembers().stream().noneMatch(member -> member.getId().equals(responder.getId()))) {
+            return false;
+        }
+
+        synchronized (session) {
+            if (!session.respondedUserIds.add(responder.getId())) return false;
+            if (Boolean.TRUE.equals(signal.getAccept())) {
+                session.participantIds.add(responder.getId());
+                session.participantIdsSnapshot.add(responder.getId());
+                session.hadAcceptedParticipant = true;
+            }
+        }
+        if (!Boolean.TRUE.equals(signal.getAccept())) handleCallRejected(signal);
+        return true;
     }
 
     private void handleCallRejected(CallSignal signal) {
@@ -412,6 +423,7 @@ public class CallController {
         private String initiatorId;
         private LocalDateTime startedAt;
         private boolean hadAcceptedParticipant = false;
+        private final LinkedHashSet<String> respondedUserIds = new LinkedHashSet<>();
         private final LinkedHashSet<String> participantIds = new LinkedHashSet<>();
         private final LinkedHashSet<String> participantIdsSnapshot = new LinkedHashSet<>();
     }
@@ -478,12 +490,22 @@ public class CallController {
 
     @PostMapping("/reject")
     public ResponseEntity<ApiResponse<Void>> rejectCallRest(@RequestBody CallSignal signal, Principal principal) {
+        signal.setAccept(false);
+        signal.setReason("rejected");
+        return respondToCallRest(signal, principal);
+    }
+
+    @PostMapping("/respond")
+    public ResponseEntity<ApiResponse<Void>> respondToCallRest(@RequestBody CallSignal signal, Principal principal) {
         if (principal == null) return ResponseEntity.badRequest().build();
         User responder = findUserByPrincipal(principal);
         if (responder == null) return ResponseEntity.badRequest().build();
 
         signal.setReceiverId(responder.getId());
-        handleCallRejected(signal);
+        signal.setSignalType("ANSWER");
+        if (!registerCallResponse(signal, responder)) {
+            return ResponseEntity.ok(ApiResponse.success(null, "Call response already handled or expired"));
+        }
 
         String callerUsername = userRepository.findById(signal.getCallerId())
                 .map(User::getUsername)
@@ -497,7 +519,7 @@ public class CallController {
             );
         }
         notifyOtherResponderDevices(signal, responder);
-        return ResponseEntity.ok(ApiResponse.success(null, "Call rejected"));
+        return ResponseEntity.ok(ApiResponse.success(null, "Call response handled"));
     }
 
     private void notifyOtherResponderDevices(CallSignal original, User responder) {
