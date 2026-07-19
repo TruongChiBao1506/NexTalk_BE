@@ -9,6 +9,9 @@ import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.FirebaseMessagingException;
 import com.google.firebase.messaging.MessagingErrorCode;
 import com.google.firebase.messaging.Message;
+import com.google.firebase.messaging.MulticastMessage;
+import com.google.firebase.messaging.BatchResponse;
+import com.google.firebase.messaging.SendResponse;
 import com.google.firebase.messaging.Notification;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -82,7 +85,7 @@ public class FCMServiceImpl implements FCMService {
             return;
         }
 
-        for (String token : tokens) {
+        for (String token : tokens.stream().filter(java.util.Objects::nonNull).distinct().toList()) {
             if (isExpoPushToken(token)) {
                 sendExpoPushNotification(token, title, body);
                 continue;
@@ -113,7 +116,7 @@ public class FCMServiceImpl implements FCMService {
                 String response = FirebaseMessaging.getInstance().send(message);
                 log.info("Successfully sent FCM message: {}", response);
             } catch (Exception e) {
-                log.error("Failed to send FCM message to token: " + token, e);
+                log.error("Failed to send FCM message: {}", e.getMessage());
             }
         }
     }
@@ -162,14 +165,12 @@ public class FCMServiceImpl implements FCMService {
             } catch (FirebaseMessagingException e) {
                 if (e.getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED) {
                     removeInvalidToken(token);
-                    log.info("Removed an unregistered FCM token ending in {}", tokenSuffix(token));
+                    log.info("Removed an unregistered FCM token");
                 } else {
-                    log.error("Failed to send chat FCM message to token ending in {}: {}",
-                            tokenSuffix(token), e.getMessage(), e);
+                    log.error("Failed to send chat FCM message: {}", e.getMessage());
                 }
             } catch (Exception e) {
-                log.error("Failed to send chat FCM message to token ending in {}: {}",
-                        tokenSuffix(token), e.getMessage(), e);
+                log.error("Failed to send chat FCM message: {}", e.getMessage());
             }
         }
     }
@@ -182,11 +183,6 @@ public class FCMServiceImpl implements FCMService {
         });
     }
 
-    private String tokenSuffix(String token) {
-        if (token == null || token.isBlank()) return "unknown";
-        return token.substring(Math.max(0, token.length() - 8));
-    }
-
     @Override
     public void sendCallPushNotificationToTokens(List<String> tokens, String callerName, String conversationId,
                                                  String callId, String callerId, String receiverId, String callType,
@@ -195,19 +191,17 @@ public class FCMServiceImpl implements FCMService {
             return;
         }
 
-        for (String token : tokens) {
-            if (isExpoPushToken(token)) {
-                // Not supported for pure data messages to backgrounded apps without Expo push payload
-                continue;
-            }
-
-            if (FirebaseApp.getApps().isEmpty()) {
-                continue;
-            }
-
+        if (FirebaseApp.getApps().isEmpty()) return;
+        List<String> nativeTokens = tokens.stream()
+                .filter(java.util.Objects::nonNull)
+                .filter(token -> !isExpoPushToken(token))
+                .distinct()
+                .toList();
+        for (int offset = 0; offset < nativeTokens.size(); offset += 500) {
+            List<String> batchTokens = nativeTokens.subList(offset, Math.min(offset + 500, nativeTokens.size()));
             try {
-                Message message = Message.builder()
-                        .setToken(token)
+                MulticastMessage message = MulticastMessage.builder()
+                        .addAllTokens(batchTokens)
                         .putData("type", "CALL")
                         .putData("callerName", callerName != null ? callerName : "Ai đó")
                         .putData("conversationId", conversationId != null ? conversationId : "")
@@ -221,10 +215,12 @@ public class FCMServiceImpl implements FCMService {
                                 .build())
                         .build();
 
-                String response = FirebaseMessaging.getInstance().send(message);
-                log.info("Successfully sent FCM Data message for call: {}", response);
+                BatchResponse response = FirebaseMessaging.getInstance().sendEachForMulticast(message);
+                removeInvalidBatchTokens(batchTokens, response);
+                log.info("Sent call notification to {} device(s); {} failed",
+                        response.getSuccessCount(), response.getFailureCount());
             } catch (Exception e) {
-                log.error("Failed to send FCM Data message for call to token: " + token, e);
+                log.error("Failed to send call notification: {}", e.getMessage());
             }
         }
     }
@@ -235,14 +231,17 @@ public class FCMServiceImpl implements FCMService {
             return;
         }
 
-        for (String token : tokens) {
-            if (FirebaseApp.getApps().isEmpty()) {
-                continue;
-            }
-
+        if (FirebaseApp.getApps().isEmpty()) return;
+        List<String> nativeTokens = tokens.stream()
+                .filter(java.util.Objects::nonNull)
+                .filter(token -> !isExpoPushToken(token))
+                .distinct()
+                .toList();
+        for (int offset = 0; offset < nativeTokens.size(); offset += 500) {
+            List<String> batchTokens = nativeTokens.subList(offset, Math.min(offset + 500, nativeTokens.size()));
             try {
-                Message message = Message.builder()
-                        .setToken(token)
+                MulticastMessage message = MulticastMessage.builder()
+                        .addAllTokens(batchTokens)
                         .putData("type", "CALL_CANCEL")
                         .putData("callId", callId != null ? callId : "")
                         .setAndroidConfig(com.google.firebase.messaging.AndroidConfig.builder()
@@ -250,10 +249,23 @@ public class FCMServiceImpl implements FCMService {
                                 .build())
                         .build();
 
-                String response = FirebaseMessaging.getInstance().send(message);
-                log.info("Successfully sent FCM Cancel message for call: {}", response);
+                BatchResponse response = FirebaseMessaging.getInstance().sendEachForMulticast(message);
+                removeInvalidBatchTokens(batchTokens, response);
+                log.info("Sent call cancellation to {} device(s); {} failed",
+                        response.getSuccessCount(), response.getFailureCount());
             } catch (Exception e) {
-                log.error("Failed to send FCM Cancel message for call to token: " + token, e);
+                log.error("Failed to send call cancellation: {}", e.getMessage());
+            }
+        }
+    }
+
+    private void removeInvalidBatchTokens(List<String> tokens, BatchResponse response) {
+        List<SendResponse> responses = response.getResponses();
+        for (int index = 0; index < responses.size(); index++) {
+            SendResponse sendResponse = responses.get(index);
+            if (sendResponse.isSuccessful() || sendResponse.getException() == null) continue;
+            if (sendResponse.getException().getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED) {
+                removeInvalidToken(tokens.get(index));
             }
         }
     }
@@ -280,12 +292,12 @@ public class FCMServiceImpl implements FCMService {
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                log.info("Successfully sent Expo push message to token: {}", token);
+                log.info("Successfully sent Expo push message");
             } else {
                 log.warn("Failed to send Expo push message. Status: {}, Body: {}", response.statusCode(), response.body());
             }
         } catch (Exception e) {
-            log.error("Failed to send Expo push message to token: " + token, e);
+            log.error("Failed to send Expo push message: {}", e.getMessage());
         }
     }
 }
