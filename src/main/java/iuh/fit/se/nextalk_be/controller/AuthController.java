@@ -53,8 +53,11 @@ public class AuthController {
     @Value("${app.jwt.refresh-expiration-ms:604800000}")
     private long refreshExpirationMs;
 
-    @Value("${app.auth.refresh-cookie-same-site:Lax}")
+    @Value("${app.auth.refresh-cookie-same-site:None}")
     private String refreshCookieSameSite;
+
+    @Value("${app.auth.refresh-cookie-partitioned:true}")
+    private boolean refreshCookiePartitioned;
 
     private static final String REFRESH_COOKIE = "nextalk_refresh";
 
@@ -222,12 +225,14 @@ public class AuthController {
     private ResponseCookie refreshCookie(String token) {
         return ResponseCookie.from(REFRESH_COOKIE, token)
                 .httpOnly(true).secure(refreshCookieSecure).sameSite(refreshCookieSameSite)
+                .partitioned(refreshCookiePartitioned)
                 .path("/api/auth").maxAge(Duration.ofMillis(refreshExpirationMs)).build();
     }
 
     private ResponseCookie clearRefreshCookie() {
         return ResponseCookie.from(REFRESH_COOKIE, "")
                 .httpOnly(true).secure(refreshCookieSecure).sameSite(refreshCookieSameSite)
+                .partitioned(refreshCookiePartitioned)
                 .path("/api/auth").maxAge(Duration.ZERO).build();
     }
 }
