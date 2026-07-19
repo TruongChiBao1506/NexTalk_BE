@@ -212,6 +212,11 @@ public class FCMServiceImpl implements FCMService {
                         .putData("groupName", groupName != null ? groupName : "")
                         .setAndroidConfig(com.google.firebase.messaging.AndroidConfig.builder()
                                 .setPriority(com.google.firebase.messaging.AndroidConfig.Priority.HIGH)
+                                // An unanswered invite is valid only for the ringing window.
+                                // The collapse key also lets a later cancel replace an invite
+                                // that is still queued for an offline Android device.
+                                .setTtl(60_000L)
+                                .setCollapseKey("call-" + (callId != null ? callId : "unknown"))
                                 .build())
                         .build();
 
@@ -246,6 +251,10 @@ public class FCMServiceImpl implements FCMService {
                         .putData("callId", callId != null ? callId : "")
                         .setAndroidConfig(com.google.firebase.messaging.AndroidConfig.builder()
                                 .setPriority(com.google.firebase.messaging.AndroidConfig.Priority.HIGH)
+                                // Keep the cancellation slightly longer than the invite so a
+                                // delayed invite cannot resurrect an already-ended call.
+                                .setTtl(120_000L)
+                                .setCollapseKey("call-" + (callId != null ? callId : "unknown"))
                                 .build())
                         .build();
 
