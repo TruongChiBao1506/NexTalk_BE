@@ -866,6 +866,7 @@ public class CallController {
                         signal.getConversationId(),
                         signal.getCallId(),
                         signal.getCallerId(),
+                        signal.getCallerAvatar(),
                         signal.getReceiverId(),
                         signal.getType(),
                         signal.getGroupName()

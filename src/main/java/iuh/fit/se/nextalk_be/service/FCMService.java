@@ -19,7 +19,7 @@ public interface FCMService {
     void sendChatPushNotificationToTokens(List<String> tokens, String conversationId, String conversationName,
                                           String senderId, String senderName, String senderAvatarUrl, String body);
     void sendCallPushNotificationToTokens(List<String> tokens, String callerName, String conversationId,
-                                          String callId, String callerId, String receiverId, String callType,
-                                          String groupName);
+                                          String callId, String callerId, String callerAvatar, String receiverId,
+                                          String callType, String groupName);
     void sendCallCancelPushNotificationToTokens(List<String> tokens, String callId);
 }

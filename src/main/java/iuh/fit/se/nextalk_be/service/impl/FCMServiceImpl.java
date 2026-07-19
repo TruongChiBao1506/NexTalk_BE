@@ -185,8 +185,8 @@ public class FCMServiceImpl implements FCMService {
 
     @Override
     public void sendCallPushNotificationToTokens(List<String> tokens, String callerName, String conversationId,
-                                                 String callId, String callerId, String receiverId, String callType,
-                                                 String groupName) {
+                                                 String callId, String callerId, String callerAvatar, String receiverId,
+                                                 String callType, String groupName) {
         if (tokens == null || tokens.isEmpty()) {
             return;
         }
@@ -207,6 +207,7 @@ public class FCMServiceImpl implements FCMService {
                         .putData("conversationId", conversationId != null ? conversationId : "")
                         .putData("callId", callId != null ? callId : "")
                         .putData("callerId", callerId != null ? callerId : "")
+                        .putData("callerAvatar", callerAvatar != null ? callerAvatar : "")
                         .putData("receiverId", receiverId != null ? receiverId : "")
                         .putData("callType", callType != null ? callType : "VOICE")
                         .putData("groupName", groupName != null ? groupName : "")
