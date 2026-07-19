@@ -346,7 +346,7 @@ public class CallController {
         return true;
     }
 
-    private CallResponseOutcome registerCallResponse(CallSignal signal, User responder, String respondingDeviceToken) {
+    private CallResponseOutcome registerCallResponse(CallSignal signal, User responder, String responseDeviceKey) {
         if (signal.getCallId() == null || signal.getConversationId() == null
                 || signal.getCallerId() == null || signal.getAccept() == null) {
             return CallResponseOutcome.INVALID;
@@ -373,8 +373,8 @@ public class CallController {
             }
             if (session.respondedUserIds.contains(responder.getId())) {
                 boolean sameAnswer = Objects.equals(session.responseAcceptedByUser.get(responder.getId()), signal.getAccept());
-                boolean sameDevice = respondingDeviceToken != null
-                        && deviceTokenFingerprint(respondingDeviceToken)
+                boolean sameDevice = responseDeviceKey != null
+                        && responseDeviceKey
                         .equals(session.responseDeviceByUser.get(responder.getId()));
                 return sameAnswer && sameDevice
                         ? CallResponseOutcome.DUPLICATE_SAME_DEVICE
@@ -383,8 +383,8 @@ public class CallController {
 
             session.respondedUserIds.add(responder.getId());
             session.responseAcceptedByUser.put(responder.getId(), Boolean.TRUE.equals(signal.getAccept()));
-            if (respondingDeviceToken != null && !respondingDeviceToken.isBlank()) {
-                session.responseDeviceByUser.put(responder.getId(), deviceTokenFingerprint(respondingDeviceToken));
+            if (responseDeviceKey != null && !responseDeviceKey.isBlank()) {
+                session.responseDeviceByUser.put(responder.getId(), responseDeviceKey);
             }
             if (Boolean.TRUE.equals(signal.getAccept())) {
                 session.participantIds.add(responder.getId());
@@ -621,12 +621,16 @@ public class CallController {
                 || (channel.getConversation() != null && isConversationMember(channel.getConversation(), user.getId()));
     }
 
-    private String deviceTokenFingerprint(String token) {
+    private String responseDeviceKey(String deviceId, String fcmToken) {
+        if (deviceId != null && !deviceId.isBlank()) {
+            return "device:" + deviceId.trim();
+        }
+        if (fcmToken == null || fcmToken.isBlank()) return null;
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(token.getBytes(StandardCharsets.UTF_8)));
+            return "fcm:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(fcmToken.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception ignored) {
-            return Integer.toHexString(token.hashCode());
+            return "fcm:" + Integer.toHexString(fcmToken.hashCode());
         }
     }
 
@@ -748,18 +752,20 @@ public class CallController {
     public ResponseEntity<ApiResponse<Void>> rejectCallRest(
             @RequestBody CallSignal signal,
             Principal principal,
-            @RequestHeader(value = "X-FCM-Token", required = false) String respondingDeviceToken
+            @RequestHeader(value = "X-FCM-Token", required = false) String respondingDeviceToken,
+            @RequestHeader(value = "X-Device-ID", required = false) String respondingDeviceId
     ) {
         signal.setAccept(false);
         signal.setReason("rejected");
-        return respondToCallRest(signal, principal, respondingDeviceToken);
+        return respondToCallRest(signal, principal, respondingDeviceToken, respondingDeviceId);
     }
 
     @PostMapping("/respond")
     public ResponseEntity<ApiResponse<Void>> respondToCallRest(
             @RequestBody CallSignal signal,
             Principal principal,
-            @RequestHeader(value = "X-FCM-Token", required = false) String respondingDeviceToken
+            @RequestHeader(value = "X-FCM-Token", required = false) String respondingDeviceToken,
+            @RequestHeader(value = "X-Device-ID", required = false) String respondingDeviceId
     ) {
         if (principal == null) return ResponseEntity.badRequest().build();
         User responder = findUserByPrincipal(principal);
@@ -767,7 +773,8 @@ public class CallController {
 
         signal.setReceiverId(responder.getId());
         signal.setSignalType("ANSWER");
-        CallResponseOutcome outcome = registerCallResponse(signal, responder, respondingDeviceToken);
+        CallResponseOutcome outcome = registerCallResponse(
+                signal, responder, responseDeviceKey(respondingDeviceId, respondingDeviceToken));
         if (outcome == CallResponseOutcome.DUPLICATE_SAME_DEVICE) {
             return ResponseEntity.ok(ApiResponse.success(null, "Call response already handled by this device"));
         }
@@ -787,11 +794,16 @@ public class CallController {
                     signal
             );
         }
-        notifyOtherResponderDevices(signal, responder, respondingDeviceToken);
+        notifyOtherResponderDevices(signal, responder, respondingDeviceToken, respondingDeviceId);
         return ResponseEntity.ok(ApiResponse.success(null, "Call response handled"));
     }
 
     private void notifyOtherResponderDevices(CallSignal original, User responder, String respondingDeviceToken) {
+        notifyOtherResponderDevices(original, responder, respondingDeviceToken, null);
+    }
+
+    private void notifyOtherResponderDevices(CallSignal original, User responder, String respondingDeviceToken,
+                                             String respondingDeviceId) {
         CallSignal handledSignal = CallSignal.builder()
                 .callId(original.getCallId())
                 .conversationId(original.getConversationId())
@@ -801,6 +813,7 @@ public class CallController {
                 .signalType("CALL_HANDLED")
                 .accept(original.getAccept())
                 .reason(Boolean.TRUE.equals(original.getAccept()) ? "answered_on_another_device" : "rejected_on_another_device")
+                .handledByDeviceId(respondingDeviceId)
                 .build();
 
         // User destinations fan out to every active WebSocket session for this user.

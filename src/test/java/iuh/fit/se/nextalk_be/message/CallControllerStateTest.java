@@ -121,13 +121,23 @@ class CallControllerStateTest {
         controller.inviteCall(invite("private-call", conversation.getId(), firstResponder.getId()), principal(caller));
         CallSignal response = answer("private-call", conversation.getId(), true);
 
-        ResponseEntity<ApiResponse<Void>> first = controller.respondToCallRest(response, principal(firstResponder), "device-a");
-        ResponseEntity<ApiResponse<Void>> sameDeviceRetry = controller.respondToCallRest(response, principal(firstResponder), "device-a");
-        ResponseEntity<ApiResponse<Void>> otherDevice = controller.respondToCallRest(response, principal(firstResponder), "device-b");
+        ResponseEntity<ApiResponse<Void>> first = controller.respondToCallRest(
+                response, principal(firstResponder), "fcm-a", "device-a");
+        ResponseEntity<ApiResponse<Void>> sameDeviceRetry = controller.respondToCallRest(
+                response, principal(firstResponder), "fcm-a", "device-a");
+        ResponseEntity<ApiResponse<Void>> otherDevice = controller.respondToCallRest(
+                response, principal(firstResponder), "fcm-b", "device-b");
 
         assertEquals(200, first.getStatusCode().value());
         assertEquals(200, sameDeviceRetry.getStatusCode().value());
         assertEquals(409, otherDevice.getStatusCode().value());
+
+        ArgumentCaptor<CallSignal> responderSignals = ArgumentCaptor.forClass(CallSignal.class);
+        verify(messagingTemplate, org.mockito.Mockito.times(2))
+                .convertAndSendToUser(eq(firstResponder.getUsername()), eq("/queue/calls"), responderSignals.capture());
+        CallSignal handledSignal = responderSignals.getAllValues().get(1);
+        assertEquals("CALL_HANDLED", handledSignal.getSignalType());
+        assertEquals("device-a", handledSignal.getHandledByDeviceId());
     }
 
     @Test

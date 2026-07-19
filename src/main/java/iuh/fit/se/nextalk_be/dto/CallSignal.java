@@ -22,4 +22,5 @@ public class CallSignal {
     private Integer uid;
     private Boolean accept;
     private String reason; // busy, rejected
+    private String handledByDeviceId;
 }
