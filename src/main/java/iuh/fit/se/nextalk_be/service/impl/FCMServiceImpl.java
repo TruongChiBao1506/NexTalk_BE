@@ -13,6 +13,9 @@ import com.google.firebase.messaging.MulticastMessage;
 import com.google.firebase.messaging.BatchResponse;
 import com.google.firebase.messaging.SendResponse;
 import com.google.firebase.messaging.Notification;
+import com.google.firebase.messaging.ApnsConfig;
+import com.google.firebase.messaging.Aps;
+import com.google.firebase.messaging.ApsAlert;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
@@ -131,32 +134,36 @@ public class FCMServiceImpl implements FCMService {
                 continue;
             }
             try {
-                Notification.Builder notificationBuilder = Notification.builder()
-                        .setTitle(conversationName != null && !conversationName.isBlank()
-                                ? senderName + " · " + conversationName
-                                : senderName)
-                        .setBody(body != null ? body : "Bạn có tin nhắn mới");
-                if (senderAvatarUrl != null && !senderAvatarUrl.isBlank()) {
-                    notificationBuilder.setImage(senderAvatarUrl);
-                }
+                String safeSenderName = senderName != null && !senderName.isBlank() ? senderName : "NexTalk";
+                String notificationTitle = conversationName != null && !conversationName.isBlank()
+                        ? safeSenderName + " · " + conversationName
+                        : safeSenderName;
+                String notificationBody = body != null ? body : "Bạn có tin nhắn mới";
                 Message message = Message.builder()
                         .setToken(token)
-                        // Android can render this even when the JS process is not alive.
-                        .setNotification(notificationBuilder.build())
                         .putData("type", "CHAT_MESSAGE")
                         .putData("conversationId", conversationId != null ? conversationId : "")
                         .putData("conversationName", conversationName != null ? conversationName : "")
                         .putData("senderId", senderId != null ? senderId : "")
-                        .putData("senderName", senderName != null ? senderName : "NexTalk")
+                        .putData("senderName", safeSenderName)
                         .putData("senderAvatarUrl", senderAvatarUrl != null ? senderAvatarUrl : "")
-                        .putData("body", body != null ? body : "Bạn có tin nhắn mới")
+                        .putData("body", notificationBody)
+                        // Android must receive a data-only push so the client can choose
+                        // between a system bubble and a regular notification per device.
                         .setAndroidConfig(com.google.firebase.messaging.AndroidConfig.builder()
                                 .setPriority(com.google.firebase.messaging.AndroidConfig.Priority.HIGH)
                                 .setTtl(86_400_000L)
-                                .setNotification(com.google.firebase.messaging.AndroidNotification.builder()
-                                        .setChannelId("messages")
+                                .setCollapseKey("chat-" + (conversationId != null ? conversationId : "nextalk"))
+                                .build())
+                        // iOS keeps a normal APNs alert; bubbles are Android-only.
+                        .setApnsConfig(ApnsConfig.builder()
+                                .putHeader("apns-priority", "10")
+                                .setAps(Aps.builder()
+                                        .setAlert(ApsAlert.builder()
+                                                .setTitle(notificationTitle)
+                                                .setBody(notificationBody)
+                                                .build())
                                         .setSound("default")
-                                        .setDefaultVibrateTimings(true)
                                         .build())
                                 .build())
                         .build();
