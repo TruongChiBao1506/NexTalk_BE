@@ -11,6 +11,7 @@ import iuh.fit.se.nextalk_be.dto.request.ReactMessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.ShareMessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.TypingIndicatorRequest;
 import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageSyncResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageStatusResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageStatusUpdateResponse;
 import iuh.fit.se.nextalk_be.entity.Channel;
@@ -55,6 +56,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -64,6 +66,7 @@ import java.util.function.Function;
 
 import java.time.*;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -602,6 +605,107 @@ public class MessageServiceImpl implements MessageService {
                 (mappingStartedAt - queryStartedAt) / 1_000_000,
                 (System.nanoTime() - mappingStartedAt) / 1_000_000, content.size());
         return new PageImpl<>(content, pageable, estimatedTotal);
+    }
+
+    @Override
+    public MessageSyncResponse syncConversationMessages(String conversationId, LocalDateTime since, int limit) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + conversationId));
+
+        boolean isMember = conversation.getMembers().stream()
+                .anyMatch(member -> member.getId().equals(currentUser.getId()));
+        if (!isMember) {
+            throw new BadRequestException("You are not a member of this conversation");
+        }
+
+        LocalDateTime queryUntil = LocalDateTime.now().truncatedTo(ChronoUnit.MILLIS);
+        LocalDateTime cursor = queryUntil.minus(1, ChronoUnit.MILLIS);
+        if (since != null && since.isAfter(cursor)) {
+            cursor = since;
+        }
+        int safeLimit = Math.max(1, Math.min(limit, 200));
+        if (since == null || since.isAfter(queryUntil)) {
+            return buildFullMessageSnapshot(conversationId, currentUser.getId(), cursor);
+        }
+
+        Pageable changePage = org.springframework.data.domain.PageRequest.of(0, safeLimit + 1);
+        List<Message> changedMessages = messageRepository.findConversationChanges(
+                conversationId, since, queryUntil, changePage);
+        List<MessageStatus> changedStatuses = messageStatusRepository
+                .findConversationStatusChanges(
+                        conversationId, since, queryUntil, changePage);
+
+        if (changedMessages.size() > safeLimit || changedStatuses.size() > safeLimit) {
+            return buildFullMessageSnapshot(conversationId, currentUser.getId(), cursor);
+        }
+
+        LinkedHashMap<String, Message> changesById = new LinkedHashMap<>();
+        changedMessages.forEach(message -> changesById.put(message.getId(), message));
+        Set<String> statusMessageIds = changedStatuses.stream()
+                .map(status -> status.getMessageId() != null
+                        ? status.getMessageId()
+                        : status.getMessage() != null ? status.getMessage().getId() : null)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (!statusMessageIds.isEmpty()) {
+            messageRepository.findAllById(statusMessageIds).forEach(message -> {
+                String messageConversationId = message.getConversationId() != null
+                        ? message.getConversationId()
+                        : message.getConversation() != null ? message.getConversation().getId() : null;
+                if (conversationId.equals(messageConversationId)) {
+                    changesById.put(message.getId(), message);
+                }
+            });
+        }
+
+        if (changesById.size() > safeLimit) {
+            return buildFullMessageSnapshot(conversationId, currentUser.getId(), cursor);
+        }
+
+        List<String> deletedMessageIds = changesById.values().stream()
+                .filter(message -> message.getDeletedByUsers() != null
+                        && message.getDeletedByUsers().contains(currentUser.getId()))
+                .map(Message::getId)
+                .toList();
+        LocalDateTime now = LocalDateTime.now();
+        List<Message> visibleChanges = changesById.values().stream()
+                .filter(message -> message.getDeletedByUsers() == null
+                        || !message.getDeletedByUsers().contains(currentUser.getId()))
+                .filter(message -> message.getExpiresAt() == null || message.getExpiresAt().isAfter(now))
+                .sorted(Comparator.comparing(
+                        Message::getCreatedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder())))
+                .toList();
+
+        return MessageSyncResponse.builder()
+                .messages(mapMessagesToResponses(visibleChanges))
+                .deletedMessageIds(deletedMessageIds)
+                .cursor(cursor)
+                .fullSnapshot(false)
+                .build();
+    }
+
+    private MessageSyncResponse buildFullMessageSnapshot(
+            String conversationId,
+            String currentUserId,
+            LocalDateTime cursor
+    ) {
+        Slice<Message> snapshot = messageRepository.findVisibleConversationMessages(
+                conversationId,
+                currentUserId,
+                org.springframework.data.domain.PageRequest.of(0, 50)
+        );
+        LocalDateTime now = LocalDateTime.now();
+        List<MessageResponse> messages = mapMessagesToResponses(snapshot.getContent()).stream()
+                .filter(message -> message.getExpiresAt() == null || message.getExpiresAt().isAfter(now))
+                .toList();
+        return MessageSyncResponse.builder()
+                .messages(messages)
+                .deletedMessageIds(List.of())
+                .cursor(cursor)
+                .fullSnapshot(true)
+                .build();
     }
 
     // @Transactional

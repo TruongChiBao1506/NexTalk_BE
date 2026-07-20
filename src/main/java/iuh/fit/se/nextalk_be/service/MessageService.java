@@ -9,6 +9,7 @@ import iuh.fit.se.nextalk_be.dto.request.ReactMessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.ShareMessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.TypingIndicatorRequest;
 import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageSyncResponse;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.User;
 import org.springframework.data.domain.Page;
@@ -16,12 +17,14 @@ import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Map;
+import java.time.LocalDateTime;
 
 public interface MessageService {
     public MessageResponse sendMessage(MessageRequest request);
     public MessageResponse sendMessage(MessageRequest request, String senderEmail);
     public void broadcastTypingIndicator(TypingIndicatorRequest request, String senderEmail);
     public Page<MessageResponse> getConversationMessages(String conversationId, Pageable pageable);
+    public MessageSyncResponse syncConversationMessages(String conversationId, LocalDateTime since, int limit);
     public List<MessageResponse> getLatestMessages(List<String> conversationIds);
     public Map<String, Long> getUnreadCounts(String username);
     public void markConversationMessagesAsDelivered(String conversationId, String username);

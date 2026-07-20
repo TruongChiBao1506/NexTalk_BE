@@ -11,6 +11,7 @@ import iuh.fit.se.nextalk_be.dto.request.ShareMessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.TypingIndicatorRequest;
 import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageSyncResponse;
 import iuh.fit.se.nextalk_be.entity.Message;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.MessageService;
@@ -30,6 +31,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
 import java.time.Duration;
+import java.time.LocalDateTime;
+import org.springframework.format.annotation.DateTimeFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -58,6 +61,19 @@ public class MessageController {
         Pageable pageable = PageRequest.of(page, size);
         Page<MessageResponse> responsePage = messageService.getConversationMessages(conversationId, pageable);
         return ResponseEntity.ok(ApiResponse.success(responsePage.getContent(), "Messages retrieved successfully"));
+    }
+
+    @GetMapping("/api/messages/{conversationId}/sync")
+    @Operation(summary = "Get message changes since a server-issued cursor")
+    public ResponseEntity<ApiResponse<MessageSyncResponse>> syncConversationMessages(
+            @PathVariable("conversationId") String conversationId,
+            @RequestParam(value = "since", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime since,
+            @RequestParam(value = "limit", defaultValue = "100") int limit
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(
+                messageService.syncConversationMessages(conversationId, since, limit),
+                "Message changes synchronized successfully"));
     }
 
     @PostMapping("/api/messages/latest")

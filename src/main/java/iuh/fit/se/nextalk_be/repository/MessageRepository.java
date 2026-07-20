@@ -14,6 +14,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Set;
+import java.time.LocalDateTime;
 
 @Repository
 public interface MessageRepository extends MongoRepository<Message, String> {
@@ -34,6 +35,14 @@ public interface MessageRepository extends MongoRepository<Message, String> {
 
     @Query(value = "{'$and':[{'$or':[{'conversationId':?0},{'conversation':?0}]},{'deletedByUsers':{'$ne':?1}}]}", sort = "{'createdAt':-1}")
     Slice<Message> findVisibleConversationMessages(String conversationId, String userId, Pageable pageable);
+
+    @Query(value = "{'$and':[{'$or':[{'conversationId':?0},{'conversation':?0}]},{'updatedAt':{'$gt':?1,'$lte':?2}}]}", sort = "{'updatedAt':1,'_id':1}")
+    List<Message> findConversationChanges(
+            String conversationId,
+            LocalDateTime since,
+            LocalDateTime until,
+            Pageable pageable
+    );
 
     List<Message> findByConversationIdIsNull(Pageable pageable);
 

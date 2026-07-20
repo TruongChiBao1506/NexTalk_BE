@@ -26,6 +26,7 @@ import java.util.Map;
 @Document(collection = "messages")
 @CompoundIndex(name = "msg_conv_created_idx", def = "{'conversation': 1, 'createdAt': -1}")
 @CompoundIndex(name = "msg_conv_created_v2", def = "{'conversationId': 1, 'createdAt': -1}")
+@CompoundIndex(name = "msg_conv_updated_v1", def = "{'conversationId': 1, 'updatedAt': 1}")
 public class Message extends BaseEntity {
 
     @DocumentReference(lazy = true)

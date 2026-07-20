@@ -27,6 +27,9 @@ import java.util.Set;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.emptyOrNullString;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -120,5 +123,56 @@ public class MessageControllerTest {
                 .andExpect(jsonPath("$.success", is(true)))
                 .andExpect(jsonPath("$.data", hasSize(1)))
                 .andExpect(jsonPath("$.data[0].content", is("Test message")));
+    }
+
+    @Test
+    @WithMockUser(username = "sender@gmail.com")
+    void syncConversationMessages_UsesCursorAndReturnsDeletionTombstone() throws Exception {
+        Message message = Message.builder()
+                .conversation(conversation)
+                .sender(senderUser)
+                .content("Cached message")
+                .messageType(MessageType.TEXT)
+                .build();
+        message = messageRepository.save(message);
+
+        String initialCursor = objectMapper.readTree(mockMvc.perform(get("/api/messages/" + conversation.getId() + "/sync")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fullSnapshot", is(true)))
+                .andExpect(jsonPath("$.data.messages", hasSize(1)))
+                .andExpect(jsonPath("$.data.cursor", not(emptyOrNullString())))
+                .andReturn()
+                .getResponse()
+                .getContentAsString())
+                .at("/data/cursor")
+                .asText();
+
+        mockMvc.perform(get("/api/messages/" + conversation.getId() + "/sync")
+                        .param("since", initialCursor)
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fullSnapshot", is(false)));
+
+        mockMvc.perform(get("/api/messages/" + conversation.getId() + "/sync")
+                        .param("since", "2000-01-01T00:00:00")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fullSnapshot", is(false)))
+                .andExpect(jsonPath("$.data.messages", hasSize(1)))
+                .andExpect(jsonPath("$.data.messages[0].id", is(message.getId())))
+                .andExpect(jsonPath("$.data.deletedMessageIds", hasSize(0)));
+
+        mockMvc.perform(delete("/api/messages/" + message.getId())
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/messages/" + conversation.getId() + "/sync")
+                        .param("since", "2000-01-01T00:00:00")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.messages", hasSize(0)))
+                .andExpect(jsonPath("$.data.deletedMessageIds", hasSize(1)))
+                .andExpect(jsonPath("$.data.deletedMessageIds[0]", is(message.getId())));
     }
 }
