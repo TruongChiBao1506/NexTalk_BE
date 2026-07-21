@@ -40,6 +40,13 @@ public class ConversationController {
         return ResponseEntity.ok(ApiResponse.success(response, "Private conversation resolved successfully"));
     }
 
+    @PostMapping("/cloud")
+    @Operation(summary = "Get or create a cloud conversation for the current user")
+    public ResponseEntity<ApiResponse<ConversationResponse>> getOrCreateCloudConversation() {
+        ConversationResponse response = conversationService.getOrCreateCloudConversation();
+        return ResponseEntity.ok(ApiResponse.success(response, "Cloud conversation resolved successfully"));
+    }
+
     @GetMapping
     @Operation(summary = "Get all conversations of the currently logged-in user")
     public ResponseEntity<ApiResponse<List<ConversationResponse>>> getUserConversations() {

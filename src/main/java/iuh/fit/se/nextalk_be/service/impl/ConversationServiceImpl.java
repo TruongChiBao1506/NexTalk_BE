@@ -95,6 +95,34 @@ public class ConversationServiceImpl implements ConversationService {
         return mapToConversationResponse(savedConversation);
     }
 
+    @Transactional
+    public ConversationResponse getOrCreateCloudConversation() {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+
+        Optional<Conversation> existing = conversationRepository
+                .findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId())
+                .stream()
+                .filter(conversation -> conversation.getType() == ConversationType.CLOUD)
+                .findFirst();
+
+        if (existing.isPresent()) {
+            Conversation conversation = existing.get();
+            if (conversation.getDeletedByUsers() != null && conversation.getDeletedByUsers().remove(currentUser.getId())) {
+                conversation = conversationRepository.save(conversation);
+            }
+            return mapToConversationResponse(conversation);
+        }
+
+        Conversation conversation = Conversation.builder()
+                .type(ConversationType.CLOUD)
+                .name("Cloud của tôi")
+                .members(new HashSet<>(Arrays.asList(currentUser)))
+                .build();
+
+        Conversation savedConversation = conversationRepository.save(conversation);
+        return mapToConversationResponse(savedConversation);
+    }
+
     // @Transactional(readOnly = true)
     public List<ConversationResponse> getUserConversations() {
         User currentUser = userService.getCurrentAuthenticatedUser();
@@ -381,7 +409,7 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     private boolean canSendMessages(Conversation conversation) {
-        if (conversation.getType() == ConversationType.GROUP) {
+        if (conversation.getType() == ConversationType.GROUP || conversation.getType() == ConversationType.CLOUD) {
             return true;
         }
 

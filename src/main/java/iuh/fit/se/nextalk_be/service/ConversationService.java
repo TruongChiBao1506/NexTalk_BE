@@ -25,6 +25,7 @@ import java.util.stream.Collectors;
 
 public interface ConversationService {
     @Transactional public ConversationResponse getOrCreatePrivateConversation(String friendId);
+    @Transactional public ConversationResponse getOrCreateCloudConversation();
     public List<ConversationResponse> getUserConversations();
     public ConversationResponse getConversationById(String id);
     public ConversationResponse mapToConversationResponse(Conversation conversation);
