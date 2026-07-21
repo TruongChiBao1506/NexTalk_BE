@@ -99,18 +99,32 @@ public class ConversationServiceImpl implements ConversationService {
     public ConversationResponse getOrCreateCloudConversation() {
         User currentUser = userService.getCurrentAuthenticatedUser();
 
-        Optional<Conversation> existing = conversationRepository
+        List<Conversation> cloudConversations = conversationRepository
                 .findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId())
                 .stream()
                 .filter(conversation -> conversation.getType() == ConversationType.CLOUD)
-                .findFirst();
+                .collect(Collectors.toList());
 
-        if (existing.isPresent()) {
-            Conversation conversation = existing.get();
-            if (conversation.getDeletedByUsers() != null && conversation.getDeletedByUsers().remove(currentUser.getId())) {
-                conversation = conversationRepository.save(conversation);
+        if (!cloudConversations.isEmpty()) {
+            Conversation primary = cloudConversations.get(0);
+            if (cloudConversations.size() > 1) {
+                for (int i = 1; i < cloudConversations.size(); i++) {
+                    Conversation extra = cloudConversations.get(i);
+                    List<Message> extraMessages = messageRepository.findAllByConversationId(extra.getId());
+                    for (Message m : extraMessages) {
+                        m.setConversation(primary);
+                        m.setConversationId(primary.getId());
+                    }
+                    if (!extraMessages.isEmpty()) {
+                        messageRepository.saveAll(extraMessages);
+                    }
+                    conversationRepository.delete(extra);
+                }
             }
-            return mapToConversationResponse(conversation);
+            if (primary.getDeletedByUsers() != null && primary.getDeletedByUsers().remove(currentUser.getId())) {
+                primary = conversationRepository.save(primary);
+            }
+            return mapToConversationResponse(primary);
         }
 
         Conversation conversation = Conversation.builder()
@@ -156,6 +170,7 @@ public class ConversationServiceImpl implements ConversationService {
     private List<Conversation> deduplicateConversations(List<Conversation> conversations, String currentUserId) {
         Map<String, Conversation> latestPrivateConvs = new LinkedHashMap<>();
         List<Conversation> result = new ArrayList<>();
+        boolean cloudAdded = false;
 
         for (Conversation conv : conversations) {
             if (conv.getType() == ConversationType.PRIVATE) {
@@ -171,6 +186,12 @@ public class ConversationServiceImpl implements ConversationService {
                         result.add(conv);
                     }
                 } else {
+                    result.add(conv);
+                }
+            } else if (conv.getType() == ConversationType.CLOUD) {
+                // Mỗi user chỉ có đúng 1 Cloud conversation – bỏ qua các bản trùng lặp
+                if (!cloudAdded) {
+                    cloudAdded = true;
                     result.add(conv);
                 }
             } else {

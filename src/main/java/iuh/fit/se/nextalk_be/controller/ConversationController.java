@@ -33,6 +33,7 @@ public class ConversationController {
     private final ConversationSummaryService conversationSummaryService;
     private final RateLimitService rateLimitService;
 
+
     @PostMapping("/private/{friendId}")
     @Operation(summary = "Get or create a private conversation with a friend")
     public ResponseEntity<ApiResponse<ConversationResponse>> getOrCreatePrivateConversation(@PathVariable("friendId") String friendId) {
@@ -46,6 +47,7 @@ public class ConversationController {
         ConversationResponse response = conversationService.getOrCreateCloudConversation();
         return ResponseEntity.ok(ApiResponse.success(response, "Cloud conversation resolved successfully"));
     }
+
 
     @GetMapping
     @Operation(summary = "Get all conversations of the currently logged-in user")

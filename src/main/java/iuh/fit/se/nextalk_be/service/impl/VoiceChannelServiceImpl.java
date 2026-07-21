@@ -78,11 +78,15 @@ public class VoiceChannelServiceImpl implements VoiceChannelService {
 
     @Scheduled(fixedDelayString = "${app.redis.voice-cleanup-delay:30000}")
     public void expireStaleMembers() {
-        ScanOptions options = ScanOptions.scanOptions().match(CHANNEL_MEMBERS_PREFIX + "*").count(100).build();
-        Cursor<String> cursor = redisTemplate.scan(options);
-        if (cursor == null) return;
-        try (Cursor<String> keys = cursor) {
-            while (keys.hasNext()) removeStaleMembers(keys.next());
+        try {
+            ScanOptions options = ScanOptions.scanOptions().match(CHANNEL_MEMBERS_PREFIX + "*").count(100).build();
+            Cursor<String> cursor = redisTemplate.scan(options);
+            if (cursor == null) return;
+            try (Cursor<String> keys = cursor) {
+                while (keys.hasNext()) removeStaleMembers(keys.next());
+            }
+        } catch (Exception e) {
+            log.warn("[Redis Voice Cleanup] Redis is currently unavailable: {}", e.getMessage());
         }
     }
 
