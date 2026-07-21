@@ -19,10 +19,10 @@ import java.util.regex.Pattern;
 @Service
 public class LinkPreviewServiceImpl implements LinkPreviewService {
 
-    private static final Pattern URL_PATTERN = Pattern.compile("https?://[^\\s<>\"]+", Pattern.CASE_INSENSITIVE);
-    private static final int TIMEOUT_MS = 3500;
+    private static final Pattern URL_PATTERN = Pattern.compile("(?:https?://|www\\.)[^\\s<>\"]+|[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}(?:/[^\\s<>\"]*)?", Pattern.CASE_INSENSITIVE);
+    private static final int TIMEOUT_MS = 5000;
     private static final int MAX_BODY_SIZE = 1024 * 512;
-    private static final int MAX_REDIRECTS = 3;
+    private static final int MAX_REDIRECTS = 5;
 
     public Optional<LinkPreviewResponse> createPreview(String content) {
         String url = extractFirstUrl(content);
@@ -53,6 +53,10 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
                     URI.create(safeUrl).getHost()
             );
 
+            if (isBlank(title)) {
+                title = firstNonBlank(siteName, URI.create(safeUrl).getHost(), safeUrl);
+            }
+
             if (isBlank(title) && isBlank(description) && isBlank(image)) {
                 return Optional.empty();
             }
@@ -75,14 +79,23 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
             return null;
         }
         Matcher matcher = URL_PATTERN.matcher(content);
-        return matcher.find() ? matcher.group().replaceAll("[),.]+$", "") : null;
+        if (!matcher.find()) {
+            return null;
+        }
+        String extracted = matcher.group().replaceAll("[),.]+$", "");
+        if (!extracted.startsWith("http://") && !extracted.startsWith("https://")) {
+            extracted = "https://" + extracted;
+        }
+        return extracted;
     }
 
     private Document fetchDocument(String url) throws Exception {
         String currentUrl = url;
         for (int redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
             Connection.Response response = Jsoup.connect(currentUrl)
-                    .userAgent("NexTalkBot/1.0")
+                    .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+                    .header("Accept-Language", "en-US,en;q=0.9,vi;q=0.8")
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
                     .timeout(TIMEOUT_MS)
                     .maxBodySize(MAX_BODY_SIZE)
                     .followRedirects(false)
