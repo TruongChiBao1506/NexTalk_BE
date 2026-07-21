@@ -32,4 +32,6 @@ public class MessageRequest {
 
     @Size(max = 100, message = "Client message ID must not exceed 100 characters")
     private String clientMessageId;
+
+    private java.util.Map<String, Object> metadata;
 }

@@ -21,6 +21,15 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import iuh.fit.se.nextalk_be.entity.Message;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
+import iuh.fit.se.nextalk_be.service.MessageService;
+
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -28,6 +37,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.web.bind.annotation.*;
+import iuh.fit.se.nextalk_be.dto.response.LinkPreviewResponse;
+import iuh.fit.se.nextalk_be.service.LinkPreviewService;
 
 import java.security.Principal;
 import java.time.Duration;
@@ -42,6 +53,7 @@ import java.util.Map;
 public class MessageController {
 
     private final MessageService messageService;
+    private final LinkPreviewService linkPreviewService;
     private final RateLimitService rateLimitService;
 
     @PostMapping("/api/messages")
@@ -49,6 +61,14 @@ public class MessageController {
     public ResponseEntity<ApiResponse<MessageResponse>> sendMessage(@Valid @RequestBody MessageRequest request) {
         MessageResponse response = messageService.sendMessage(request);
         return ResponseEntity.ok(ApiResponse.success(response, "Message sent successfully"));
+    }
+
+    @GetMapping("/api/messages/link-preview")
+    @Operation(summary = "Fetch link preview metadata for a URL")
+    public ResponseEntity<ApiResponse<LinkPreviewResponse>> getLinkPreview(@RequestParam("url") String url) {
+        rateLimitService.check("message:link-preview", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(1));
+        LinkPreviewResponse response = linkPreviewService.createPreview(url).orElse(null);
+        return ResponseEntity.ok(ApiResponse.success(response, "Link preview retrieved successfully"));
     }
 
     @GetMapping("/api/messages/{conversationId}")

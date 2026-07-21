@@ -251,6 +251,9 @@ public class MessageServiceImpl implements MessageService {
         }
 
         Map<String, Object> metadata = new HashMap<>();
+        if (request.getMetadata() != null && !request.getMetadata().isEmpty()) {
+            metadata.putAll(request.getMetadata());
+        }
         if (request.getClientMessageId() != null && !request.getClientMessageId().isBlank()) {
             metadata.put("clientMessageId", request.getClientMessageId().trim());
         }
@@ -264,7 +267,7 @@ public class MessageServiceImpl implements MessageService {
         if (!mentionTargets.userIds().isEmpty()) {
             metadata.put("mentionedUserIds", new ArrayList<>(mentionTargets.userIds()));
         }
-        if (type == MessageType.TEXT && !content.isBlank()) {
+        if (type == MessageType.TEXT && !content.isBlank() && !Boolean.TRUE.equals(metadata.get("suppressLinkPreview")) && !metadata.containsKey("linkPreview")) {
             linkPreviewService.createPreview(content)
                     .ifPresent(preview -> metadata.put("linkPreview", preview));
         }
