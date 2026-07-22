@@ -118,9 +118,9 @@ public class MessageServiceImpl implements MessageService {
     public List<MessageResponse> getLatestMessages(List<String> conversationIds) {
         if (conversationIds == null || conversationIds.isEmpty()) return List.of();
         User currentUser = userService.getCurrentAuthenticatedUser();
-        Set<String> allowedIds = conversationRepository.findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId()).stream()
+        Set<String> allowedIds = conversationRepository.findAllById(conversationIds).stream()
+                .filter(c -> c.getMembers() != null && c.getMembers().stream().anyMatch(m -> m.getId().equals(currentUser.getId())))
                 .map(Conversation::getId)
-                .filter(conversationIds::contains)
                 .collect(Collectors.toSet());
         if (allowedIds.isEmpty()) return List.of();
         return mapMessagesToResponses(messageRepository.findLatestVisibleByConversationIds(new ArrayList<>(allowedIds), currentUser.getId()));

@@ -13,4 +13,5 @@ public interface ChannelRepository extends MongoRepository<Channel, String> {
     List<Channel> findAllByGroupId(String groupId);
     void deleteAllByGroupId(String groupId);
     java.util.Optional<Channel> findByConversationId(String conversationId);
+    List<Channel> findAllByConversationIdIn(java.util.Collection<String> conversationIds);
 }

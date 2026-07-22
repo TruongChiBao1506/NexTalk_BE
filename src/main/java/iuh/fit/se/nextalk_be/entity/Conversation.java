@@ -1,11 +1,7 @@
 package iuh.fit.se.nextalk_be.entity;
 
-import iuh.fit.se.nextalk_be.entity.BaseEntity;
-import iuh.fit.se.nextalk_be.entity.ConversationType;
-import iuh.fit.se.nextalk_be.entity.User;
-
-
 import lombok.*;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.DocumentReference;
 
@@ -20,6 +16,7 @@ import java.util.Map;
 @NoArgsConstructor
 @AllArgsConstructor
 @Document(collection = "conversations")
+@CompoundIndex(name = "members_updatedAt_idx", def = "{'members._id': 1, 'updatedAt': -1}")
 public class Conversation extends BaseEntity {
 
     private ConversationType type;

@@ -10,6 +10,8 @@ import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.entity.Message;
 import iuh.fit.se.nextalk_be.entity.MessageType;
+import iuh.fit.se.nextalk_be.entity.UserBlock;
+import iuh.fit.se.nextalk_be.entity.Channel;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.repository.ChannelRepository;
@@ -153,6 +155,28 @@ public class ConversationServiceImpl implements ConversationService {
                         .map(MessageRepository.ConversationIdResult::conversationId)
                         .collect(Collectors.toSet());
 
+        // Batch load all blocks involving currentUser in 1 query
+        List<UserBlock> blocks = userBlockRepository.findAllByBlockerIdOrBlockedId(currentUser.getId(), currentUser.getId());
+        Set<String> blockedByMeSet = blocks.stream()
+                .filter(b -> b.getBlocker() != null && currentUser.getId().equals(b.getBlocker().getId()) && b.getBlocked() != null)
+                .map(b -> b.getBlocked().getId())
+                .collect(Collectors.toSet());
+        Set<String> blockedMeSet = blocks.stream()
+                .filter(b -> b.getBlocked() != null && currentUser.getId().equals(b.getBlocked().getId()) && b.getBlocker() != null)
+                .map(b -> b.getBlocker().getId())
+                .collect(Collectors.toSet());
+
+        // Batch load group channel names in 1 query
+        List<String> groupConvIds = deduplicated.stream()
+                .filter(c -> c.getType() == ConversationType.GROUP)
+                .map(Conversation::getId)
+                .collect(Collectors.toList());
+        Map<String, String> groupNamesMap = groupConvIds.isEmpty()
+                ? Collections.emptyMap()
+                : channelRepository.findAllByConversationIdIn(groupConvIds).stream()
+                        .filter(ch -> ch.getConversation() != null && ch.getGroup() != null && ch.getGroup().getName() != null)
+                        .collect(Collectors.toMap(ch -> ch.getConversation().getId(), ch -> ch.getGroup().getName(), (a, b) -> a));
+
         return deduplicated.stream()
                 // Opening a profile/search result creates a private conversation shell
                 // so the composer has an id. Do not expose that shell in either user's
@@ -163,7 +187,7 @@ public class ConversationServiceImpl implements ConversationService {
                         || !conversation.getDeletedByUsers().contains(currentUser.getId()))
                 .filter(conversation -> conversation.getHiddenByUsers() == null
                         || !conversation.getHiddenByUsers().contains(currentUser.getId()))
-                .map(this::mapToConversationResponse)
+                .map(conversation -> mapToConversationResponse(conversation, currentUser, blockedByMeSet, blockedMeSet, groupNamesMap))
                 .collect(Collectors.toList());
     }
 
@@ -215,7 +239,7 @@ public class ConversationServiceImpl implements ConversationService {
             throw new BadRequestException("You are not a member of this conversation");
         }
 
-        return mapToConversationResponse(conversation);
+        return mapToConversationResponse(conversation, currentUser);
     }
 
     public ConversationResponse mapToConversationResponse(Conversation conversation) {
@@ -223,6 +247,27 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     public ConversationResponse mapToConversationResponse(Conversation conversation, User currentUser) {
+        String otherMemberId = getPrivateOtherMemberId(conversation, currentUser.getId());
+        Set<String> blockedByMeSet = otherMemberId != null && userBlockRepository.existsByBlockerIdAndBlockedId(currentUser.getId(), otherMemberId)
+                ? Set.of(otherMemberId) : Collections.emptySet();
+        Set<String> blockedMeSet = otherMemberId != null && userBlockRepository.existsByBlockerIdAndBlockedId(otherMemberId, currentUser.getId())
+                ? Set.of(otherMemberId) : Collections.emptySet();
+        Map<String, String> groupNamesMap = conversation.getType() == ConversationType.GROUP
+                ? channelRepository.findByConversationId(conversation.getId())
+                    .filter(ch -> ch.getGroup() != null && ch.getGroup().getName() != null)
+                    .map(ch -> Map.of(conversation.getId(), ch.getGroup().getName()))
+                    .orElse(Collections.emptyMap())
+                : Collections.emptyMap();
+        return mapToConversationResponse(conversation, currentUser, blockedByMeSet, blockedMeSet, groupNamesMap);
+    }
+
+    public ConversationResponse mapToConversationResponse(
+            Conversation conversation,
+            User currentUser,
+            Set<String> blockedByMeSet,
+            Set<String> blockedMeSet,
+            Map<String, String> groupNamesMap
+    ) {
         Set<UserProfileResponse> memberResponses = conversation.getMembers().stream()
                 .map(m -> UserProfileResponse.builder()
                         .id(m.getId())
@@ -238,17 +283,13 @@ public class ConversationServiceImpl implements ConversationService {
                 .collect(Collectors.toSet());
 
         String otherMemberId = getPrivateOtherMemberId(conversation, currentUser.getId());
-        boolean blockedByMe = otherMemberId != null
-                && userBlockRepository.existsByBlockerIdAndBlockedId(currentUser.getId(), otherMemberId);
-        boolean blockedMe = otherMemberId != null
-                && userBlockRepository.existsByBlockerIdAndBlockedId(otherMemberId, currentUser.getId());
+        boolean blockedByMe = otherMemberId != null && blockedByMeSet.contains(otherMemberId);
+        boolean blockedMe = otherMemberId != null && blockedMeSet.contains(otherMemberId);
 
         // Với GROUP conversation: lấy tên group thực (conversation.name = "Chung" là tên channel mặc định)
         String displayName = conversation.getName();
-        if (conversation.getType() == ConversationType.GROUP) {
-            displayName = channelRepository.findByConversationId(conversation.getId())
-                    .map(ch -> ch.getGroup() != null ? ch.getGroup().getName() : null)
-                    .orElse(conversation.getName());
+        if (conversation.getType() == ConversationType.GROUP && groupNamesMap.containsKey(conversation.getId())) {
+            displayName = groupNamesMap.get(conversation.getId());
         }
 
         return ConversationResponse.builder()
