@@ -488,10 +488,10 @@ public class CallController {
         long durationSeconds = Math.max(0, Duration.between(durationStart, endedAt).getSeconds());
         boolean groupCall = "GROUP".equals(session.scope);
         String content = switch (status) {
-            case "MISSED" -> groupCall ? "Cuoc goi nhom bi nho" : "Cuoc goi bi nho";
-            case "REJECTED" -> groupCall ? "Cuoc goi nhom bi tu choi" : "Cuoc goi bi tu choi";
-            case "CANCELED" -> groupCall ? "Cuoc goi nhom da huy" : "Cuoc goi da huy";
-            default -> groupCall ? "Cuoc goi nhom da ket thuc" : "Cuoc goi da ket thuc";
+            case "MISSED" -> groupCall ? "Cuộc gọi nhóm bị lỡ" : "Cuộc gọi bị lỡ";
+            case "REJECTED" -> groupCall ? "Cuộc gọi nhóm bị từ chối" : "Cuộc gọi bị từ chối";
+            case "CANCELED" -> groupCall ? "Cuộc gọi nhóm đã hủy" : "Cuộc gọi đã hủy";
+            default -> groupCall ? "Cuộc gọi nhóm đã kết thúc" : "Cuộc gọi đã kết thúc";
         };
 
         Map<String, Object> metadata = new HashMap<>();
