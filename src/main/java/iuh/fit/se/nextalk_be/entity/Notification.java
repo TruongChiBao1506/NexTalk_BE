@@ -17,7 +17,11 @@ import org.springframework.data.mongodb.core.mapping.DocumentReference;
 @NoArgsConstructor
 @AllArgsConstructor
 @Document(collection = "notifications")
+@CompoundIndex(name = "notif_recip_id_created_idx", def = "{'recipient.$id': 1, 'createdAt': -1}")
+@CompoundIndex(name = "notif_recip_raw_created_idx", def = "{'recipient': 1, 'createdAt': -1}")
 @CompoundIndex(name = "notif_recipient_created_idx", def = "{'recipient._id': 1, 'createdAt': -1}")
+@CompoundIndex(name = "notif_recip_id_read_idx", def = "{'recipient.$id': 1, 'isRead': 1}")
+@CompoundIndex(name = "notif_recip_raw_read_idx", def = "{'recipient': 1, 'isRead': 1}")
 @CompoundIndex(name = "notif_recipient_read_idx", def = "{'recipient._id': 1, 'isRead': 1}")
 public class Notification extends BaseEntity {
 

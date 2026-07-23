@@ -64,8 +64,18 @@ public class NotificationServiceImpl implements NotificationService {
     // @Transactional(readOnly = true)
     public List<NotificationResponse> getMyNotifications() {
         User currentUser = userService.getCurrentAuthenticatedUser();
-        return notificationRepository.findByRecipientIdOrderByCreatedAtDesc(currentUser.getId())
-                .stream()
+        String userId = currentUser.getId();
+        org.bson.types.ObjectId userObjectId = (userId != null && org.bson.types.ObjectId.isValid(userId))
+                ? new org.bson.types.ObjectId(userId)
+                : null;
+
+        List<Notification> notifications = notificationRepository.findTop50ByRecipientUser(userId, userObjectId);
+        if (notifications.isEmpty()) {
+            notifications = notificationRepository.findByRecipientIdOrderByCreatedAtDesc(userId);
+        }
+
+        return notifications.stream()
+                .limit(50)
                 .map(this::mapToResponse)
                 .toList();
     }
@@ -96,7 +106,16 @@ public class NotificationServiceImpl implements NotificationService {
     // @Transactional(readOnly = true)
     public long countUnread() {
         User currentUser = userService.getCurrentAuthenticatedUser();
-        return notificationRepository.countByRecipientIdAndIsReadFalse(currentUser.getId());
+        String userId = currentUser.getId();
+        org.bson.types.ObjectId userObjectId = (userId != null && org.bson.types.ObjectId.isValid(userId))
+                ? new org.bson.types.ObjectId(userId)
+                : null;
+
+        long count = notificationRepository.countUnreadByRecipientUser(userId, userObjectId);
+        if (count == 0) {
+            count = notificationRepository.countByRecipientIdAndIsReadFalse(userId);
+        }
+        return count;
     }
 
     private boolean shouldSendPush(NotificationType type) {
