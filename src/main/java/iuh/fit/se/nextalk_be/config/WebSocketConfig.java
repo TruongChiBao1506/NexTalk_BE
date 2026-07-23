@@ -52,6 +52,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/ws")
+                .setAllowedOriginPatterns("*");
+        registry.addEndpoint("/ws")
                 .setAllowedOriginPatterns("*")
                 .withSockJS();
     }
@@ -79,8 +81,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                             && auth.getDetails() instanceof String value ? value : null;
                     webSocketSessionRegistry.bindLoginSession(loginSessionId, accessor.getSessionId());
                 } else if (accessor != null && accessor.getUser() instanceof UsernamePasswordAuthenticationToken authentication) {
-                    validateActiveSession(authentication);
                     if (StompCommand.SUBSCRIBE.equals(accessor.getCommand())) {
+                        validateActiveSession(authentication);
                         if (!(authentication.getPrincipal() instanceof User user)) {
                             throw new org.springframework.messaging.MessageDeliveryException("Unauthorized subscription");
                         }
