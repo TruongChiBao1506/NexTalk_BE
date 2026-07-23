@@ -6,6 +6,7 @@ import iuh.fit.se.nextalk_be.dto.request.UpdateNicknameRequest;
 import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
 import iuh.fit.se.nextalk_be.dto.response.ConversationResponse;
 import iuh.fit.se.nextalk_be.dto.response.ConversationSummaryResponse;
+import iuh.fit.se.nextalk_be.dto.response.ConversationWithPreviewsResponse;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
@@ -48,12 +49,18 @@ public class ConversationController {
         return ResponseEntity.ok(ApiResponse.success(response, "Cloud conversation resolved successfully"));
     }
 
-
     @GetMapping
     @Operation(summary = "Get all conversations of the currently logged-in user")
     public ResponseEntity<ApiResponse<List<ConversationResponse>>> getUserConversations() {
         List<ConversationResponse> response = conversationService.getUserConversations();
         return ResponseEntity.ok(ApiResponse.success(response, "User conversations retrieved successfully"));
+    }
+
+    @GetMapping("/with-previews")
+    @Operation(summary = "Get all conversations along with latest messages and unread counts in a single request")
+    public ResponseEntity<ApiResponse<ConversationWithPreviewsResponse>> getUserConversationsWithPreviews() {
+        ConversationWithPreviewsResponse response = conversationService.getUserConversationsWithPreviews();
+        return ResponseEntity.ok(ApiResponse.success(response, "User conversations with previews retrieved successfully"));
     }
 
     @GetMapping("/{id}")

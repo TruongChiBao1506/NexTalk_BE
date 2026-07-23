@@ -23,10 +23,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import iuh.fit.se.nextalk_be.dto.response.ConversationWithPreviewsResponse;
+
 public interface ConversationService {
     @Transactional public ConversationResponse getOrCreatePrivateConversation(String friendId);
     @Transactional public ConversationResponse getOrCreateCloudConversation();
     public List<ConversationResponse> getUserConversations();
+    public ConversationWithPreviewsResponse getUserConversationsWithPreviews();
     public ConversationResponse getConversationById(String id);
     public ConversationResponse mapToConversationResponse(Conversation conversation);
     public ConversationResponse mapToConversationResponse(Conversation conversation, User currentUser);

@@ -24,6 +24,9 @@ import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.service.UserService;
 
 
+import iuh.fit.se.nextalk_be.dto.response.ConversationWithPreviewsResponse;
+import iuh.fit.se.nextalk_be.service.MessageService;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -47,6 +50,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final ChannelRepository channelRepository;
     private final MessageRepository messageRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final MessageService messageService;
 
     @Transactional
     public ConversationResponse getOrCreatePrivateConversation(String friendId) {
@@ -189,6 +193,35 @@ public class ConversationServiceImpl implements ConversationService {
                         || !conversation.getHiddenByUsers().contains(currentUser.getId()))
                 .map(conversation -> mapToConversationResponse(conversation, currentUser, blockedByMeSet, blockedMeSet, groupNamesMap))
                 .collect(Collectors.toList());
+    }
+
+    @Override
+    public ConversationWithPreviewsResponse getUserConversationsWithPreviews() {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        List<ConversationResponse> conversations = getUserConversations();
+
+        if (conversations.isEmpty()) {
+            return ConversationWithPreviewsResponse.builder()
+                    .conversations(Collections.emptyList())
+                    .lastMessages(Collections.emptyMap())
+                    .unreadCounts(Collections.emptyMap())
+                    .build();
+        }
+
+        List<String> convIds = conversations.stream().map(ConversationResponse::getId).toList();
+
+        List<MessageResponse> latestMsgs = messageService.getLatestMessages(convIds);
+        Map<String, MessageResponse> lastMessages = latestMsgs.stream()
+                .filter(msg -> msg.getConversationId() != null)
+                .collect(Collectors.toMap(MessageResponse::getConversationId, msg -> msg, (a, b) -> a));
+
+        Map<String, Long> unreadCounts = messageService.getUnreadCounts(currentUser.getUsername());
+
+        return ConversationWithPreviewsResponse.builder()
+                .conversations(conversations)
+                .lastMessages(lastMessages)
+                .unreadCounts(unreadCounts)
+                .build();
     }
 
     private List<Conversation> deduplicateConversations(List<Conversation> conversations, String currentUserId) {
