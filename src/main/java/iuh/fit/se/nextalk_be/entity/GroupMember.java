@@ -1,10 +1,5 @@
 package iuh.fit.se.nextalk_be.entity;
 
-import iuh.fit.se.nextalk_be.entity.Group;
-import iuh.fit.se.nextalk_be.entity.GroupRole;
-import iuh.fit.se.nextalk_be.entity.User;
-
-
 import lombok.*;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
@@ -18,7 +13,6 @@ import org.springframework.data.mongodb.core.mapping.DocumentReference;
 @AllArgsConstructor
 @Document(collection = "group_members")
 @CompoundIndex(name = "group_user_idx", def = "{'group': 1, 'user': 1}", unique = true)
-@CompoundIndex(name = "user_group_v2_idx", def = "{'user._id': 1, 'group._id': 1}")
 public class GroupMember {
 
     @Id

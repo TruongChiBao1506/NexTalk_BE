@@ -1,11 +1,5 @@
 package iuh.fit.se.nextalk_be.entity;
 
-import iuh.fit.se.nextalk_be.entity.BaseEntity;
-import iuh.fit.se.nextalk_be.entity.Group;
-import iuh.fit.se.nextalk_be.entity.InvitationStatus;
-import iuh.fit.se.nextalk_be.entity.User;
-
-
 import lombok.*;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
@@ -18,7 +12,6 @@ import org.springframework.data.mongodb.core.mapping.DocumentReference;
 @AllArgsConstructor
 @Document(collection = "group_invitations")
 @CompoundIndex(name = "group_invitee_idx", def = "{'group': 1, 'invitee': 1}", unique = true)
-@CompoundIndex(name = "grp_status_idx", def = "{'group._id': 1, 'status': 1}")
 public class GroupInvitation extends BaseEntity {
 
     @DocumentReference

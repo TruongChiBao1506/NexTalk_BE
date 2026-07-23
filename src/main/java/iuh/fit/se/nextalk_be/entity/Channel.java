@@ -1,7 +1,6 @@
 package iuh.fit.se.nextalk_be.entity;
 
 import lombok.*;
-import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.DocumentReference;
 
@@ -11,8 +10,6 @@ import org.springframework.data.mongodb.core.mapping.DocumentReference;
 @NoArgsConstructor
 @AllArgsConstructor
 @Document(collection = "channels")
-@CompoundIndex(name = "ch_group_idx", def = "{'group._id': 1}")
-@CompoundIndex(name = "ch_conv_idx", def = "{'conversation._id': 1}")
 public class Channel extends BaseEntity {
 
     private String name;
