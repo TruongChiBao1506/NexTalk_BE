@@ -320,93 +320,95 @@ public class MessageServiceImpl implements MessageService {
 
         MessageResponse response = mapToMessageResponse(savedMessage);
 
-        // Broadcast to all conversation members over WebSocket and trigger notifications
+        // Broadcast to all conversation members over WebSocket IMMEDIATELY (< 15ms)
         for (User member : conversation.getMembers()) {
-            // Send to user-specific private queue: /user/{username}/queue/private
             messagingTemplate.convertAndSendToUser(
                     member.getUsername(),
                     "/queue/private",
                     response
             );
-
-            // Create notification for other members
-            if (!member.getId().equals(currentUser.getId())) {
-                String contentPreview;
-                if (savedMessage.getMessageType() == MessageType.IMAGE) {
-                    contentPreview = "[Hình ảnh]";
-                } else if (savedMessage.getMessageType() == MessageType.VIDEO) {
-                    contentPreview = "[Video]";
-                } else if (savedMessage.getMessageType() == MessageType.AUDIO) {
-                    contentPreview = "[Tin nhắn thoại]";
-                } else if (savedMessage.getMessageType() == MessageType.FILE) {
-                    contentPreview = "[Tệp đính kèm]";
-                } else {
-                    contentPreview = savedMessage.getContent();
-                    if (contentPreview != null) {
-                        contentPreview = contentPreview.replaceAll("<[^>]*>", "");
-                        // Also replace some common HTML entities
-                        contentPreview = contentPreview.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">");
-                    }
-                }
-
-                String priorityPrefix = "";
-                String pushTitlePrefix = "";
-                if (savedMessage.getMetadata() != null && savedMessage.getMetadata().get("priority") != null) {
-                    if ("IMPORTANT".equals(savedMessage.getMetadata().get("priority"))) {
-                        priorityPrefix = "[Quan trọng] ";
-                        pushTitlePrefix = "⚠️ ";
-                    } else if ("URGENT".equals(savedMessage.getMetadata().get("priority"))) {
-                        priorityPrefix = "[Khẩn cấp] ";
-                        pushTitlePrefix = "🚨 ";
-                    }
-                }
-
-                boolean isMentioned = isMemberMentioned(savedMessage, member);
-                String notificationContent;
-                if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
-                    notificationContent = isMentioned
-                            ? pushTitlePrefix + "Bạn được nhắc trong một cuộc trò chuyện"
-                            : pushTitlePrefix + "Bạn có tin nhắn mới";
-                } else if (isMentioned) {
-                    notificationContent = pushTitlePrefix + currentUser.getUsername() + " đã nhắc tới bạn: "
-                            + priorityPrefix + (contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
-                } else {
-                    notificationContent = pushTitlePrefix + "Bạn có tin nhắn mới từ " + currentUser.getUsername() + ": " + 
-                            priorityPrefix + (contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
-                }
-
-                boolean muted = conversation.getMutedByUsers() != null
-                        && conversation.getMutedByUsers().contains(member.getId());
-                if (!muted) {
-                    notificationService.createAndSend(
-                            member,
-                            isMentioned ? NotificationType.MENTION : NotificationType.NEW_MESSAGE,
-                            notificationContent,
-                            conversation.getId().toString()
-                    );
-                }
-
-                // Always send to registered mobile devices. Presence is eventually
-                // consistent and can remain ONLINE briefly after the app backgrounds.
-                // The mobile client suppresses chat pushes while it is foregrounded.
-                User dbMember = userRepository.findById(member.getId()).orElse(member);
-                if (!muted && dbMember.getFcmTokens() != null && !dbMember.getFcmTokens().isEmpty()) {
-                    String pushBody = priorityPrefix + contentPreview;
-                    if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
-                        pushBody = isMentioned ? "Bạn được nhắc trong một cuộc trò chuyện" : "Bạn có tin nhắn mới";
-                    }
-                    fcmService.sendChatPushNotificationToTokens(
-                            dbMember.getFcmTokens(),
-                            conversation.getId(),
-                            conversation.getName(),
-                            currentUser.getId(),
-                            currentUser.getUsername(),
-                            currentUser.getAvatarUrl(),
-                            pushBody
-                    );
-                }
-            }
         }
+
+        // Run secondary notification & FCM push tasks asynchronously in background
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try {
+                for (User member : conversation.getMembers()) {
+                    if (member.getId().equals(currentUser.getId())) continue;
+
+                    String contentPreview;
+                    if (savedMessage.getMessageType() == MessageType.IMAGE) {
+                        contentPreview = "[Hình ảnh]";
+                    } else if (savedMessage.getMessageType() == MessageType.VIDEO) {
+                        contentPreview = "[Video]";
+                    } else if (savedMessage.getMessageType() == MessageType.AUDIO) {
+                        contentPreview = "[Tin nhắn thoại]";
+                    } else if (savedMessage.getMessageType() == MessageType.FILE) {
+                        contentPreview = "[Tệp đính kèm]";
+                    } else {
+                        contentPreview = savedMessage.getContent();
+                        if (contentPreview != null) {
+                            contentPreview = contentPreview.replaceAll("<[^>]*>", "");
+                            contentPreview = contentPreview.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">");
+                        }
+                    }
+
+                    String priorityPrefix = "";
+                    String pushTitlePrefix = "";
+                    if (savedMessage.getMetadata() != null && savedMessage.getMetadata().get("priority") != null) {
+                        if ("IMPORTANT".equals(savedMessage.getMetadata().get("priority"))) {
+                            priorityPrefix = "[Quan trọng] ";
+                            pushTitlePrefix = "⚠️ ";
+                        } else if ("URGENT".equals(savedMessage.getMetadata().get("priority"))) {
+                            priorityPrefix = "[Khẩn cấp] ";
+                            pushTitlePrefix = "🚨 ";
+                        }
+                    }
+
+                    boolean isMentioned = isMemberMentioned(savedMessage, member);
+                    String notificationContent;
+                    if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
+                        notificationContent = isMentioned
+                                ? pushTitlePrefix + "Bạn được nhắc trong một cuộc trò chuyện"
+                                : pushTitlePrefix + "Bạn có tin nhắn mới";
+                    } else if (isMentioned) {
+                        notificationContent = pushTitlePrefix + currentUser.getUsername() + " đã nhắc tới bạn: "
+                                + priorityPrefix + (contentPreview != null && contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
+                    } else {
+                        notificationContent = pushTitlePrefix + "Bạn có tin nhắn mới từ " + currentUser.getUsername() + ": " + 
+                                priorityPrefix + (contentPreview != null && contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
+                    }
+
+                    boolean muted = conversation.getMutedByUsers() != null
+                            && conversation.getMutedByUsers().contains(member.getId());
+                    if (!muted) {
+                        notificationService.createAndSend(
+                                member,
+                                isMentioned ? NotificationType.MENTION : NotificationType.NEW_MESSAGE,
+                                notificationContent,
+                                conversation.getId().toString()
+                        );
+                    }
+
+                    if (!muted && member.getFcmTokens() != null && !member.getFcmTokens().isEmpty()) {
+                        String pushBody = priorityPrefix + (contentPreview != null ? contentPreview : "");
+                        if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
+                            pushBody = isMentioned ? "Bạn được nhắc trong một cuộc trò chuyện" : "Bạn có tin nhắn mới";
+                        }
+                        fcmService.sendChatPushNotificationToTokens(
+                                member.getFcmTokens(),
+                                conversation.getId(),
+                                conversation.getName(),
+                                currentUser.getId(),
+                                currentUser.getUsername(),
+                                currentUser.getAvatarUrl(),
+                                pushBody
+                        );
+                    }
+                }
+            } catch (Exception e) {
+                log.error("Error processing async notifications for message {}: {}", savedMessage.getId(), e.getMessage());
+            }
+        });
 
         if (triggersAiBot) {
             aiBotService.answerMentionAsync(conversation, savedMessage, currentUser);
