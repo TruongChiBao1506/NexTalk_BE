@@ -11,6 +11,8 @@ import java.util.List;
 @Repository
 public interface ChannelRepository extends MongoRepository<Channel, String> {
     List<Channel> findAllByGroupId(String groupId);
+    @org.springframework.data.mongodb.repository.Query("{'$or': [{'group': {'$in': ?0}}, {'group.$id': {'$in': ?0}}, {'group._id': {'$in': ?0}}, {'group': {'$in': ?1}}, {'group.$id': {'$in': ?1}}, {'group._id': {'$in': ?1}}]}")
+    List<Channel> findAllByGroupIdIn(java.util.Collection<String> stringIds, java.util.Collection<org.bson.types.ObjectId> objectIds);
     void deleteAllByGroupId(String groupId);
     java.util.Optional<Channel> findByConversationId(String conversationId);
     List<Channel> findAllByConversationIdIn(java.util.Collection<String> conversationIds);

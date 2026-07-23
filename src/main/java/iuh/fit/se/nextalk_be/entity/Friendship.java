@@ -17,6 +17,8 @@ import org.springframework.data.mongodb.core.mapping.DocumentReference;
 @AllArgsConstructor
 @Document(collection = "friendships")
 @CompoundIndex(name = "sender_receiver_idx", def = "{'sender': 1, 'receiver': 1}", unique = true)
+@CompoundIndex(name = "friend_receiver_status_idx", def = "{'receiver._id': 1, 'status': 1}")
+@CompoundIndex(name = "friend_sender_status_idx", def = "{'sender._id': 1, 'status': 1}")
 public class Friendship extends BaseEntity {
 
     @DocumentReference

@@ -14,6 +14,9 @@ public interface GroupMemberRepository extends MongoRepository<GroupMember, Stri
 
     List<GroupMember> findAllByGroupId(String groupId);
 
+    @org.springframework.data.mongodb.repository.Query("{'$or': [{'group': {'$in': ?0}}, {'group.$id': {'$in': ?0}}, {'group._id': {'$in': ?0}}, {'group': {'$in': ?1}}, {'group.$id': {'$in': ?1}}, {'group._id': {'$in': ?1}}]}")
+    List<GroupMember> findAllByGroupIdIn(java.util.Collection<String> stringIds, java.util.Collection<org.bson.types.ObjectId> objectIds);
+
     List<GroupMember> findAllByUserId(String userId);
 
     Optional<GroupMember> findByGroupIdAndUserId(String groupId, String userId);

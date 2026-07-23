@@ -391,26 +391,65 @@ public class GroupServiceImpl implements GroupService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         List<GroupMember> memberships = groupMemberRepository.findAllByUserId(currentUser.getId());
         Set<String> groupIds = memberships.stream()
+                .filter(m -> m.getGroup() != null)
                 .map(m -> m.getGroup().getId())
                 .collect(Collectors.toSet());
         List<Group> groups = groupRepository.findAllByOwnerIdOrIdIn(currentUser.getId(), groupIds);
-        return groups.stream()
+        List<Group> deduplicatedGroups = groups.stream()
                 .collect(Collectors.toMap(Group::getId, g -> g, (first, ignored) -> first, LinkedHashMap::new))
                 .values()
                 .stream()
-                .map(g -> {
-            List<GroupMember> members = groupMemberRepository.findAllByGroupId(g.getId());
-            return mapToGroupResponse(g, members);
+                .toList();
+
+        if (deduplicatedGroups.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<String> allGroupIds = deduplicatedGroups.stream().map(Group::getId).toList();
+        List<org.bson.types.ObjectId> allGroupObjectIds = allGroupIds.stream()
+                .filter(id -> id != null && org.bson.types.ObjectId.isValid(id))
+                .map(org.bson.types.ObjectId::new)
+                .toList();
+
+        // Batch load all members and channels
+        List<GroupMember> allFetchedMembers = groupMemberRepository.findAllByGroupIdIn(allGroupIds, allGroupObjectIds);
+        List<Channel> allFetchedChannels = channelRepository.findAllByGroupIdIn(allGroupIds, allGroupObjectIds);
+        List<GroupInvitation> allFetchedInvites = groupInvitationRepository.findAllByGroupIdInAndStatus(allGroupIds, allGroupObjectIds, InvitationStatus.WAITING_APPROVAL);
+
+        Map<String, List<GroupMember>> membersByGroupId = allFetchedMembers.stream()
+                .filter(m -> m.getGroup() != null && m.getGroup().getId() != null)
+                .collect(Collectors.groupingBy(m -> m.getGroup().getId()));
+
+        Map<String, List<Channel>> channelsByGroupId = allFetchedChannels.stream()
+                .filter(ch -> ch.getGroup() != null && ch.getGroup().getId() != null)
+                .collect(Collectors.groupingBy(ch -> ch.getGroup().getId()));
+
+        Map<String, Long> pendingCountsByGroupId = allFetchedInvites.stream()
+                .filter(inv -> inv.getGroup() != null && inv.getGroup().getId() != null)
+                .collect(Collectors.groupingBy(inv -> inv.getGroup().getId(), Collectors.counting()));
+
+        return deduplicatedGroups.stream().map(g -> {
+            List<GroupMember> members = membersByGroupId.get(g.getId());
+            if (members == null || members.isEmpty()) {
+                members = groupMemberRepository.findAllByGroupId(g.getId());
+            }
+
+            List<Channel> channels = channelsByGroupId.get(g.getId());
+            if (channels == null || channels.isEmpty()) {
+                channels = channelRepository.findAllByGroupId(g.getId());
+            }
+
+            Long pendingCountObj = pendingCountsByGroupId.get(g.getId());
+            int pendingCount = pendingCountObj != null ? pendingCountObj.intValue() : groupInvitationRepository.countByGroupIdAndStatus(g.getId(), InvitationStatus.WAITING_APPROVAL);
+
+            return mapToGroupResponse(g, members, channels, pendingCount);
         }).collect(Collectors.toList());
     }
-
-    // --- Private helpers ---
 
     private Group getGroupOrThrow(String groupId) {
         return groupRepository.findById(groupId)
                 .orElseThrow(() -> new ResourceNotFoundException("Group not found: " + groupId));
     }
-
     private void assertCanManageGroupSettings(Group group, User user) {
         if (!getRole(group, user).map(this::isLeaderRole).orElse(false)) {
             throw new UnauthorizedException("Only the group leader can perform this action");
@@ -575,6 +614,12 @@ public class GroupServiceImpl implements GroupService {
         if (oldRole == GroupRole.DEPUTY && newRole == GroupRole.MEMBER) {
             return "đã bãi nhiệm " + username + " khỏi vai trò Phó nhóm.";
         }
+        if (newRole == GroupRole.DEPUTY) {
+            return "đã bổ nhiệm " + username + " làm Phó nhóm.";
+        }
+        if (oldRole == GroupRole.DEPUTY && newRole == GroupRole.MEMBER) {
+            return "đã bãi nhiệm " + username + " khỏi vai trò Phó nhóm.";
+        }
         return "đã cập nhật quyền của " + username + " thành " + roleLabel(newRole) + ".";
     }
 
@@ -585,8 +630,16 @@ public class GroupServiceImpl implements GroupService {
             case MEMBER -> "Thành viên";
         };
     }
-    private GroupResponse mapToGroupResponse(Group group, List<GroupMember> members) {
-        List<GroupMemberResponse> memberResponses = members.stream()
+
+    private GroupResponse mapToGroupResponse(Group group, List<GroupMember> members) {
+        List<Channel> channels = channelRepository.findAllByGroupId(group.getId());
+        int pendingApprovalCount = groupInvitationRepository.countByGroupIdAndStatus(group.getId(), InvitationStatus.WAITING_APPROVAL);
+        return mapToGroupResponse(group, members, channels, pendingApprovalCount);
+    }
+
+    private GroupResponse mapToGroupResponse(Group group, List<GroupMember> members, List<Channel> channels, int pendingApprovalCount) {
+        List<GroupMemberResponse> memberResponses = (members != null ? members : Collections.<GroupMember>emptyList()).stream()
+                .filter(m -> m.getUser() != null)
                 .map(m -> GroupMemberResponse.builder()
                         .userId(m.getUser().getId())
                         .username(m.getUser().getUsername())
@@ -595,7 +648,7 @@ public class GroupServiceImpl implements GroupService {
                         .build())
                 .collect(Collectors.toList());
 
-        List<ChannelResponse> channelResponses = channelRepository.findAllByGroupId(group.getId()).stream()
+        List<ChannelResponse> channelResponses = (channels != null ? channels : Collections.<Channel>emptyList()).stream()
                 .map(ch -> ChannelResponse.builder()
                         .id(ch.getId())
                         .name(ch.getName())
@@ -610,8 +663,6 @@ public class GroupServiceImpl implements GroupService {
                         .build()
                 ).collect(Collectors.toList());
 
-        int pendingApprovalCount = groupInvitationRepository.countByGroupIdAndStatus(group.getId(), InvitationStatus.WAITING_APPROVAL);
-
         return GroupResponse.builder()
                 .id(group.getId())
                 .name(group.getName())
@@ -625,8 +676,8 @@ public class GroupServiceImpl implements GroupService {
                         .or(() -> channelResponses.stream().findFirst())
                         .map(ChannelResponse::getConversationId)
                         .orElse(null))
-                .ownerId(group.getOwner().getId())
-                .ownerUsername(group.getOwner().getUsername())
+                .ownerId(group.getOwner() != null ? group.getOwner().getId() : null)
+                .ownerUsername(group.getOwner() != null ? group.getOwner().getUsername() : "Unknown")
                 .channels(channelResponses)
                 .members(memberResponses)
                 .memberCount(memberResponses.size())

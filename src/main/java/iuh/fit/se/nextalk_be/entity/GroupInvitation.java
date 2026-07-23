@@ -18,6 +18,7 @@ import org.springframework.data.mongodb.core.mapping.DocumentReference;
 @AllArgsConstructor
 @Document(collection = "group_invitations")
 @CompoundIndex(name = "group_invitee_idx", def = "{'group': 1, 'invitee': 1}", unique = true)
+@CompoundIndex(name = "grp_status_idx", def = "{'group._id': 1, 'status': 1}")
 public class GroupInvitation extends BaseEntity {
 
     @DocumentReference

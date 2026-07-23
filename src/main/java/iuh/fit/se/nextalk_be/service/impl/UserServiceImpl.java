@@ -56,8 +56,7 @@ public class UserServiceImpl implements UserService {
 
         Object principal = authentication.getPrincipal();
         if (principal instanceof User) {
-            return userRepository.findById(((User) principal).getId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
+            return (User) principal;
         }
 
         String identifier = authentication.getName();
