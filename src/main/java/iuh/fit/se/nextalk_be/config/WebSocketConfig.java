@@ -49,8 +49,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final WebSocketSubscriptionAuthorizer subscriptionAuthorizer;
     private final RateLimitService rateLimitService;
 
-    @Value("${app.cors.allowed-origins:http://localhost:3000,http://localhost:3001}")
-    private String[] allowedOrigins;
+    @Value("${app.websocket.allowed-origin-patterns:*}")
+    private String[] webSocketAllowedOriginPatterns;
 
     @Value("${app.websocket.inbound-core-pool-size:4}")
     private int inboundCorePoolSize;
@@ -100,9 +100,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/ws-raw")
-                .setAllowedOriginPatterns(allowedOrigins);
+                .setAllowedOriginPatterns(webSocketAllowedOriginPatterns);
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns(allowedOrigins)
+                .setAllowedOriginPatterns(webSocketAllowedOriginPatterns)
                 .withSockJS();
     }
 
