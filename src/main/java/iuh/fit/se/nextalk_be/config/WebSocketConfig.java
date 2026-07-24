@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.security.JwtService;
 
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -29,6 +30,8 @@ import org.springframework.web.socket.config.annotation.WebSocketTransportRegist
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
+import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
@@ -49,26 +52,76 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Value("${app.cors.allowed-origins:http://localhost:3000,http://localhost:3001}")
     private String[] allowedOrigins;
 
+    @Value("${app.websocket.inbound-core-pool-size:4}")
+    private int inboundCorePoolSize;
+
+    @Value("${app.websocket.inbound-max-pool-size:16}")
+    private int inboundMaxPoolSize;
+
+    @Value("${app.websocket.inbound-queue-capacity:1000}")
+    private int inboundQueueCapacity;
+
+    @Value("${app.websocket.outbound-core-pool-size:4}")
+    private int outboundCorePoolSize;
+
+    @Value("${app.websocket.outbound-max-pool-size:16}")
+    private int outboundMaxPoolSize;
+
+    @Value("${app.websocket.outbound-queue-capacity:2000}")
+    private int outboundQueueCapacity;
+
+    @Value("${app.websocket.message-size-limit-bytes:131072}")
+    private int messageSizeLimit;
+
+    @Value("${app.websocket.send-buffer-size-limit-bytes:524288}")
+    private int sendBufferSizeLimit;
+
+    @Value("${app.websocket.send-time-limit-ms:15000}")
+    private int sendTimeLimit;
+
+    @Value("${app.websocket.heartbeat-ms:10000}")
+    private long heartbeatInterval;
+
+    @Value("${app.websocket.send-rate-limit-per-minute:600}")
+    private int sendRateLimitPerMinute;
+
+    @Value("${app.websocket.scheduler-pool-size:4}")
+    private int schedulerPoolSize;
+
+    @Bean(name = "taskScheduler")
+    public TaskScheduler webSocketHeartbeatTaskScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(schedulerPoolSize);
+        scheduler.setThreadNamePrefix("nextalk-scheduler-");
+        scheduler.setRemoveOnCancelPolicy(true);
+        return scheduler;
+    }
+
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/ws-raw")
-                .setAllowedOriginPatterns("*");
+                .setAllowedOriginPatterns(allowedOrigins);
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*");
-        registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*")
+                .setAllowedOriginPatterns(allowedOrigins)
                 .withSockJS();
     }
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
-        registry.enableSimpleBroker("/queue", "/topic");
+        registry.enableSimpleBroker("/queue", "/topic")
+                .setTaskScheduler(webSocketHeartbeatTaskScheduler())
+                .setHeartbeatValue(new long[]{heartbeatInterval, heartbeatInterval});
         registry.setUserDestinationPrefix("/user");
         registry.setApplicationDestinationPrefixes("/app");
     }
 
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
+        registration.taskExecutor()
+                .corePoolSize(inboundCorePoolSize)
+                .maxPoolSize(inboundMaxPoolSize)
+                .queueCapacity(inboundQueueCapacity)
+                .keepAliveSeconds(60);
         registration.interceptors(new ChannelInterceptor() {
             @Override
             public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -90,6 +143,14 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                         }
                         rateLimitService.check("websocket:subscribe", user.getId(), 120, Duration.ofMinutes(1));
                         subscriptionAuthorizer.authorize(user, accessor.getDestination());
+                    } else if (StompCommand.SEND.equals(accessor.getCommand())
+                            && authentication.getPrincipal() instanceof User user) {
+                        rateLimitService.checkInMemory(
+                                "websocket:send",
+                                user.getId(),
+                                sendRateLimitPerMinute,
+                                Duration.ofMinutes(1)
+                        );
                     }
                 }
                 return message;
@@ -98,7 +159,20 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     }
 
     @Override
+    public void configureClientOutboundChannel(ChannelRegistration registration) {
+        registration.taskExecutor()
+                .corePoolSize(outboundCorePoolSize)
+                .maxPoolSize(outboundMaxPoolSize)
+                .queueCapacity(outboundQueueCapacity)
+                .keepAliveSeconds(60);
+    }
+
+    @Override
     public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
+        registration
+                .setMessageSizeLimit(messageSizeLimit)
+                .setSendBufferSizeLimit(sendBufferSizeLimit)
+                .setSendTimeLimit(sendTimeLimit);
         registration.addDecoratorFactory(handler -> new WebSocketHandlerDecorator(handler) {
             @Override
             public void afterConnectionEstablished(WebSocketSession session) throws Exception {

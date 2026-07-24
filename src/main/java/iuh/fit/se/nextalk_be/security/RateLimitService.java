@@ -36,6 +36,18 @@ public class RateLimitService {
         checkLocal(key, maxRequests, window);
     }
 
+    /**
+     * Low-latency protection for high-frequency, connection-oriented traffic.
+     * WebSocket sessions are currently owned by one backend instance, so a
+     * per-instance limiter avoids a Redis round trip for every STOMP frame.
+     */
+    public void checkInMemory(String scope, String identity, int maxRequests, Duration window) {
+        if (maxRequests <= 0 || window == null || window.isNegative() || window.isZero()) {
+            return;
+        }
+        checkLocal("local:" + scope + ":" + normalizeIdentity(identity), maxRequests, window);
+    }
+
     private boolean checkRedis(String key, int maxRequests, Duration window) {
         try {
             String redisKey = "nextalk:rate-limit:" + key;

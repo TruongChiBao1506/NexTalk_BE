@@ -12,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class WebSocketSessionRegistry {
     private final ConcurrentHashMap<String, WebSocketSession> sockets = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Set<String>> socketIdsByLoginSession = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> loginSessionBySocketId = new ConcurrentHashMap<>();
 
     public void registerSocket(WebSocketSession session) {
         sockets.put(session.getId(), session);
@@ -19,23 +20,39 @@ public class WebSocketSessionRegistry {
 
     public void bindLoginSession(String loginSessionId, String socketId) {
         if (loginSessionId == null || socketId == null) return;
+        String previousLoginSessionId = loginSessionBySocketId.put(socketId, loginSessionId);
+        if (previousLoginSessionId != null && !previousLoginSessionId.equals(loginSessionId)) {
+            removeSocketFromLoginSession(previousLoginSessionId, socketId);
+        }
         socketIdsByLoginSession.computeIfAbsent(loginSessionId, ignored -> ConcurrentHashMap.newKeySet()).add(socketId);
     }
 
     public void unregisterSocket(String socketId) {
         sockets.remove(socketId);
-        socketIdsByLoginSession.values().forEach(ids -> ids.remove(socketId));
-        socketIdsByLoginSession.entrySet().removeIf(entry -> entry.getValue().isEmpty());
+        String loginSessionId = loginSessionBySocketId.remove(socketId);
+        if (loginSessionId != null) {
+            removeSocketFromLoginSession(loginSessionId, socketId);
+        }
     }
 
     public void closeLoginSession(String loginSessionId) {
         Set<String> socketIds = socketIdsByLoginSession.remove(loginSessionId);
         if (socketIds == null) return;
-        socketIds.forEach(socketId -> closeSocket(sockets.remove(socketId)));
+        socketIds.forEach(socketId -> {
+            loginSessionBySocketId.remove(socketId, loginSessionId);
+            closeSocket(sockets.remove(socketId));
+        });
     }
 
     public void closeLoginSessions(Iterable<String> loginSessionIds) {
         loginSessionIds.forEach(this::closeLoginSession);
+    }
+
+    private void removeSocketFromLoginSession(String loginSessionId, String socketId) {
+        socketIdsByLoginSession.computeIfPresent(loginSessionId, (ignored, socketIds) -> {
+            socketIds.remove(socketId);
+            return socketIds.isEmpty() ? null : socketIds;
+        });
     }
 
     private void closeSocket(WebSocketSession socket) {
