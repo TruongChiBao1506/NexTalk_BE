@@ -463,6 +463,7 @@ public class AuthServiceImpl implements AuthService {
                     .ifPresent(token -> {
                         removeSessionFcmToken(token);
                         refreshTokenRepository.delete(token);
+                        webSocketSessionRegistry.closeLoginSession(token.getId());
                     });
         }
     }

@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.auth;
 
 import iuh.fit.se.nextalk_be.dto.request.LoginRequest;
 import iuh.fit.se.nextalk_be.dto.request.RegisterRequest;
+import iuh.fit.se.nextalk_be.dto.request.TokenRefreshRequest;
 import iuh.fit.se.nextalk_be.dto.response.LoginResponse;
 import iuh.fit.se.nextalk_be.dto.response.RegisterResponse;
 import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
@@ -203,6 +204,21 @@ public class AuthServiceTest {
 
         assertThrows(BadRequestException.class, () -> authService.login(loginRequest, httpRequest));
         verify(refreshTokenRepository, never()).save(any(RefreshToken.class));
+    }
+
+    @Test
+    void logout_ClosesSocketsBoundToDeletedSession() {
+        RefreshToken session = RefreshToken.builder()
+                .user(user)
+                .token("refresh-a")
+                .build();
+        session.setId("session-a");
+        when(refreshTokenRepository.findByToken("refresh-a")).thenReturn(Optional.of(session));
+
+        authService.logout(TokenRefreshRequest.builder().refreshToken("refresh-a").build());
+
+        verify(refreshTokenRepository).delete(session);
+        verify(webSocketSessionRegistry).closeLoginSession("session-a");
     }
 
     @Test

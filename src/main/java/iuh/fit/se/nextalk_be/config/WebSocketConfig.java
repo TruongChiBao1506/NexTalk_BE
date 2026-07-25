@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.security.JwtService;
 
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.Message;
@@ -40,6 +41,7 @@ import java.time.Duration;
 @Configuration
 @EnableWebSocketMessageBroker
 @RequiredArgsConstructor
+@Slf4j
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final JwtService jwtService;
@@ -130,18 +132,25 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                     authenticate(accessor);
                     if (accessor.getUser() instanceof UsernamePasswordAuthenticationToken auth
                             && auth.getPrincipal() instanceof User user) {
-                        rateLimitService.check("websocket:connect", user.getId(), 20, Duration.ofMinutes(1));
+                        rateLimitService.checkInMemory("websocket:connect", user.getId(), 20, Duration.ofMinutes(1));
                     }
                     String loginSessionId = accessor.getUser() instanceof UsernamePasswordAuthenticationToken auth
                             && auth.getDetails() instanceof String value ? value : null;
                     webSocketSessionRegistry.bindLoginSession(loginSessionId, accessor.getSessionId());
                 } else if (accessor != null && accessor.getUser() instanceof UsernamePasswordAuthenticationToken authentication) {
                     if (StompCommand.SUBSCRIBE.equals(accessor.getCommand())) {
-                        validateActiveSession(authentication);
                         if (!(authentication.getPrincipal() instanceof User user)) {
                             throw new org.springframework.messaging.MessageDeliveryException("Unauthorized subscription");
                         }
-                        rateLimitService.check("websocket:subscribe", user.getId(), 120, Duration.ofMinutes(1));
+                        // CONNECT already validated the login session. Revocation
+                        // closes every socket bound to that session, so repeating
+                        // the Mongo lookup on each subscription only adds latency.
+                        rateLimitService.checkInMemory(
+                                "websocket:subscribe",
+                                user.getId(),
+                                120,
+                                Duration.ofMinutes(1)
+                        );
                         subscriptionAuthorizer.authorize(user, accessor.getDestination());
                     } else if (StompCommand.SEND.equals(accessor.getCommand())
                             && authentication.getPrincipal() instanceof User user) {
@@ -219,6 +228,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     }
 
     private UsernamePasswordAuthenticationToken buildAuthentication(String jwt) {
+        long startedAt = System.nanoTime();
         String userEmail = jwtService.extractUsername(jwt);
         if (userEmail == null) {
             throw new org.springframework.messaging.MessageDeliveryException("Token username is null");
@@ -236,6 +246,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         );
         authentication.setDetails(jwtService.extractSessionId(jwt));
         validateActiveSession(authentication);
+        log.debug("STOMP CONNECT authentication completed in {} ms",
+                (System.nanoTime() - startedAt) / 1_000_000);
         return authentication;
     }
 
