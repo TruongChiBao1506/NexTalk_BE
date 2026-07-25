@@ -5,6 +5,7 @@ import iuh.fit.se.nextalk_be.entity.MessageStatus;
 
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.mongodb.repository.Aggregation;
 import org.springframework.data.mongodb.repository.Query;
 import org.springframework.stereotype.Repository;
 
@@ -34,6 +35,16 @@ public interface MessageStatusRepository extends MongoRepository<MessageStatus, 
     );
 
     List<MessageStatus> findAllByUserIdAndStatusIn(String userId, Collection<String> statuses);
+
+    @Aggregation(pipeline = {
+            "{'$match': {'userId': ?0, 'status': {'$in': ?1}, 'conversationId': {'$ne': null}}}",
+            "{'$group': {'_id': '$conversationId', 'count': {'$sum': 1}}}",
+            "{'$project': {'_id': 0, 'conversationId': '$_id', 'count': 1}}"
+    })
+    List<UnreadCountResult> countUnreadByConversation(String userId, Collection<String> statuses);
+
+    record UnreadCountResult(String conversationId, long count) {
+    }
 
     List<MessageStatus> findByConversationIdIsNull(Pageable pageable);
 }

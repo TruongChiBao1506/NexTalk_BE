@@ -806,13 +806,12 @@ public class MessageServiceImpl implements MessageService {
         User user = userRepository.findByEmail(username)
                 .or(() -> userRepository.findByUsername(username))
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        return messageStatusRepository.findAllByUserIdAndStatusIn(
+        return messageStatusRepository.countUnreadByConversation(
                         user.getId(), List.of("SENT", "DELIVERED"))
                 .stream()
-                .filter(status -> status.getConversationId() != null)
-                .collect(Collectors.groupingBy(
-                        iuh.fit.se.nextalk_be.entity.MessageStatus::getConversationId,
-                        Collectors.counting()));
+                .collect(Collectors.toMap(
+                        MessageStatusRepository.UnreadCountResult::conversationId,
+                        MessageStatusRepository.UnreadCountResult::count));
     }
 
     private MessageResponse mapToMessageResponse(Message message) {

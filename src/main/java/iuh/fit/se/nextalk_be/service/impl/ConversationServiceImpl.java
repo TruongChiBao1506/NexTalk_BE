@@ -170,6 +170,17 @@ public class ConversationServiceImpl implements ConversationService {
                 .map(b -> b.getBlocker().getId())
                 .collect(Collectors.toSet());
 
+        // Batch load accepted friendships once. The previous response mapper
+        // performed a friendship lookup (and another user lookup) per private
+        // conversation, which made inbox latency grow linearly with its size.
+        Set<String> acceptedFriendIds = friendshipRepository
+                .findAllByUserIdAndStatus(currentUser.getId(), FriendshipStatus.ACCEPTED)
+                .stream()
+                .map(friendship -> currentUser.getId().equals(friendship.getSender().getId())
+                        ? friendship.getReceiver().getId()
+                        : friendship.getSender().getId())
+                .collect(Collectors.toSet());
+
         // Batch load group channel names in 1 query
         List<String> groupConvIds = deduplicated.stream()
                 .filter(c -> c.getType() == ConversationType.GROUP)
@@ -191,7 +202,13 @@ public class ConversationServiceImpl implements ConversationService {
                         || !conversation.getDeletedByUsers().contains(currentUser.getId()))
                 .filter(conversation -> conversation.getHiddenByUsers() == null
                         || !conversation.getHiddenByUsers().contains(currentUser.getId()))
-                .map(conversation -> mapToConversationResponse(conversation, currentUser, blockedByMeSet, blockedMeSet, groupNamesMap))
+                .map(conversation -> mapToConversationResponse(
+                        conversation,
+                        currentUser,
+                        blockedByMeSet,
+                        blockedMeSet,
+                        acceptedFriendIds,
+                        groupNamesMap))
                 .collect(Collectors.toList());
     }
 
@@ -285,13 +302,25 @@ public class ConversationServiceImpl implements ConversationService {
                 ? Set.of(otherMemberId) : Collections.emptySet();
         Set<String> blockedMeSet = otherMemberId != null && userBlockRepository.existsByBlockerIdAndBlockedId(otherMemberId, currentUser.getId())
                 ? Set.of(otherMemberId) : Collections.emptySet();
+        Set<String> acceptedFriendIds = otherMemberId != null
+                && friendshipRepository.findRelation(currentUser.getId(), otherMemberId)
+                        .map(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
+                        .orElse(false)
+                ? Set.of(otherMemberId)
+                : Collections.emptySet();
         Map<String, String> groupNamesMap = conversation.getType() == ConversationType.GROUP
                 ? channelRepository.findByConversationId(conversation.getId())
                     .filter(ch -> ch.getGroup() != null && ch.getGroup().getName() != null)
                     .map(ch -> Map.of(conversation.getId(), ch.getGroup().getName()))
                     .orElse(Collections.emptyMap())
                 : Collections.emptyMap();
-        return mapToConversationResponse(conversation, currentUser, blockedByMeSet, blockedMeSet, groupNamesMap);
+        return mapToConversationResponse(
+                conversation,
+                currentUser,
+                blockedByMeSet,
+                blockedMeSet,
+                acceptedFriendIds,
+                groupNamesMap);
     }
 
     public ConversationResponse mapToConversationResponse(
@@ -299,6 +328,7 @@ public class ConversationServiceImpl implements ConversationService {
             User currentUser,
             Set<String> blockedByMeSet,
             Set<String> blockedMeSet,
+            Set<String> acceptedFriendIds,
             Map<String, String> groupNamesMap
     ) {
         Set<UserProfileResponse> memberResponses = conversation.getMembers().stream()
@@ -329,7 +359,12 @@ public class ConversationServiceImpl implements ConversationService {
                 .id(conversation.getId())
                 .type(conversation.getType().name())
                 .name(displayName)
-                .canSendMessages(canSendMessages(conversation))
+                .canSendMessages(canSendMessages(
+                        conversation,
+                        currentUser.getId(),
+                        blockedByMeSet,
+                        blockedMeSet,
+                        acceptedFriendIds))
                 .blockedByMe(blockedByMe)
                 .blockedMe(blockedMe)
                 .pinned(conversation.getPinnedByUsers() != null && conversation.getPinnedByUsers().contains(currentUser.getId()))
@@ -503,36 +538,38 @@ public class ConversationServiceImpl implements ConversationService {
                 .orElse(null);
     }
 
-    private boolean canSendMessages(Conversation conversation) {
+    private boolean canSendMessages(
+            Conversation conversation,
+            String currentUserId,
+            Set<String> blockedByMeSet,
+            Set<String> blockedMeSet,
+            Set<String> acceptedFriendIds
+    ) {
         if (conversation.getType() == ConversationType.GROUP || conversation.getType() == ConversationType.CLOUD) {
             return true;
         }
 
-        User currentUser = userService.getCurrentAuthenticatedUser();
-        String otherMemberId = getPrivateOtherMemberId(conversation, currentUser.getId());
+        String otherMemberId = getPrivateOtherMemberId(conversation, currentUserId);
 
         if (otherMemberId == null) {
             return false;
         }
 
-        if (userBlockRepository.existsBetweenUsers(currentUser.getId(), otherMemberId)) {
+        if (blockedByMeSet.contains(otherMemberId) || blockedMeSet.contains(otherMemberId)) {
             return false;
         }
 
-        boolean areFriends = friendshipRepository.findRelation(currentUser.getId(), otherMemberId)
-                .map(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
-                .orElse(false);
-
-        User otherMember = userRepository.findById(otherMemberId).orElse(null);
-        if (otherMember != null && otherMember.isBlockStrangerMessages() && !areFriends) {
-            return false;
-        }
+        boolean areFriends = acceptedFriendIds.contains(otherMemberId);
+        User otherMember = conversation.getMembers().stream()
+                .filter(member -> otherMemberId.equals(member.getId()))
+                .findFirst()
+                .orElse(null);
 
         // Stranger messaging is opt-out. A user who has not enabled the privacy
         // setting must remain reachable, even before a chat request is accepted.
         // Keep this response flag aligned with MessageServiceImpl's send guard so
         // clients do not disable the composer while the backend permits the send.
-        return !otherMember.isBlockStrangerMessages() || areFriends;
+        return otherMember != null && (!otherMember.isBlockStrangerMessages() || areFriends);
     }
 
     // @Transactional(readOnly = true)

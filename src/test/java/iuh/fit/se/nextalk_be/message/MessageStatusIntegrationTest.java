@@ -240,6 +240,48 @@ public class MessageStatusIntegrationTest {
     }
 
     @Test
+    void unreadCountAggregation_GroupsOnlyUnreadStatusesByConversation() {
+        Message firstMessage = messageRepository.save(Message.builder()
+                .conversation(conversation)
+                .conversationId(conversation.getId())
+                .sender(senderUser)
+                .senderId(senderUser.getId())
+                .content("First")
+                .messageType(MessageType.TEXT)
+                .build());
+        Message secondMessage = messageRepository.save(Message.builder()
+                .conversation(conversation)
+                .conversationId(conversation.getId())
+                .sender(senderUser)
+                .senderId(senderUser.getId())
+                .content("Second")
+                .messageType(MessageType.TEXT)
+                .build());
+        Message seenMessage = messageRepository.save(Message.builder()
+                .conversation(conversation)
+                .conversationId(conversation.getId())
+                .sender(senderUser)
+                .senderId(senderUser.getId())
+                .content("Already seen")
+                .messageType(MessageType.TEXT)
+                .build());
+
+        messageStatusRepository.saveAll(List.of(
+                statusFor(firstMessage, "SENT"),
+                statusFor(secondMessage, "DELIVERED"),
+                statusFor(seenMessage, "SEEN")
+        ));
+
+        List<MessageStatusRepository.UnreadCountResult> results =
+                messageStatusRepository.countUnreadByConversation(
+                        receiverUser.getId(), List.of("SENT", "DELIVERED"));
+
+        assertEquals(1, results.size());
+        assertEquals(conversation.getId(), results.get(0).conversationId());
+        assertEquals(2L, results.get(0).count());
+    }
+
+    @Test
     @WithMockUser(username = "receiver@gmail.com")
     void markAsDelivered_NotMember_ThrowsBadRequestException() throws Exception {
         // Create another conversation where receiver is NOT a member
@@ -266,5 +308,16 @@ public class MessageStatusIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest());
+    }
+
+    private MessageStatus statusFor(Message message, String status) {
+        return MessageStatus.builder()
+                .message(message)
+                .messageId(message.getId())
+                .conversationId(conversation.getId())
+                .user(receiverUser)
+                .userId(receiverUser.getId())
+                .status(status)
+                .build();
     }
 }
