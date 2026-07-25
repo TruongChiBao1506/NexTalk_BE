@@ -11,6 +11,7 @@ import com.cloudinary.Cloudinary;
 import com.cloudinary.utils.ObjectUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -30,6 +31,7 @@ import java.util.Set;
 public class CloudinaryServiceImpl implements CloudinaryService {
 
     private static final long MAX_UPLOAD_BYTES = 50L * 1024 * 1024;
+    private static final long DEFAULT_MAX_RAW_UPLOAD_BYTES = 10L * 1024 * 1024;
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
             "image/jpeg", "image/png", "image/gif", "image/webp",
             "video/mp4", "video/webm", "video/quicktime",
@@ -47,6 +49,9 @@ public class CloudinaryServiceImpl implements CloudinaryService {
     private final Cloudinary cloudinary;
     private final MediaAssetRepository mediaAssetRepository;
     private final ConcurrentHashMap<String, Object> uploadLocks = new ConcurrentHashMap<>();
+
+    @Value("${cloudinary.max-raw-file-size:" + DEFAULT_MAX_RAW_UPLOAD_BYTES + "}")
+    private long maxRawUploadBytes = DEFAULT_MAX_RAW_UPLOAD_BYTES;
 
     @Override
     public DirectUploadPrepareResponse prepareDirectUpload(DirectUploadPrepareRequest request) {
@@ -239,6 +244,11 @@ public class CloudinaryServiceImpl implements CloudinaryService {
         }
         if (size == null || size <= 0 || size > MAX_UPLOAD_BYTES) {
             throw new IllegalArgumentException("File size must be between 1 byte and 50 MB");
+        }
+        if ("raw".equals(resourceTypeFor(contentType)) && size > maxRawUploadBytes) {
+            throw new IllegalArgumentException(
+                    "Raw file exceeds the Cloudinary limit of " + (maxRawUploadBytes / 1024 / 1024) + " MB"
+            );
         }
     }
 

@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -106,6 +107,24 @@ class CloudinaryServiceImplTest {
         verify(uploader).upload(any(byte[].class), options.capture());
         assertEquals("raw", options.getValue().get("resource_type"));
         verify(mediaAssetRepository).save(any(MediaAsset.class));
+    }
+
+    @Test
+    void uploadFile_RejectsZipAboveRawAssetLimit() {
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "large-folder.zip",
+                "application/zip",
+                new byte[10 * 1024 * 1024 + 1]
+        );
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.uploadFile(file)
+        );
+
+        assertEquals("Raw file exceeds the Cloudinary limit of 10 MB", error.getMessage());
+        verify(cloudinary, never()).uploader();
     }
 
     private MockMultipartFile file(byte[] bytes) {
