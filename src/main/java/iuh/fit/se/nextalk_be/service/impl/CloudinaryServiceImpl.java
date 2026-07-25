@@ -221,8 +221,16 @@ public class CloudinaryServiceImpl implements CloudinaryService {
     }
 
     private String resourceTypeFor(String contentType) {
-        return contentType != null && (contentType.startsWith("audio/") || contentType.startsWith("video/"))
-                ? "video" : "auto";
+        if (contentType != null && contentType.startsWith("image/")) {
+            return "image";
+        }
+        if (contentType != null && (contentType.startsWith("audio/") || contentType.startsWith("video/"))) {
+            return "video";
+        }
+        // ZIP, PDF, Office documents and other non-media assets must be stored
+        // as-is. Using the explicit raw endpoint also avoids auto detection
+        // rejecting generated ZIP archives.
+        return "raw";
     }
 
     private void validateUploadMetadata(String contentType, Long size) {

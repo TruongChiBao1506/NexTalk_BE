@@ -9,6 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
@@ -79,6 +80,31 @@ class CloudinaryServiceImplTest {
 
         assertEquals("https://res.cloudinary.com/demo/image/upload/new.png", result.get("secure_url"));
         verify(uploader).upload(any(byte[].class), any(Map.class));
+        verify(mediaAssetRepository).save(any(MediaAsset.class));
+    }
+
+    @Test
+    void uploadFile_UploadsZipAsRawAsset() throws IOException {
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "NopBai.zip",
+                "application/zip",
+                "zip content".getBytes()
+        );
+        when(mediaAssetRepository.findById(any())).thenReturn(Optional.empty());
+        when(cloudinary.uploader()).thenReturn(uploader);
+        when(uploader.upload(any(byte[].class), any(Map.class))).thenReturn(Map.of(
+                "secure_url", "https://res.cloudinary.com/demo/raw/upload/NopBai.zip",
+                "public_id", "nextalk/assets/hash",
+                "resource_type", "raw",
+                "format", "zip"
+        ));
+
+        service.uploadFile(file);
+
+        ArgumentCaptor<Map> options = ArgumentCaptor.forClass(Map.class);
+        verify(uploader).upload(any(byte[].class), options.capture());
+        assertEquals("raw", options.getValue().get("resource_type"));
         verify(mediaAssetRepository).save(any(MediaAsset.class));
     }
 
