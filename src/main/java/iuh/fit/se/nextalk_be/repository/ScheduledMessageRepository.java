@@ -6,6 +6,7 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 public interface ScheduledMessageRepository extends MongoRepository<ScheduledMessage, String> {
     List<ScheduledMessage> findBySenderIdAndStatusOrderByScheduledAtAsc(
@@ -17,4 +18,6 @@ public interface ScheduledMessageRepository extends MongoRepository<ScheduledMes
             ScheduledMessageStatus status,
             LocalDateTime scheduledAt
     );
+
+    Optional<ScheduledMessage> findFirstByStatusOrderByScheduledAtAsc(ScheduledMessageStatus status);
 }

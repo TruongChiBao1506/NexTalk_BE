@@ -13,21 +13,48 @@ import iuh.fit.se.nextalk_be.service.MessageService;
 import iuh.fit.se.nextalk_be.service.ScheduledMessageService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.scheduling.annotation.Scheduled;
+import jakarta.annotation.PreDestroy;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import java.time.*;
 import java.time.format.DateTimeParseException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
 public class ScheduledMessageServiceImpl implements ScheduledMessageService {
+    private static final String WAKEUP_CHANNEL = "nextalk:scheduled-message:wakeup";
+    private static final String DISPATCH_LOCK_KEY = "nextalk:scheduled-message:dispatch-lock";
+    private static final DefaultRedisScript<Long> RELEASE_LOCK_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+            Long.class
+    );
+
     private final ScheduledMessageRepository repository;
     private final ConversationRepository conversationRepository;
     private final UserService userService;
     private final MessageService messageService;
+    private final StringRedisTemplate redisTemplate;
+    private final String schedulerInstanceId = UUID.randomUUID().toString();
+    private final ScheduledExecutorService schedulerExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "scheduled-message-dispatcher");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final Object schedulerMonitor = new Object();
+    private ScheduledFuture<?> nextDispatchTask;
+    private LocalDateTime armedFor;
 
     @Override
     public ScheduledMessageResponse schedule(ScheduleMessageRequest request) {
@@ -71,7 +98,10 @@ public class ScheduledMessageServiceImpl implements ScheduledMessageService {
                 .scheduledAt(scheduledAt)
                 .status(ScheduledMessageStatus.PENDING)
                 .build();
-        return map(repository.save(scheduled));
+        ScheduledMessage saved = repository.save(scheduled);
+        publishWakeup();
+        armFromDatabase();
+        return map(saved);
     }
 
     @Override
@@ -96,12 +126,19 @@ public class ScheduledMessageServiceImpl implements ScheduledMessageService {
         }
         scheduled.setStatus(ScheduledMessageStatus.CANCELLED);
         scheduled.setCancelledAt(LocalDateTime.now());
-        return map(repository.save(scheduled));
+        ScheduledMessage saved = repository.save(scheduled);
+        publishWakeup();
+        armFromDatabase();
+        return map(saved);
     }
 
     @Override
-    @Scheduled(fixedDelayString = "${app.messages.scheduled-delay-ms:10000}")
     public void dispatchDueMessages() {
+        if (!acquireDispatchLock()) {
+            scheduleRefresh(Duration.ofSeconds(2));
+            return;
+        }
+        try {
         List<ScheduledMessage> due = repository
                 .findByStatusAndScheduledAtLessThanEqualOrderByScheduledAtAsc(
                         ScheduledMessageStatus.PENDING,
@@ -109,6 +146,11 @@ public class ScheduledMessageServiceImpl implements ScheduledMessageService {
                 );
         for (ScheduledMessage scheduled : due.stream().limit(100).toList()) {
             dispatch(scheduled);
+        }
+        } finally {
+            releaseDispatchLock();
+            publishWakeup();
+            armFromDatabase();
         }
     }
 
@@ -128,8 +170,117 @@ public class ScheduledMessageServiceImpl implements ScheduledMessageService {
             scheduled.setStatus(scheduled.getAttempts() >= 5
                     ? ScheduledMessageStatus.FAILED
                     : ScheduledMessageStatus.PENDING);
+            if (scheduled.getStatus() == ScheduledMessageStatus.PENDING) {
+                scheduled.setScheduledAt(LocalDateTime.now().plusSeconds(30));
+            }
         }
         repository.save(scheduled);
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void restorePendingSchedules() {
+        armFromDatabase();
+    }
+
+    public void onExternalWakeup() {
+        armFromDatabase();
+    }
+
+    private void armFromDatabase() {
+        repository.findFirstByStatusOrderByScheduledAtAsc(ScheduledMessageStatus.PENDING)
+                .ifPresentOrElse(
+                        next -> armFor(next.getScheduledAt()),
+                        this::cancelArmedTask
+                );
+    }
+
+    private void armFor(LocalDateTime scheduledAt) {
+        synchronized (schedulerMonitor) {
+            if (nextDispatchTask != null && !nextDispatchTask.isDone()
+                    && armedFor != null && !scheduledAt.isBefore(armedFor)) {
+                return;
+            }
+            if (nextDispatchTask != null) {
+                nextDispatchTask.cancel(false);
+            }
+            long delayMillis = Math.max(
+                    0,
+                    Duration.between(LocalDateTime.now(), scheduledAt).toMillis()
+            );
+            armedFor = scheduledAt;
+            nextDispatchTask = schedulerExecutor.schedule(() -> {
+                synchronized (schedulerMonitor) {
+                    nextDispatchTask = null;
+                    armedFor = null;
+                }
+                dispatchDueMessages();
+            }, delayMillis, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void scheduleRefresh(Duration delay) {
+        synchronized (schedulerMonitor) {
+            if (nextDispatchTask != null) {
+                nextDispatchTask.cancel(false);
+            }
+            armedFor = LocalDateTime.now().plus(delay);
+            nextDispatchTask = schedulerExecutor.schedule(() -> {
+                synchronized (schedulerMonitor) {
+                    nextDispatchTask = null;
+                    armedFor = null;
+                }
+                armFromDatabase();
+            }, delay.toMillis(), TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void cancelArmedTask() {
+        synchronized (schedulerMonitor) {
+            if (nextDispatchTask != null) {
+                nextDispatchTask.cancel(false);
+            }
+            nextDispatchTask = null;
+            armedFor = null;
+        }
+    }
+
+    private void publishWakeup() {
+        try {
+            redisTemplate.convertAndSend(WAKEUP_CHANNEL, "refresh");
+        } catch (Exception ignored) {
+            // Local scheduling remains available when Redis is temporarily unavailable.
+        }
+    }
+
+    private boolean acquireDispatchLock() {
+        try {
+            Boolean acquired = redisTemplate.opsForValue().setIfAbsent(
+                    DISPATCH_LOCK_KEY,
+                    schedulerInstanceId,
+                    Duration.ofSeconds(30)
+            );
+            return Boolean.TRUE.equals(acquired);
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    private void releaseDispatchLock() {
+        try {
+            redisTemplate.execute(
+                    RELEASE_LOCK_SCRIPT,
+                    Collections.singletonList(DISPATCH_LOCK_KEY),
+                    schedulerInstanceId
+            );
+        } catch (Exception ignored) {
+            // The lock expires automatically.
+        }
+    }
+
+    @PreDestroy
+    public void shutdownScheduler() {
+        cancelArmedTask();
+        schedulerExecutor.shutdownNow();
     }
 
     private LocalDateTime parseTime(String value) {
