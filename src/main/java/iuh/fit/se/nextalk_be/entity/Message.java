@@ -28,9 +28,8 @@ import java.util.Map;
 @CompoundIndex(name = "msg_conv_created_v2", def = "{'conversationId': 1, 'createdAt': -1}")
 @CompoundIndex(name = "msg_conv_updated_v1", def = "{'conversationId': 1, 'updatedAt': 1}")
 @CompoundIndex(
-        name = "msg_sender_client_id_unique",
+        name = "msg_sender_client_id_lookup",
         def = "{'conversationId': 1, 'senderId': 1, 'metadata.clientMessageId': 1}",
-        unique = true,
         partialFilter = "{'metadata.clientMessageId': {'$type': 'string'}}"
 )
 public class Message extends BaseEntity {
