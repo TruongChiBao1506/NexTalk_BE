@@ -186,11 +186,23 @@ public class ConversationServiceImpl implements ConversationService {
                 .filter(c -> c.getType() == ConversationType.GROUP)
                 .map(Conversation::getId)
                 .collect(Collectors.toList());
-        Map<String, String> groupNamesMap = groupConvIds.isEmpty()
-                ? Collections.emptyMap()
-                : channelRepository.findAllByConversationIdIn(groupConvIds).stream()
-                        .filter(ch -> ch.getConversation() != null && ch.getGroup() != null && ch.getGroup().getName() != null)
-                        .collect(Collectors.toMap(ch -> ch.getConversation().getId(), ch -> ch.getGroup().getName(), (a, b) -> a));
+        List<Channel> groupChannels = groupConvIds.isEmpty()
+                ? Collections.emptyList()
+                : channelRepository.findAllByConversationIdIn(groupConvIds);
+        Map<String, String> groupNamesMap = groupChannels.stream()
+                .filter(ch -> ch.getConversation() != null && ch.getGroup() != null && ch.getGroup().getName() != null)
+                .collect(Collectors.toMap(ch -> ch.getConversation().getId(), ch -> ch.getGroup().getName(), (a, b) -> a));
+        Set<String> pinnedGroupIds = groupChannels.stream()
+                .filter(ch -> ch.getConversation() != null && ch.getGroup() != null)
+                .filter(ch -> ch.getConversation().getPinnedByUsers() != null
+                        && ch.getConversation().getPinnedByUsers().contains(currentUser.getId()))
+                .map(ch -> ch.getGroup().getId())
+                .collect(Collectors.toSet());
+        Set<String> groupPinnedConversationIds = groupChannels.stream()
+                .filter(ch -> ch.getConversation() != null && ch.getGroup() != null)
+                .filter(ch -> pinnedGroupIds.contains(ch.getGroup().getId()))
+                .map(ch -> ch.getConversation().getId())
+                .collect(Collectors.toSet());
 
         return deduplicated.stream()
                 // Opening a profile/search result creates a private conversation shell
@@ -208,7 +220,8 @@ public class ConversationServiceImpl implements ConversationService {
                         blockedByMeSet,
                         blockedMeSet,
                         acceptedFriendIds,
-                        groupNamesMap))
+                        groupNamesMap,
+                        groupPinnedConversationIds))
                 .collect(Collectors.toList());
     }
 
@@ -308,19 +321,30 @@ public class ConversationServiceImpl implements ConversationService {
                         .orElse(false)
                 ? Set.of(otherMemberId)
                 : Collections.emptySet();
-        Map<String, String> groupNamesMap = conversation.getType() == ConversationType.GROUP
+        Optional<Channel> groupChannel = conversation.getType() == ConversationType.GROUP
                 ? channelRepository.findByConversationId(conversation.getId())
-                    .filter(ch -> ch.getGroup() != null && ch.getGroup().getName() != null)
-                    .map(ch -> Map.of(conversation.getId(), ch.getGroup().getName()))
-                    .orElse(Collections.emptyMap())
-                : Collections.emptyMap();
+                : Optional.empty();
+        Map<String, String> groupNamesMap = groupChannel
+                .filter(ch -> ch.getGroup() != null && ch.getGroup().getName() != null)
+                .map(ch -> Map.of(conversation.getId(), ch.getGroup().getName()))
+                .orElse(Collections.emptyMap());
+        Set<String> groupPinnedConversationIds = groupChannel
+                .filter(ch -> ch.getGroup() != null)
+                .filter(ch -> channelRepository.findAllByGroupId(ch.getGroup().getId()).stream()
+                        .map(Channel::getConversation)
+                        .filter(Objects::nonNull)
+                        .anyMatch(groupConversation -> groupConversation.getPinnedByUsers() != null
+                                && groupConversation.getPinnedByUsers().contains(currentUser.getId())))
+                .map(ch -> Set.of(conversation.getId()))
+                .orElse(Collections.emptySet());
         return mapToConversationResponse(
                 conversation,
                 currentUser,
                 blockedByMeSet,
                 blockedMeSet,
                 acceptedFriendIds,
-                groupNamesMap);
+                groupNamesMap,
+                groupPinnedConversationIds);
     }
 
     public ConversationResponse mapToConversationResponse(
@@ -329,7 +353,8 @@ public class ConversationServiceImpl implements ConversationService {
             Set<String> blockedByMeSet,
             Set<String> blockedMeSet,
             Set<String> acceptedFriendIds,
-            Map<String, String> groupNamesMap
+            Map<String, String> groupNamesMap,
+            Set<String> groupPinnedConversationIds
     ) {
         Set<UserProfileResponse> memberResponses = conversation.getMembers().stream()
                 .map(m -> UserProfileResponse.builder()
@@ -367,7 +392,8 @@ public class ConversationServiceImpl implements ConversationService {
                         acceptedFriendIds))
                 .blockedByMe(blockedByMe)
                 .blockedMe(blockedMe)
-                .pinned(conversation.getPinnedByUsers() != null && conversation.getPinnedByUsers().contains(currentUser.getId()))
+                .pinned(groupPinnedConversationIds.contains(conversation.getId())
+                        || (conversation.getPinnedByUsers() != null && conversation.getPinnedByUsers().contains(currentUser.getId())))
                 .hidden(conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(currentUser.getId()))
                 .muted(conversation.getMutedByUsers() != null && conversation.getMutedByUsers().contains(currentUser.getId()))
                 .selfDestructSeconds(conversation.getSelfDestructSeconds())
@@ -489,16 +515,32 @@ public class ConversationServiceImpl implements ConversationService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Conversation conversation = getConversationForMember(id, currentUser);
 
-        if (conversation.getPinnedByUsers() == null) {
-            conversation.setPinnedByUsers(new HashSet<>());
-        }
-        if (pinned) {
-            conversation.getPinnedByUsers().add(currentUser.getId());
-        } else {
-            conversation.getPinnedByUsers().remove(currentUser.getId());
+        Map<String, Conversation> conversationsToUpdate = new LinkedHashMap<>();
+        conversationsToUpdate.put(conversation.getId(), conversation);
+        if (conversation.getType() == ConversationType.GROUP) {
+            channelRepository.findByConversationId(conversation.getId())
+                    .filter(channel -> channel.getGroup() != null)
+                    .ifPresent(channel -> channelRepository.findAllByGroupId(channel.getGroup().getId()).stream()
+                            .map(Channel::getConversation)
+                            .filter(Objects::nonNull)
+                            .filter(groupConversation -> groupConversation.getMembers().stream()
+                                    .anyMatch(member -> member.getId().equals(currentUser.getId())))
+                            .forEach(groupConversation -> conversationsToUpdate.putIfAbsent(groupConversation.getId(), groupConversation)));
         }
 
-        return mapToConversationResponse(conversationRepository.save(conversation));
+        conversationsToUpdate.values().forEach(scopedConversation -> {
+            if (scopedConversation.getPinnedByUsers() == null) {
+                scopedConversation.setPinnedByUsers(new HashSet<>());
+            }
+            if (pinned) {
+                scopedConversation.getPinnedByUsers().add(currentUser.getId());
+            } else {
+                scopedConversation.getPinnedByUsers().remove(currentUser.getId());
+            }
+        });
+        conversationRepository.saveAll(conversationsToUpdate.values());
+
+        return mapToConversationResponse(conversation);
     }
 
     public void deleteForCurrentUser(String id) {

@@ -32,6 +32,7 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -254,5 +255,54 @@ public class ConversationControllerTest {
                 .orElseThrow().getHiddenByUsers().contains(currentUser.getId()));
         org.junit.jupiter.api.Assertions.assertFalse(conversationRepository.findById(planningConversation.getId())
                 .orElseThrow().getHiddenByUsers().contains(currentUser.getId()));
+    }
+
+    @Test
+    @WithMockUser(username = "current@gmail.com")
+    void updatePinned_ForAnyGroupChannel_SynchronizesTheWholeGroup() throws Exception {
+        Group group = groupRepository.save(Group.builder()
+                .name("Project group")
+                .owner(currentUser)
+                .build());
+
+        Conversation generalConversation = conversationRepository.save(Conversation.builder()
+                .type(ConversationType.GROUP)
+                .members(Set.of(currentUser, friendUser))
+                .build());
+        Conversation planningConversation = conversationRepository.save(Conversation.builder()
+                .type(ConversationType.GROUP)
+                .members(Set.of(currentUser, friendUser))
+                .build());
+
+        channelRepository.save(Channel.builder()
+                .name("General")
+                .type(ChannelType.TEXT)
+                .group(group)
+                .conversation(generalConversation)
+                .build());
+        channelRepository.save(Channel.builder()
+                .name("Planning")
+                .type(ChannelType.TEXT)
+                .group(group)
+                .conversation(planningConversation)
+                .build());
+
+        mockMvc.perform(put("/api/conversations/" + planningConversation.getId() + "/pin"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pinned", is(true)));
+
+        org.junit.jupiter.api.Assertions.assertTrue(conversationRepository.findById(generalConversation.getId())
+                .orElseThrow().getPinnedByUsers().contains(currentUser.getId()));
+        org.junit.jupiter.api.Assertions.assertTrue(conversationRepository.findById(planningConversation.getId())
+                .orElseThrow().getPinnedByUsers().contains(currentUser.getId()));
+
+        mockMvc.perform(delete("/api/conversations/" + generalConversation.getId() + "/pin"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pinned", is(false)));
+
+        org.junit.jupiter.api.Assertions.assertFalse(conversationRepository.findById(generalConversation.getId())
+                .orElseThrow().getPinnedByUsers().contains(currentUser.getId()));
+        org.junit.jupiter.api.Assertions.assertFalse(conversationRepository.findById(planningConversation.getId())
+                .orElseThrow().getPinnedByUsers().contains(currentUser.getId()));
     }
 }
