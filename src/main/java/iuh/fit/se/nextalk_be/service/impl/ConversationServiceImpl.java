@@ -594,18 +594,12 @@ public class ConversationServiceImpl implements ConversationService {
         List<Conversation> deduplicated = deduplicateConversations(conversations, currentUser.getId());
 
         if (isPinMatch) {
-            // Return only hidden conversations (deduplicated by group ID)
+            // Each hidden group channel is its own conversation. Do not collapse
+            // them by group ID or only the most recently hidden channel survives.
             List<ConversationResponse> pinResults = new ArrayList<>();
-            Set<String> seenGroupIds = new LinkedHashSet<>();
             for (Conversation c : deduplicated) {
                 if (c.getDeletedByUsers() != null && c.getDeletedByUsers().contains(currentUser.getId())) continue;
                 if (c.getHiddenByUsers() == null || !c.getHiddenByUsers().contains(currentUser.getId())) continue;
-                if (c.getType() == ConversationType.GROUP) {
-                    String groupId = channelRepository.findByConversationId(c.getId())
-                            .map(ch -> ch.getGroup() != null ? ch.getGroup().getId() : null)
-                            .orElse(null);
-                    if (groupId != null && !seenGroupIds.add(groupId)) continue;
-                }
                 pinResults.add(mapToConversationResponse(c));
             }
             return pinResults;
