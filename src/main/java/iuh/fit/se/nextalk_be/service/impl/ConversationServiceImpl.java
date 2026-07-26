@@ -5,6 +5,8 @@ import iuh.fit.se.nextalk_be.dto.response.ConversationResponse;
 import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
 import iuh.fit.se.nextalk_be.entity.Conversation;
+import iuh.fit.se.nextalk_be.entity.ConversationNotificationMode;
+import iuh.fit.se.nextalk_be.entity.ConversationNotificationSetting;
 import iuh.fit.se.nextalk_be.entity.ConversationType;
 import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
 import iuh.fit.se.nextalk_be.entity.User;
@@ -22,6 +24,7 @@ import iuh.fit.se.nextalk_be.repository.UserBlockRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.service.UserService;
+import iuh.fit.se.nextalk_be.service.ConversationNotificationPreferenceService;
 
 
 import iuh.fit.se.nextalk_be.dto.response.ConversationWithPreviewsResponse;
@@ -32,6 +35,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -51,6 +58,8 @@ public class ConversationServiceImpl implements ConversationService {
     private final MessageRepository messageRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final MessageService messageService;
+    private final ConversationNotificationPreferenceService conversationNotificationPreferenceService;
+    private final MongoTemplate mongoTemplate;
 
     @Transactional
     public ConversationResponse getOrCreatePrivateConversation(String friendId) {
@@ -380,6 +389,9 @@ public class ConversationServiceImpl implements ConversationService {
             displayName = groupNamesMap.get(conversation.getId());
         }
 
+        ConversationNotificationPreferenceService.EffectivePreference notificationPreference =
+                conversationNotificationPreferenceService.resolve(conversation, currentUser.getId());
+
         return ConversationResponse.builder()
                 .id(conversation.getId())
                 .type(conversation.getType().name())
@@ -395,7 +407,9 @@ public class ConversationServiceImpl implements ConversationService {
                 .pinned(groupPinnedConversationIds.contains(conversation.getId())
                         || (conversation.getPinnedByUsers() != null && conversation.getPinnedByUsers().contains(currentUser.getId())))
                 .hidden(conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(currentUser.getId()))
-                .muted(conversation.getMutedByUsers() != null && conversation.getMutedByUsers().contains(currentUser.getId()))
+                .muted(notificationPreference.mode() != ConversationNotificationMode.ALL)
+                .notificationMode(notificationPreference.mode().name())
+                .mutedUntil(notificationPreference.mutedUntil())
                 .selfDestructSeconds(conversation.getSelfDestructSeconds())
                 .themeColor(conversation.getThemeColor())
                 .wallpaperUrl(conversation.getWallpaperUrl())
@@ -700,12 +714,55 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     public ConversationResponse updateMuted(String id, boolean muted) {
+        return updateNotificationSettings(
+                id,
+                muted ? ConversationNotificationMode.NONE : ConversationNotificationMode.ALL,
+                null
+        );
+    }
+
+    @Override
+    public ConversationResponse updateNotificationSettings(
+            String id,
+            ConversationNotificationMode mode,
+            java.time.Instant mutedUntil
+    ) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Conversation conversation = getConversationForMember(id, currentUser);
-        if (conversation.getMutedByUsers() == null) conversation.setMutedByUsers(new HashSet<>());
-        if (muted) conversation.getMutedByUsers().add(currentUser.getId());
-        else conversation.getMutedByUsers().remove(currentUser.getId());
-        return mapToConversationResponse(conversationRepository.save(conversation));
+        if (mode == null) {
+            throw new BadRequestException("Notification mode is required");
+        }
+        if (mutedUntil != null && !mutedUntil.isAfter(java.time.Instant.now())) {
+            throw new BadRequestException("Mute expiration must be in the future");
+        }
+
+        String userId = currentUser.getId();
+        String settingPath = "notificationSettingsByUser." + userId;
+        Update update = new Update();
+        if (mode == ConversationNotificationMode.ALL) {
+            update.unset(settingPath).pull("mutedByUsers", userId);
+        } else {
+            update.set(
+                    settingPath,
+                    ConversationNotificationSetting.builder()
+                            .mode(mode)
+                            .mutedUntil(mutedUntil)
+                            .build()
+            );
+            if (mode == ConversationNotificationMode.NONE && mutedUntil == null) {
+                update.addToSet("mutedByUsers", userId);
+            } else {
+                update.pull("mutedByUsers", userId);
+            }
+        }
+        mongoTemplate.updateFirst(
+                Query.query(Criteria.where("_id").is(conversation.getId())),
+                update,
+                Conversation.class
+        );
+        Conversation updated = conversationRepository.findById(conversation.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + id));
+        return mapToConversationResponse(updated);
     }
 
     public ConversationResponse updateTheme(String id, iuh.fit.se.nextalk_be.dto.request.UpdateThemeRequest request) {

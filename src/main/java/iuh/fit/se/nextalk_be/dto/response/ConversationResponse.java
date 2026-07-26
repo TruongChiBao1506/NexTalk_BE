@@ -6,6 +6,7 @@ import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
 import lombok.*;
 
 import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Set;
 import java.util.Map;
 
@@ -24,6 +25,8 @@ public class ConversationResponse {
     private boolean pinned;
     private boolean hidden;
     private boolean muted;
+    private String notificationMode;
+    private Instant mutedUntil;
     private int selfDestructSeconds;
     private Set<UserProfileResponse> members;
     private String themeColor;

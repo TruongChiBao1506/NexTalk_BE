@@ -5,6 +5,7 @@ import iuh.fit.se.nextalk_be.dto.response.ConversationResponse;
 import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.ConversationType;
+import iuh.fit.se.nextalk_be.entity.ConversationNotificationMode;
 import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
@@ -39,6 +40,11 @@ public interface ConversationService {
     public List<ConversationResponse> searchConversations(String query);
     public ConversationResponse updateHidden(String id, boolean hidden);
     ConversationResponse updateMuted(String id, boolean muted);
+    ConversationResponse updateNotificationSettings(
+            String id,
+            ConversationNotificationMode mode,
+            java.time.Instant mutedUntil
+    );
     public ConversationResponse updateTheme(String id, iuh.fit.se.nextalk_be.dto.request.UpdateThemeRequest request);
     ConversationResponse updateNickname(String id, String userId, String nickname);
 }

@@ -305,4 +305,32 @@ public class ConversationControllerTest {
         org.junit.jupiter.api.Assertions.assertFalse(conversationRepository.findById(planningConversation.getId())
                 .orElseThrow().getPinnedByUsers().contains(currentUser.getId()));
     }
+
+    @Test
+    @WithMockUser(username = "current@gmail.com")
+    void updateNotificationSettings_SupportsMentionsAndTemporaryMute() throws Exception {
+        Conversation conversation = conversationRepository.save(Conversation.builder()
+                .type(ConversationType.PRIVATE)
+                .members(Set.of(currentUser, friendUser))
+                .build());
+
+        mockMvc.perform(put("/api/conversations/" + conversation.getId() + "/notification-settings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"mode":"MENTIONS_ONLY","mutedUntil":null}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notificationMode", is("MENTIONS_ONLY")))
+                .andExpect(jsonPath("$.data.muted", is(true)));
+
+        String future = java.time.Instant.now().plusSeconds(3600).toString();
+        mockMvc.perform(put("/api/conversations/" + conversation.getId() + "/notification-settings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"mode":"NONE","mutedUntil":"%s"}
+                                """.formatted(future)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notificationMode", is("NONE")))
+                .andExpect(jsonPath("$.data.mutedUntil", org.hamcrest.Matchers.notNullValue()));
+    }
 }

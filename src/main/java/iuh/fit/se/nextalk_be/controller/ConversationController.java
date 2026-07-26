@@ -3,6 +3,7 @@ package iuh.fit.se.nextalk_be.controller;
 import iuh.fit.se.nextalk_be.dto.request.UpdateSelfDestructRequest;
 import iuh.fit.se.nextalk_be.dto.request.UpdateThemeRequest;
 import iuh.fit.se.nextalk_be.dto.request.UpdateNicknameRequest;
+import iuh.fit.se.nextalk_be.dto.request.UpdateConversationNotificationRequest;
 import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
 import iuh.fit.se.nextalk_be.dto.response.ConversationResponse;
 import iuh.fit.se.nextalk_be.dto.response.ConversationSummaryResponse;
@@ -130,6 +131,20 @@ public class ConversationController {
     ) {
         ConversationResponse response = conversationService.updateMuted(id, muted);
         return ResponseEntity.ok(ApiResponse.success(response, muted ? "Conversation muted" : "Conversation unmuted"));
+    }
+
+    @PutMapping("/{id}/notification-settings")
+    @Operation(summary = "Update detailed notification settings for the current user")
+    public ResponseEntity<ApiResponse<ConversationResponse>> updateNotificationSettings(
+            @PathVariable("id") String id,
+            @Valid @RequestBody UpdateConversationNotificationRequest request
+    ) {
+        ConversationResponse response = conversationService.updateNotificationSettings(
+                id,
+                request.getMode(),
+                request.getMutedUntil()
+        );
+        return ResponseEntity.ok(ApiResponse.success(response, "Notification settings updated"));
     }
 
     @PostMapping("/{id}/summary")

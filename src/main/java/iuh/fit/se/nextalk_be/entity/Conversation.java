@@ -45,6 +45,9 @@ public class Conversation extends BaseEntity {
     @Builder.Default
     private Set<String> mutedByUsers = new HashSet<>();
 
+    @Builder.Default
+    private Map<String, ConversationNotificationSetting> notificationSettingsByUser = new HashMap<>();
+
     private String themeColor;
     
     private String wallpaperUrl;

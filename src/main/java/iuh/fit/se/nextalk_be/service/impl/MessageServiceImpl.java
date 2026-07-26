@@ -49,6 +49,7 @@ import iuh.fit.se.nextalk_be.service.PresenceService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import iuh.fit.se.nextalk_be.service.VoiceChannelService;
 import iuh.fit.se.nextalk_be.service.MediaAuthorizationService;
+import iuh.fit.se.nextalk_be.service.ConversationNotificationPreferenceService;
 
 
 import lombok.RequiredArgsConstructor;
@@ -92,6 +93,7 @@ public class MessageServiceImpl implements MessageService {
     private final SimpMessagingTemplate messagingTemplate;
     private final MessageStatusRepository messageStatusRepository;
     private final NotificationService notificationService;
+    private final ConversationNotificationPreferenceService conversationNotificationPreferenceService;
     private final FriendshipRepository friendshipRepository;
     private final ChatRequestRepository chatRequestRepository;
     private final UserBlockRepository userBlockRepository;
@@ -411,15 +413,18 @@ public class MessageServiceImpl implements MessageService {
                                 priorityPrefix + (contentPreview != null && contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
                     }
 
-                    boolean muted = conversation.getMutedByUsers() != null
-                            && conversation.getMutedByUsers().contains(member.getId());
+                    boolean notificationAllowed = conversationNotificationPreferenceService.shouldNotify(
+                            conversation,
+                            member.getId(),
+                            isMentioned
+                    );
                     boolean suspiciousStrangerMessage = savedMessage.getMetadata() != null
                             && Boolean.TRUE.equals(savedMessage.getMetadata().get("strangerMessage"))
                             && "MEDIUM".equals(savedMessage.getMetadata().get("spamRisk"));
                     boolean silentMessage = savedMessage.getMetadata() != null
                             && Boolean.TRUE.equals(savedMessage.getMetadata().get("silent"));
-                    muted = muted || suspiciousStrangerMessage || silentMessage;
-                    if (!muted) {
+                    notificationAllowed = notificationAllowed && !suspiciousStrangerMessage && !silentMessage;
+                    if (notificationAllowed) {
                         notificationService.createAndSend(
                                 member,
                                 isMentioned ? NotificationType.MENTION : NotificationType.NEW_MESSAGE,
@@ -428,7 +433,7 @@ public class MessageServiceImpl implements MessageService {
                         );
                     }
 
-                    if (!muted && member.getFcmTokens() != null && !member.getFcmTokens().isEmpty()) {
+                    if (notificationAllowed && member.getFcmTokens() != null && !member.getFcmTokens().isEmpty()) {
                         String pushBody = priorityPrefix + (contentPreview != null ? contentPreview : "");
                         if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
                             pushBody = isMentioned ? "Bạn được nhắc trong một cuộc trò chuyện" : "Bạn có tin nhắn mới";
