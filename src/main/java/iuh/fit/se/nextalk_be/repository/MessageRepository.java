@@ -13,6 +13,7 @@ import org.springframework.data.mongodb.repository.Aggregation;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.time.LocalDateTime;
 
@@ -64,4 +65,11 @@ public interface MessageRepository extends MongoRepository<Message, String> {
 
     @Query("{'attachments.url': ?0}")
     List<Message> findByAttachmentUrl(String url);
+
+    @Query("{'conversationId': ?0, 'senderId': ?1, 'metadata.clientMessageId': ?2}")
+    Optional<Message> findByConversationIdAndSenderIdAndClientMessageId(
+            String conversationId,
+            String senderId,
+            String clientMessageId
+    );
 }

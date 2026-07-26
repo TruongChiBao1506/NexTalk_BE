@@ -313,6 +313,34 @@ public class CallController {
         forwardToTarget(signal);
     }
 
+    @MessageMapping("/call.handoff")
+    public void handoffCall(@Payload CallSignal signal, Principal principal) {
+        if (principal == null || signal.getCallId() == null || signal.getConversationId() == null) return;
+        User currentUser = findUserByPrincipal(principal);
+        if (currentUser == null) return;
+
+        CallSession session = getCallSession(signal.getCallId());
+        if (session == null
+                || !session.conversationId.equals(signal.getConversationId())
+                || !session.participantIds.contains(currentUser.getId())) {
+            return;
+        }
+
+        String signalType = signal.getSignalType();
+        if (!"HANDOFF_REQUEST".equalsIgnoreCase(signalType)
+                && !"HANDOFF_ACCEPTED".equalsIgnoreCase(signalType)) {
+            return;
+        }
+
+        signal.setCallerId(currentUser.getId());
+        signal.setReceiverId(currentUser.getId());
+        messagingTemplate.convertAndSendToUser(
+                currentUser.getUsername(),
+                "/queue/calls",
+                signal
+        );
+    }
+
     private boolean registerCallInvite(CallSignal signal, User caller) {
         if (signal.getCallId() == null || signal.getConversationId() == null) return false;
         Long closedUntil = closedCallSessions.get(signal.getCallId());

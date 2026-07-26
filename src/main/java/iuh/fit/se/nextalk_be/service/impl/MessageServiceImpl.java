@@ -80,6 +80,10 @@ public class MessageServiceImpl implements MessageService {
     private static final Pattern BOT_MENTION_PATTERN = Pattern.compile("(^|\\s)@(bot|nextalk\\s+ai|meta\\s+ai)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]*>");
     private static final Pattern VOICE_INVITE_PATTERN = Pattern.compile("nextalk://voice/([^?\\s]+)\\?groupId=([^&\\s]+)");
+    private static final Pattern WEB_LINK_PATTERN = Pattern.compile("(?i)https?://\\S+");
+    private static final Pattern SUSPICIOUS_LINK_PATTERN = Pattern.compile(
+            "(?i)(?:https?://)?(?:bit\\.ly|tinyurl\\.com|cutt\\.ly|\\d{1,3}(?:\\.\\d{1,3}){3})(?:/|\\b)|xn--"
+    );
 
     private final MessageRepository messageRepository;
     private final ConversationRepository conversationRepository;
@@ -193,8 +197,33 @@ public class MessageServiceImpl implements MessageService {
             throw new BadRequestException("You are not a member of this conversation");
         }
 
+        String clientMessageId = request.getClientMessageId() != null
+                ? request.getClientMessageId().trim()
+                : "";
+        if (!clientMessageId.isBlank()) {
+            Message existing = messageRepository
+                    .findByConversationIdAndSenderIdAndClientMessageId(
+                            conversation.getId(),
+                            currentUser.getId(),
+                            clientMessageId
+                    )
+                    .orElse(null);
+            if (existing != null) {
+                return mapToMessageResponse(existing);
+            }
+        }
+
         ensureChannelPostingAllowed(conversation, currentUser);
-        ensurePrivateMessageAllowed(conversation, currentUser);
+        boolean strangerMessage = ensurePrivateMessageAllowed(conversation, currentUser);
+        if (strangerMessage) {
+            rateLimitService.check(
+                    "message:stranger:conversation:" + conversation.getId(),
+                    currentUser.getId(),
+                    30,
+                    Duration.ofMinutes(10)
+            );
+            rateLimitService.check("message:stranger:daily", currentUser.getId(), 120, Duration.ofDays(1));
+        }
         mediaAuthorizationService.authorizeForConversation(request.getAttachments(), currentUser, conversation);
         if (conversation.getDeletedByUsers() != null && !conversation.getDeletedByUsers().isEmpty()) {
             conversation.getDeletedByUsers().clear();
@@ -259,6 +288,10 @@ public class MessageServiceImpl implements MessageService {
         }
         if (request.getPriority() != null && !request.getPriority().isBlank()) {
             metadata.put("priority", request.getPriority().toUpperCase());
+        }
+        if (strangerMessage) {
+            metadata.put("strangerMessage", true);
+            metadata.put("spamRisk", assessStrangerSpamRisk(content, attachments));
         }
         MentionTargets mentionTargets = resolveMentionTargets(content, conversation, currentUser);
         if (mentionTargets.mentionAll()) {
@@ -380,6 +413,12 @@ public class MessageServiceImpl implements MessageService {
 
                     boolean muted = conversation.getMutedByUsers() != null
                             && conversation.getMutedByUsers().contains(member.getId());
+                    boolean suspiciousStrangerMessage = savedMessage.getMetadata() != null
+                            && Boolean.TRUE.equals(savedMessage.getMetadata().get("strangerMessage"))
+                            && "MEDIUM".equals(savedMessage.getMetadata().get("spamRisk"));
+                    boolean silentMessage = savedMessage.getMetadata() != null
+                            && Boolean.TRUE.equals(savedMessage.getMetadata().get("silent"));
+                    muted = muted || suspiciousStrangerMessage || silentMessage;
                     if (!muted) {
                         notificationService.createAndSend(
                                 member,
@@ -558,9 +597,9 @@ public class MessageServiceImpl implements MessageService {
         }
     }
 
-    private void ensurePrivateMessageAllowed(Conversation conversation, User currentUser) {
+    private boolean ensurePrivateMessageAllowed(Conversation conversation, User currentUser) {
         if (conversation.getType() != ConversationType.PRIVATE) {
-            return;
+            return false;
         }
 
         User otherMember = conversation.getMembers().stream()
@@ -578,6 +617,21 @@ public class MessageServiceImpl implements MessageService {
         if (otherMember.isBlockStrangerMessages() && !areFriends) {
             throw new BadRequestException("Người dùng này chỉ nhận tin nhắn từ bạn bè.");
         }
+        return !areFriends;
+    }
+
+    private String assessStrangerSpamRisk(String content, List<MessageAttachment> attachments) {
+        if (content == null || content.isBlank()) {
+            return "LOW";
+        }
+        Matcher linkMatcher = WEB_LINK_PATTERN.matcher(content);
+        int linkCount = 0;
+        while (linkMatcher.find()) {
+            linkCount++;
+        }
+        boolean suspiciousLink = SUSPICIOUS_LINK_PATTERN.matcher(content).find();
+        boolean attachmentBurst = attachments != null && attachments.size() >= 5;
+        return linkCount >= 3 || suspiciousLink || attachmentBurst ? "MEDIUM" : "LOW";
     }
 
     // @Transactional(readOnly = true)

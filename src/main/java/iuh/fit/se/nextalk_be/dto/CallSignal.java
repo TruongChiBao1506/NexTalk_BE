@@ -17,10 +17,14 @@ public class CallSignal {
     private String callerName;
     private String callerAvatar;
     private String type; // VOICE, VIDEO
-    private String signalType; // INVITE, ANSWER, CALL_HANDLED, CANCEL, HANGUP, LEAVE, BUSY
+    private String signalType; // INVITE, ANSWER, CALL_HANDLED, HANDOFF_REQUEST, HANDOFF_ACCEPTED, CANCEL, HANGUP, LEAVE, BUSY
     private String token;
     private Integer uid;
     private Boolean accept;
     private String reason; // busy, rejected
     private String handledByDeviceId;
+    private String sourceDeviceId;
+    private String handoffPeerId;
+    private String handoffPeerName;
+    private String handoffPeerAvatar;
 }
