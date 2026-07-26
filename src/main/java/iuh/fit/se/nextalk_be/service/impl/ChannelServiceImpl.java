@@ -282,6 +282,9 @@ public class ChannelServiceImpl implements ChannelService {
                 .isPostingRestricted(channel.isPostingRestricted())
                 .groupId(channel.getGroup() != null ? channel.getGroup().getId() : null)
                 .conversationId(channel.getConversation() != null ? channel.getConversation().getId() : null)
+                .hidden(channel.getConversation() != null
+                        && channel.getConversation().getHiddenByUsers() != null
+                        && channel.getConversation().getHiddenByUsers().contains(userService.getCurrentAuthenticatedUser().getId()))
                 .createdAt(channel.getCreatedAt())
                 .updatedAt(channel.getUpdatedAt())
                 .build();

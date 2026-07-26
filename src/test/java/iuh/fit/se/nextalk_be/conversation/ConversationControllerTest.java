@@ -2,8 +2,13 @@ package iuh.fit.se.nextalk_be.conversation;
 
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.ConversationType;
+import iuh.fit.se.nextalk_be.entity.Channel;
+import iuh.fit.se.nextalk_be.entity.ChannelType;
+import iuh.fit.se.nextalk_be.entity.Group;
 import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.repository.ChannelRepository;
 import iuh.fit.se.nextalk_be.repository.ConversationRepository;
+import iuh.fit.se.nextalk_be.repository.GroupRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 
 
@@ -22,9 +27,11 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -43,11 +50,19 @@ public class ConversationControllerTest {
     @Autowired
     private ConversationRepository conversationRepository;
 
+    @Autowired
+    private ChannelRepository channelRepository;
+
+    @Autowired
+    private GroupRepository groupRepository;
+
     private User currentUser;
     private User friendUser;
 
     @BeforeEach
     void setUp() {
+        channelRepository.deleteAll();
+        groupRepository.deleteAll();
         conversationRepository.deleteAll();
         userRepository.deleteAll();
 
@@ -161,5 +176,65 @@ public class ConversationControllerTest {
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.success", is(false)));
+    }
+
+    @Test
+    @WithMockUser(username = "current@gmail.com")
+    void updateHidden_ForGroupChannel_UpdatesOnlySelectedChannel() throws Exception {
+        currentUser.setChatPin("configured");
+        currentUser = userRepository.save(currentUser);
+
+        Group group = groupRepository.save(Group.builder()
+                .name("Project group")
+                .owner(currentUser)
+                .build());
+
+        Conversation generalConversation = conversationRepository.save(Conversation.builder()
+                .type(ConversationType.GROUP)
+                .members(Set.of(currentUser, friendUser))
+                .build());
+        Conversation planningConversation = conversationRepository.save(Conversation.builder()
+                .type(ConversationType.GROUP)
+                .members(Set.of(currentUser, friendUser))
+                .build());
+
+        channelRepository.save(Channel.builder()
+                .name("General")
+                .type(ChannelType.TEXT)
+                .group(group)
+                .conversation(generalConversation)
+                .build());
+        channelRepository.save(Channel.builder()
+                .name("Planning")
+                .type(ChannelType.TEXT)
+                .group(group)
+                .conversation(planningConversation)
+                .build());
+
+        mockMvc.perform(put("/api/conversations/" + planningConversation.getId() + "/hidden")
+                        .param("hidden", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.hidden", is(true)));
+
+        org.junit.jupiter.api.Assertions.assertFalse(conversationRepository.findById(generalConversation.getId())
+                .orElseThrow().getHiddenByUsers().contains(currentUser.getId()));
+        org.junit.jupiter.api.Assertions.assertTrue(conversationRepository.findById(planningConversation.getId())
+                .orElseThrow().getHiddenByUsers().contains(currentUser.getId()));
+
+        mockMvc.perform(get("/api/groups"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", hasSize(1)))
+                .andExpect(jsonPath("$.data[0].channels[?(@.name == 'General')].hidden", hasItem(false)))
+                .andExpect(jsonPath("$.data[0].channels[?(@.name == 'Planning')].hidden", hasItem(true)));
+
+        mockMvc.perform(put("/api/conversations/" + planningConversation.getId() + "/hidden")
+                        .param("hidden", "false"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.hidden", is(false)));
+
+        org.junit.jupiter.api.Assertions.assertFalse(conversationRepository.findById(generalConversation.getId())
+                .orElseThrow().getHiddenByUsers().contains(currentUser.getId()));
+        org.junit.jupiter.api.Assertions.assertFalse(conversationRepository.findById(planningConversation.getId())
+                .orElseThrow().getHiddenByUsers().contains(currentUser.getId()));
     }
 }

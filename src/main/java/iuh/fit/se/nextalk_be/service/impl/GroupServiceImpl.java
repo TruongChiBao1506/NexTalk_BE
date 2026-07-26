@@ -442,7 +442,7 @@ public class GroupServiceImpl implements GroupService {
             Long pendingCountObj = pendingCountsByGroupId.get(g.getId());
             int pendingCount = pendingCountObj != null ? pendingCountObj.intValue() : groupInvitationRepository.countByGroupIdAndStatus(g.getId(), InvitationStatus.WAITING_APPROVAL);
 
-            return mapToGroupResponse(g, members, channels, pendingCount);
+            return mapToGroupResponse(g, members, channels, pendingCount, currentUser.getId());
         }).collect(Collectors.toList());
     }
 
@@ -638,6 +638,22 @@ public class GroupServiceImpl implements GroupService {
     }
 
     private GroupResponse mapToGroupResponse(Group group, List<GroupMember> members, List<Channel> channels, int pendingApprovalCount) {
+        return mapToGroupResponse(
+                group,
+                members,
+                channels,
+                pendingApprovalCount,
+                userService.getCurrentAuthenticatedUser().getId()
+        );
+    }
+
+    private GroupResponse mapToGroupResponse(
+            Group group,
+            List<GroupMember> members,
+            List<Channel> channels,
+            int pendingApprovalCount,
+            String currentUserId
+    ) {
         List<GroupMemberResponse> memberResponses = (members != null ? members : Collections.<GroupMember>emptyList()).stream()
                 .filter(m -> m.getUser() != null)
                 .map(m -> GroupMemberResponse.builder()
@@ -658,6 +674,9 @@ public class GroupServiceImpl implements GroupService {
                         .isPostingRestricted(ch.isPostingRestricted())
                         .groupId(ch.getGroup() != null ? ch.getGroup().getId() : null)
                         .conversationId(ch.getConversation() != null ? ch.getConversation().getId() : null)
+                        .hidden(ch.getConversation() != null
+                                && ch.getConversation().getHiddenByUsers() != null
+                                && ch.getConversation().getHiddenByUsers().contains(currentUserId))
                         .createdAt(ch.getCreatedAt())
                         .updatedAt(ch.getUpdatedAt())
                         .build()
@@ -668,11 +687,12 @@ public class GroupServiceImpl implements GroupService {
                 .name(group.getName())
                 .avatarUrl(group.getAvatarUrl())
                 .conversationId(channelResponses.stream()
-                        .filter(ch -> "Chung".equals(ch.getName()))
+                        .filter(ch -> !ch.isHidden() && "Chung".equals(ch.getName()))
                         .findFirst()
                         .or(() -> channelResponses.stream()
-                                .filter(ch -> ch.getType() == ChannelType.TEXT && !ch.isPrivate())
+                                .filter(ch -> !ch.isHidden() && ch.getType() == ChannelType.TEXT && !ch.isPrivate())
                                 .findFirst())
+                        .or(() -> channelResponses.stream().filter(ch -> !ch.isHidden()).findFirst())
                         .or(() -> channelResponses.stream().findFirst())
                         .map(ChannelResponse::getConversationId)
                         .orElse(null))

@@ -25,6 +25,7 @@ public class ChannelResponse {
     private boolean isPostingRestricted;
     private String groupId;
     private String conversationId;
+    private boolean hidden;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }
