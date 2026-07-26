@@ -8,12 +8,14 @@ import iuh.fit.se.nextalk_be.entity.Channel;
 import iuh.fit.se.nextalk_be.entity.ChannelType;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.ConversationType;
+import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.event.VoiceChannelEvent;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.repository.ChannelRepository;
 import iuh.fit.se.nextalk_be.repository.ConversationRepository;
+import iuh.fit.se.nextalk_be.repository.FriendshipRepository;
 import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.service.MessageService;
@@ -67,6 +69,7 @@ public class CallController {
 
     private final UserRepository userRepository;
     private final ConversationRepository conversationRepository;
+    private final FriendshipRepository friendshipRepository;
     private final ChannelRepository channelRepository;
     private final GroupMemberRepository groupMemberRepository;
     private final UserService userService;
@@ -106,6 +109,9 @@ public class CallController {
 
         if (!isMember) {
             throw new BadRequestException("You are not a member of this conversation");
+        }
+        if (!isConversationCallAllowed(conversation, currentUser.getId())) {
+            throw new BadRequestException("Bạn chỉ có thể gọi cho người đã kết bạn.");
         }
 
         int uid = currentUser.getId().hashCode() & 0x7FFFFFFF;
@@ -349,6 +355,7 @@ public class CallController {
 
         Conversation conversation = conversationRepository.findById(signal.getConversationId()).orElse(null);
         if (conversation == null || !isConversationMember(conversation, caller.getId())) return false;
+        if (!isConversationCallAllowed(conversation, caller.getId())) return false;
 
         if (signal.getReceiverId() != null && conversation.getMembers().stream()
                 .noneMatch(member -> member.getId().equals(signal.getReceiverId()))) {
@@ -372,6 +379,25 @@ public class CallController {
         if (activeCallSessions.putIfAbsent(signal.getCallId(), session) != null) return false;
         persistCallSession(session, ringingCallTtl);
         return true;
+    }
+
+    private boolean isConversationCallAllowed(Conversation conversation, String userId) {
+        if (conversation.getType() != ConversationType.PRIVATE) {
+            return true;
+        }
+        User peer = conversation.getMembers().stream()
+                .filter(member -> !member.getId().equals(userId))
+                .findFirst()
+                .orElse(null);
+        // A legacy one-member private conversation has no callable peer.
+        // Token access remains unchanged for compatibility, while no INVITE can
+        // be routed without a receiver.
+        if (peer == null) {
+            return true;
+        }
+        return friendshipRepository.findFriendshipBetweenUsers(userId, peer.getId())
+                .filter(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
+                .isPresent();
     }
 
     private CallResponseOutcome registerCallResponse(CallSignal signal, User responder, String responseDeviceKey) {

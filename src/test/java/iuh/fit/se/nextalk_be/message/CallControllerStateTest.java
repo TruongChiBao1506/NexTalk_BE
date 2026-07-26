@@ -7,11 +7,14 @@ import iuh.fit.se.nextalk_be.entity.Channel;
 import iuh.fit.se.nextalk_be.entity.ChannelType;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.ConversationType;
+import iuh.fit.se.nextalk_be.entity.Friendship;
+import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
 import iuh.fit.se.nextalk_be.entity.Group;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.repository.ChannelRepository;
 import iuh.fit.se.nextalk_be.repository.ConversationRepository;
+import iuh.fit.se.nextalk_be.repository.FriendshipRepository;
 import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.service.FCMService;
@@ -38,6 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.lenient;
@@ -49,6 +53,7 @@ class CallControllerStateTest {
 
     @Mock private UserRepository userRepository;
     @Mock private ConversationRepository conversationRepository;
+    @Mock private FriendshipRepository friendshipRepository;
     @Mock private ChannelRepository channelRepository;
     @Mock private GroupMemberRepository groupMemberRepository;
     @Mock private UserService userService;
@@ -68,6 +73,7 @@ class CallControllerStateTest {
         controller = new CallController(
                 userRepository,
                 conversationRepository,
+                friendshipRepository,
                 channelRepository,
                 groupMemberRepository,
                 userService,
@@ -92,6 +98,12 @@ class CallControllerStateTest {
                 default -> null;
             });
         });
+        lenient().when(friendshipRepository.findFriendshipBetweenUsers(anyString(), anyString()))
+                .thenReturn(Optional.of(Friendship.builder()
+                        .sender(caller)
+                        .receiver(firstResponder)
+                        .status(FriendshipStatus.ACCEPTED)
+                        .build()));
     }
 
     @Test
@@ -147,6 +159,22 @@ class CallControllerStateTest {
         when(conversationRepository.findById(conversation.getId())).thenReturn(Optional.of(conversation));
 
         controller.inviteCall(invite("unauthorized-call", conversation.getId(), firstResponder.getId()), principal(caller));
+
+        verify(messagingTemplate, never()).convertAndSendToUser(any(), any(), any(Object.class));
+    }
+
+    @Test
+    void strangerCannotStartPrivateCall() {
+        Conversation conversation = conversation("private-stranger-conversation", ConversationType.PRIVATE,
+                caller, firstResponder);
+        when(conversationRepository.findById(conversation.getId())).thenReturn(Optional.of(conversation));
+        when(friendshipRepository.findFriendshipBetweenUsers(caller.getId(), firstResponder.getId()))
+                .thenReturn(Optional.empty());
+
+        controller.inviteCall(
+                invite("stranger-call", conversation.getId(), firstResponder.getId()),
+                principal(caller)
+        );
 
         verify(messagingTemplate, never()).convertAndSendToUser(any(), any(), any(Object.class));
     }
