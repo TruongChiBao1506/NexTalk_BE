@@ -26,6 +26,9 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClientResponseException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.LocalDate;
@@ -41,6 +44,7 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class ConversationAssistServiceImpl implements ConversationAssistService {
 
+    private static final Logger log = LoggerFactory.getLogger(ConversationAssistServiceImpl.class);
     private static final List<String> DEFAULT_BIRTHDAY_WISHES = List.of(
             "Chúc bạn sinh nhật vui vẻ, luôn hạnh phúc và gặp nhiều may mắn nhé! 🎂",
             "Chúc mừng sinh nhật! Chúc bạn có một ngày thật tuyệt vời 🎉",
@@ -230,7 +234,6 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
                         "parts", List.of(Map.of("text", prompt))
                 )),
                 "generationConfig", Map.of(
-                        "temperature", 0.7,
                         "maxOutputTokens", 512,
                         "responseMimeType", "application/json"
                 )
@@ -246,7 +249,25 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
             return suggestions;
         } catch (BadRequestException exception) {
             throw exception;
+        } catch (RestClientResponseException exception) {
+            int status = exception.getStatusCode().value();
+            log.warn("Gemini reply suggestion request failed with HTTP {} using model {}", status, geminiModel);
+            if (status == 400) {
+                throw new BadRequestException("Gemini từ chối yêu cầu tạo gợi ý. Vui lòng kiểm tra cấu hình model.");
+            }
+            if (status == 401 || status == 403) {
+                throw new BadRequestException("Khóa Gemini không hợp lệ hoặc chưa được cấp quyền.");
+            }
+            if (status == 404) {
+                throw new BadRequestException("Không tìm thấy model Gemini đã cấu hình.");
+            }
+            if (status == 429) {
+                throw new BadRequestException("Gemini đã hết hạn mức hoặc đang bị giới hạn tần suất.");
+            }
+            throw new BadRequestException("Dịch vụ Gemini đang tạm thời không khả dụng.");
         } catch (Exception exception) {
+            log.warn("Unable to generate reply suggestions with Gemini model {}: {}",
+                    geminiModel, exception.getClass().getSimpleName());
             throw new BadRequestException("Không thể tạo gợi ý lúc này. Vui lòng thử lại sau.");
         }
     }

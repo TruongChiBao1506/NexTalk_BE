@@ -32,7 +32,7 @@ Firebase, Agora, Google OAuth, and n8n are optional. Not configuring them will s
 
 ## Environment Configuration
 
-The application reads environment variables directly. You can set them in your terminal/IDE, via your deployment platform's secret manager, or by using a `.env` file with Docker `--env-file`. The Spring Boot app in this repository **does not automatically load `.env` when running local Maven commands**. The `.env` file is in `.gitignore`; never commit secrets to Git.
+The application reads environment variables directly. You can set them in your terminal/IDE or via your deployment platform's secret manager. For local development, Spring Boot also loads an optional `.env` file from the backend project directory. The `.env` file is in `.gitignore`; never commit secrets to Git.
 
 ```dotenv
 # Required
