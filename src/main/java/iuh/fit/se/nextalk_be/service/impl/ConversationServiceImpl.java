@@ -508,7 +508,7 @@ public class ConversationServiceImpl implements ConversationService {
 
     public ConversationResponse updateSelfDestruct(String id, int selfDestructSeconds) {
         User currentUser = userService.getCurrentAuthenticatedUser();
-        if (!List.of(0, 300, 3600, 86400).contains(selfDestructSeconds)) {
+        if (selfDestructSeconds < 0 || (selfDestructSeconds > 0 && !List.of(30, 60, 300, 3600, 86400).contains(selfDestructSeconds))) {
             throw new BadRequestException("Invalid self destruct duration");
         }
 
