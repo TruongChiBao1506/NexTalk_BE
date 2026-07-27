@@ -1674,6 +1674,7 @@ public class MessageServiceImpl implements MessageService {
                 .filter(r -> r.getUserId().equals(currentUser.getId()) && r.getEmoji().equals(request.getEmoji()))
                 .findFirst();
 
+        boolean reactionAdded = existing.isEmpty();
         if (existing.isPresent()) {
             message.getReactions().remove(existing.get());
         } else {
@@ -1688,6 +1689,15 @@ public class MessageServiceImpl implements MessageService {
         Message savedMessage = messageRepository.save(message);
 
         MessageResponse response = mapToMessageResponse(savedMessage);
+        Map<String, Object> realtimeMetadata = new HashMap<>(
+                response.getMetadata() == null ? Map.of() : response.getMetadata()
+        );
+        realtimeMetadata.put("realtimeEvent", "REACTION_UPDATED");
+        realtimeMetadata.put("reactionAdded", reactionAdded);
+        realtimeMetadata.put("reactionUserId", currentUser.getId());
+        realtimeMetadata.put("reactionUsername", currentUser.getUsername());
+        realtimeMetadata.put("reactionEmoji", request.getEmoji());
+        response.setMetadata(realtimeMetadata);
         broadcastMessageUpdate(message.getConversation(), response);
         return response;
     }
