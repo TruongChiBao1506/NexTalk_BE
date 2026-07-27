@@ -45,7 +45,9 @@ import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -67,7 +69,7 @@ public class TaskAssistantServiceImpl implements TaskAssistantService {
     private static final Set<String> READ_TOOLS = Set.of("search_messages", "get_conversation_context");
     private static final Set<String> MUTATION_TOOLS = Set.of("create_channel_task", "schedule_reminder", "schedule_message");
     private static final int MAX_TOOL_TURNS = 6;
-    private static final int INITIAL_CONTEXT_MESSAGE_LIMIT = 16;
+    private static final int INITIAL_CONTEXT_MESSAGE_LIMIT = 8;
     private static final DateTimeFormatter VIETNAMESE_DATE_TIME =
             DateTimeFormatter.ofPattern("HH:mm, EEEE 'ngày' dd/MM/yyyy", Locale.forLanguageTag("vi-VN"));
     private static final Pattern FAST_REMINDER_INTENT = Pattern.compile(
@@ -78,6 +80,13 @@ public class TaskAssistantServiceImpl implements TaskAssistantService {
     );
     private static final Pattern RELATIVE_REMINDER_TIME = Pattern.compile(
             "(?iu)(?:sau\\s*)?(\\d{1,4})\\s*(phút|phut|giờ|gio|tiếng|tieng|ngày|ngay)\\s*(?:nữa|nua|sau)?"
+    );
+    private static final Pattern FAST_SCHEDULED_MESSAGE_INTENT = Pattern.compile(
+            "(?iu)\\b(?:hẹn\\s*giờ|lên\\s*lịch|gửi\\s*hẹn\\s*giờ|gửi\\s*lên\\s*lịch)\\b"
+    );
+    private static final Pattern QUOTE_PATTERN = Pattern.compile("['\"“«](.+?)['\"”»]");
+    private static final Pattern ABSOLUTE_TIME_PATTERN = Pattern.compile(
+            "(?iu)\\b(?:lúc|vào)?\\s*(\\d{1,2})(?:[h:](\\d{2}))?\\s*(sáng|trưa|chiều|tối)?\\s*(ngày\\s*mai|hôm\\s*nay|mai)?\\b"
     );
 
     private final ConversationRepository conversationRepository;
@@ -128,6 +137,10 @@ public class TaskAssistantServiceImpl implements TaskAssistantService {
         TaskAssistantResponse fastResponse = tryFastReminder(request.getPrompt(), context);
         if (fastResponse != null) {
             return fastResponse;
+        }
+        TaskAssistantResponse fastScheduled = tryFastScheduledMessage(request.getPrompt(), context);
+        if (fastScheduled != null) {
+            return fastScheduled;
         }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("agent", agent);
@@ -205,6 +218,107 @@ public class TaskAssistantServiceImpl implements TaskAssistantService {
         return TaskAssistantResponse.builder()
                 .status("CONFIRMATION_REQUIRED")
                 .reply("Mình đã hiểu yêu cầu. Hãy kiểm tra thời gian trước khi xác nhận.")
+                .confirmationId(pending.getId())
+                .action(toActionResponse(pending))
+                .build();
+    }
+
+    private TaskAssistantResponse tryFastScheduledMessage(String rawPrompt, InteractionContext context) {
+        String prompt = rawPrompt == null ? "" : rawPrompt.trim();
+        if (!FAST_SCHEDULED_MESSAGE_INTENT.matcher(prompt).find()) {
+            return null;
+        }
+
+        String content = null;
+        Matcher quoteMatcher = QUOTE_PATTERN.matcher(prompt);
+        if (quoteMatcher.find()) {
+            content = quoteMatcher.group(1).trim();
+        } else {
+            String clean = prompt.replaceFirst("(?iu)^\\s*(?:hẹn\\s*giờ|lên\\s*lịch|gửi\\s*hẹn\\s*giờ|gửi\\s*lên\\s*lịch)\\s*(?:gửi\\s*)?(?:tin\\s*nhắn|tin)?\\s*", "")
+                    .replaceFirst("(?iu)\\s*sau\\s*\\d{1,4}\\s*(phút|giờ|tiếng|ngày)\\s*(?:nữa|sau)?$", "")
+                    .replaceFirst("(?iu)\\s*(?:lúc|vào)\\s*\\d{1,2}(?:[h:]\\d{2})?\\s*(?:sáng|trưa|chiều|tối)?\\s*(?:ngày\\s*mai|hôm\\s*nay|mai)?$", "")
+                    .replaceAll("^['\"“«\\s]+|['\"”»\\s]+$", "")
+                    .trim();
+            if (!clean.isBlank() && clean.length() >= 2) {
+                content = Character.toUpperCase(clean.charAt(0)) + clean.substring(1);
+            }
+        }
+        if (content == null || content.isBlank()) return null;
+
+        LocalDateTime scheduledAt = null;
+        Matcher relTimeMatcher = RELATIVE_REMINDER_TIME.matcher(prompt);
+        if (relTimeMatcher.find()) {
+            long amount;
+            try {
+                amount = Long.parseLong(relTimeMatcher.group(1));
+            } catch (NumberFormatException e) {
+                return null;
+            }
+            if (amount > 0) {
+                String unit = relTimeMatcher.group(2).toLowerCase(Locale.ROOT);
+                if (unit.startsWith("ph")) {
+                    scheduledAt = LocalDateTime.now().plusMinutes(amount);
+                } else if (unit.startsWith("gi") || unit.startsWith("ti")) {
+                    scheduledAt = LocalDateTime.now().plusHours(amount);
+                } else {
+                    scheduledAt = LocalDateTime.now().plusDays(amount);
+                }
+            }
+        }
+
+        if (scheduledAt == null) {
+            Matcher absTimeMatcher = ABSOLUTE_TIME_PATTERN.matcher(prompt);
+            if (absTimeMatcher.find()) {
+                try {
+                    int hour = Integer.parseInt(absTimeMatcher.group(1));
+                    int minute = absTimeMatcher.group(2) != null ? Integer.parseInt(absTimeMatcher.group(2)) : 0;
+                    String period = absTimeMatcher.group(3) == null ? "" : absTimeMatcher.group(3).toLowerCase(Locale.ROOT);
+                    String day = absTimeMatcher.group(4) == null ? "" : absTimeMatcher.group(4).toLowerCase(Locale.ROOT);
+
+                    if ((period.contains("chiều") || period.contains("tối")) && hour < 12) {
+                        hour += 12;
+                    } else if (period.contains("sáng") && hour == 12) {
+                        hour = 0;
+                    }
+
+                    LocalDate date = LocalDate.now();
+                    if (day.contains("mai")) {
+                        date = date.plusDays(1);
+                    }
+                    scheduledAt = LocalDateTime.of(date, LocalTime.of(hour, minute));
+                    if (scheduledAt.isBefore(LocalDateTime.now())) {
+                        scheduledAt = scheduledAt.plusDays(1);
+                    }
+                } catch (Exception ignored) {
+                    return null;
+                }
+            }
+        }
+
+        if (scheduledAt == null || !scheduledAt.isAfter(LocalDateTime.now().plusSeconds(10))) {
+            return null;
+        }
+
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("content", shorten(content, 900));
+        arguments.put("scheduledAt", scheduledAt.atZone(ZoneId.systemDefault()).toOffsetDateTime().toString());
+        arguments.put("silent", false);
+
+        TaskAssistantPendingAction pending = TaskAssistantPendingAction.builder()
+                .userId(context.user().getId())
+                .conversationId(context.conversation().getId())
+                .groupId(context.groupId())
+                .channelId(context.channelId())
+                .toolName("schedule_message")
+                .arguments(arguments)
+                .status("PENDING")
+                .expiresAt(LocalDateTime.now().plusMinutes(Math.max(1, confirmationMinutes)))
+                .build();
+        pending = pendingActionRepository.save(pending);
+
+        return TaskAssistantResponse.builder()
+                .status("CONFIRMATION_REQUIRED")
+                .reply("Mình đã tạo thông tin hẹn giờ gửi tin nhắn. Hãy kiểm tra trước khi xác nhận nhé.")
                 .confirmationId(pending.getId())
                 .action(toActionResponse(pending))
                 .build();
