@@ -1,5 +1,6 @@
 package iuh.fit.se.nextalk_be.dto.response;
 
+import iuh.fit.se.nextalk_be.entity.BirthdayVisibility;
 import lombok.*;
 
 import java.time.LocalDateTime;
@@ -24,6 +25,8 @@ public class UserProfileResponse {
     private boolean hasChatPin;
     private String birthday;
     private boolean enableBirthdayNotification;
+    private BirthdayVisibility birthdayVisibility;
+    private boolean birthdayReminderEnabled;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

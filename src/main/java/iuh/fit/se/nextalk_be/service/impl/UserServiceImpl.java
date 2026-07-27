@@ -16,6 +16,9 @@ import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
+import iuh.fit.se.nextalk_be.repository.FriendshipRepository;
+import iuh.fit.se.nextalk_be.entity.BirthdayVisibility;
+import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
 import iuh.fit.se.nextalk_be.service.PresenceService;
 import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
 import iuh.fit.se.nextalk_be.entity.RefreshToken;
@@ -47,6 +50,7 @@ public class UserServiceImpl implements UserService {
     private final MessageRepository messageRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final WebSocketSessionRegistry webSocketSessionRegistry;
+    private final FriendshipRepository friendshipRepository;
 
     public User getCurrentAuthenticatedUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -167,6 +171,14 @@ public class UserServiceImpl implements UserService {
 
         if (request.getEnableBirthdayNotification() != null) {
             currentUser.setEnableBirthdayNotification(request.getEnableBirthdayNotification());
+        }
+
+        if (request.getBirthdayVisibility() != null) {
+            currentUser.setBirthdayVisibility(request.getBirthdayVisibility());
+        }
+
+        if (request.getBirthdayReminderEnabled() != null) {
+            currentUser.setBirthdayReminderEnabled(request.getBirthdayReminderEnabled());
         }
 
         if (request.getShowActivityStatus() != null) {
@@ -302,10 +314,35 @@ public class UserServiceImpl implements UserService {
                 .blockStrangerMessages(user.isBlockStrangerMessages())
                 .isVerified(user.isVerified())
                 .hasChatPin(user.getChatPin() != null && !user.getChatPin().isEmpty())
-                .birthday(user.getBirthday())
+                .birthday(canViewBirthday(user) ? user.getBirthday() : null)
                 .enableBirthdayNotification(user.isEnableBirthdayNotification())
+                .birthdayVisibility(user.getBirthdayVisibility())
+                .birthdayReminderEnabled(user.isBirthdayReminderEnabled())
                 .createdAt(user.getCreatedAt())
                 .updatedAt(user.getUpdatedAt())
                 .build();
+    }
+
+    private boolean canViewBirthday(User target) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()
+                || authentication instanceof AnonymousAuthenticationToken) {
+            return false;
+        }
+        User viewer;
+        if (authentication.getPrincipal() instanceof User principal) {
+            viewer = principal;
+        } else {
+            String identifier = authentication.getName();
+            viewer = userRepository.findByEmail(identifier)
+                    .or(() -> userRepository.findByUsername(identifier))
+                    .orElse(null);
+        }
+        if (viewer == null) return false;
+        if (viewer.getId().equals(target.getId())) return true;
+        if (target.getBirthdayVisibility() != BirthdayVisibility.FRIENDS) return false;
+        return friendshipRepository.findFriendshipBetweenUsers(viewer.getId(), target.getId())
+                .map(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
+                .orElse(false);
     }
 }

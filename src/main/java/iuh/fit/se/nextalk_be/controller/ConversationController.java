@@ -4,15 +4,19 @@ import iuh.fit.se.nextalk_be.dto.request.UpdateSelfDestructRequest;
 import iuh.fit.se.nextalk_be.dto.request.UpdateThemeRequest;
 import iuh.fit.se.nextalk_be.dto.request.UpdateNicknameRequest;
 import iuh.fit.se.nextalk_be.dto.request.UpdateConversationNotificationRequest;
+import iuh.fit.se.nextalk_be.dto.request.ReplySuggestionRequest;
 import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
+import iuh.fit.se.nextalk_be.dto.response.BirthdayContextResponse;
 import iuh.fit.se.nextalk_be.dto.response.ConversationResponse;
 import iuh.fit.se.nextalk_be.dto.response.ConversationSummaryResponse;
 import iuh.fit.se.nextalk_be.dto.response.ConversationWithPreviewsResponse;
+import iuh.fit.se.nextalk_be.dto.response.ReplySuggestionsResponse;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.ConversationService;
 import iuh.fit.se.nextalk_be.service.ConversationSummaryService;
+import iuh.fit.se.nextalk_be.service.ConversationAssistService;
 
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -34,6 +38,7 @@ public class ConversationController {
     private final ConversationService conversationService;
     private final ConversationSummaryService conversationSummaryService;
     private final RateLimitService rateLimitService;
+    private final ConversationAssistService conversationAssistService;
 
 
     @PostMapping("/private/{friendId}")
@@ -152,6 +157,41 @@ public class ConversationController {
     public ResponseEntity<ApiResponse<ConversationSummaryResponse>> summarizeConversation(@PathVariable("id") String id) {
         ConversationSummaryResponse response = conversationSummaryService.summarize(id);
         return ResponseEntity.ok(ApiResponse.success(response, "Conversation summary generated successfully"));
+    }
+
+    @PostMapping("/{id}/reply-suggestions")
+    @Operation(summary = "Generate three short reply suggestions from recent conversation context")
+    public ResponseEntity<ApiResponse<ReplySuggestionsResponse>> suggestReplies(
+            @PathVariable("id") String id,
+            @RequestBody(required = false) ReplySuggestionRequest request
+    ) {
+        ReplySuggestionsResponse response = conversationAssistService.suggestReplies(
+                id,
+                request == null ? null : request.getLastMessageId()
+        );
+        return ResponseEntity.ok(ApiResponse.success(response, "Reply suggestions generated"));
+    }
+
+    @GetMapping("/{id}/birthday-context")
+    @Operation(summary = "Get a privacy-filtered birthday reminder and template wishes for a private chat")
+    public ResponseEntity<ApiResponse<BirthdayContextResponse>> getBirthdayContext(@PathVariable("id") String id) {
+        return ResponseEntity.ok(ApiResponse.success(
+                conversationAssistService.getBirthdayContext(id),
+                "Birthday context retrieved"
+        ));
+    }
+
+    @PostMapping("/{id}/birthday-wishes/personalize")
+    @Operation(summary = "Generate three personalized birthday wishes")
+    public ResponseEntity<ApiResponse<ReplySuggestionsResponse>> personalizeBirthdayWishes(
+            @PathVariable("id") String id,
+            @RequestBody(required = false) ReplySuggestionRequest request
+    ) {
+        ReplySuggestionsResponse response = conversationAssistService.personalizeBirthdayWishes(
+                id,
+                request == null ? null : request.getLastMessageId()
+        );
+        return ResponseEntity.ok(ApiResponse.success(response, "Birthday wishes personalized"));
     }
 
     @PutMapping("/{id}/theme")

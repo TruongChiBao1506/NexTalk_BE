@@ -68,6 +68,16 @@ public class User extends BaseEntity implements UserDetails {
     private boolean enableBirthdayNotification = true;
 
     @Builder.Default
+    private BirthdayVisibility birthdayVisibility = BirthdayVisibility.FRIENDS;
+
+    @Builder.Default
+    private boolean birthdayReminderEnabled = true;
+
+    public BirthdayVisibility getBirthdayVisibility() {
+        return birthdayVisibility == null ? BirthdayVisibility.FRIENDS : birthdayVisibility;
+    }
+
+    @Builder.Default
     private boolean isVerified = false;
 
     @Builder.Default

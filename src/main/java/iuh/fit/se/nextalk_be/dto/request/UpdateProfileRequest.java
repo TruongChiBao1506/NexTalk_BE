@@ -1,5 +1,6 @@
 package iuh.fit.se.nextalk_be.dto.request;
 
+import iuh.fit.se.nextalk_be.entity.BirthdayVisibility;
 import jakarta.validation.constraints.Size;
 import lombok.*;
 
@@ -22,6 +23,10 @@ public class UpdateProfileRequest {
     private String birthday;
 
     private Boolean enableBirthdayNotification;
+
+    private BirthdayVisibility birthdayVisibility;
+
+    private Boolean birthdayReminderEnabled;
 
     private Boolean showActivityStatus;
 
