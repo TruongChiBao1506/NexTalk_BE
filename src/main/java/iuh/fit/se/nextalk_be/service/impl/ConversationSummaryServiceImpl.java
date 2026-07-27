@@ -53,13 +53,13 @@ public class ConversationSummaryServiceImpl implements ConversationSummaryServic
     @Value("${app.summary.message-limit:15}")
     private int messageLimit;
 
-    @Value("${app.summary.preferred-model:gemini-2.5-flash}")
+    @Value("${app.summary.preferred-model:gemini-3.6-flash}")
     private String preferredModel;
 
     @Value("${app.summary.gemini-api-key:}")
     private String geminiApiKey;
 
-    @Value("${app.summary.gemini-model:gemini-2.5-flash}")
+    @Value("${app.summary.gemini-model:gemini-3.6-flash}")
     private String geminiModel;
 
     @Value("${app.summary.gemini-url:https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}}")
@@ -173,7 +173,6 @@ public class ConversationSummaryServiceImpl implements ConversationSummaryServic
                         "parts", List.of(Map.of("text", prompt))
                 )),
                 "generationConfig", Map.of(
-                        "temperature", 0.2,
                         "maxOutputTokens", maxOutputTokens
                 )
         );

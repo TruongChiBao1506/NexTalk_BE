@@ -11,7 +11,7 @@ Frontend: <https://github.com/TruongChiBao1506/NexTalk_FE>
 - Private chats, groups, text/voice channels, group invitations, and join requests.
 - Real-time messaging: attachments, reactions, pinning, recalling, polls, searching, and forwarding.
 - Message requests for strangers with anti-spam limits; shared messages are restored when the recipient accepts.
-- Notifications, FCM push notifications, sticker packs, voice/video calls via Agora, and conversation summaries via n8n.
+- Notifications, FCM push notifications, sticker packs, voice/video calls via Agora, conversation summaries via n8n, and AI image editing via Gemini.
 
 ## Technology Stack
 
@@ -44,6 +44,13 @@ CLOUDINARY_CLOUD_NAME=your-cloud-name
 CLOUDINARY_API_KEY=your-api-key
 CLOUDINARY_API_SECRET=your-api-secret
 
+# Required for AI image editing
+GEMINI_API_KEY=your-gemini-api-key
+
+# Optional Cloudflare fallback
+CLOUDFLARE_ACCOUNT_ID=your-account-id
+CLOUDFLARE_AI_TOKEN=your-workers-ai-api-token
+
 # Optional / Has default values
 PORT=8080
 CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
@@ -57,11 +64,21 @@ AGORA_APP_ID=
 AGORA_APP_CERTIFICATE=
 N8N_SUMMARY_WEBHOOK_URL=
 SUMMARY_MESSAGE_LIMIT=15
-SUMMARY_PREFERRED_MODEL=gemini-2.5-flash
+SUMMARY_PREFERRED_MODEL=gemini-3.6-flash
+SUMMARY_GEMINI_MODEL=gemini-3.6-flash
+AI_BOT_GEMINI_MODEL=gemini-3.6-flash
 GOOGLE_CLIENT_ID=
+IMAGE_AI_ENABLED=true
+IMAGE_AI_PROVIDER=cloudinary
+IMAGE_EDIT_RATE_LIMIT=10
+IMAGE_EDIT_RATE_WINDOW_SECONDS=3600
+IMAGE_AI_GEMINI_MODEL=gemini-2.5-flash-image
+CLOUDFLARE_AI_MODEL=@cf/black-forest-labs/flux-2-klein-4b
 ```
 
 FCM uses `FIREBASE_CREDENTIALS` (JSON service account directly or Base64 encoded). If this variable is missing, the application will also attempt to read `src/main/resources/firebase-service-account.json`; if both are absent, FCM is safely disabled.
+
+Cloudinary is the default image-editing provider and supports structured remove, replace, recolor, background replace, generative fill, and restore operations. It reuses the existing Cloudinary credentials. Gemini and Cloudflare remain available as fallbacks by setting `IMAGE_AI_PROVIDER=gemini` or `IMAGE_AI_PROVIDER=cloudflare`; Cloudflare's custom token needs both `Workers AI - Read` and `Workers AI - Edit` account permissions. Keep all provider tokens only in the deployment platform's secret manager.
 
 `SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `REDIS_HOST`, `REDIS_PORT`, `PORT`, summary, and Agora configurations all have default values in `application.properties`. MongoDB URI, JWT secret, mail credentials, and Cloudinary do not have default values.
 
@@ -123,6 +140,7 @@ Main REST API groups:
 | Groups and channels | `/api/groups`, `/api/groups/{groupId}/channels` |
 | Message requests | `/api/chat-requests` |
 | Files, stickers, notifications, FCM | `/api/files`, `/api/stickers`, `/api/notifications`, `/api/fcm` |
+| AI image editing | `/api/images/edit` |
 | Calls | `/api/calls` |
 
 Swagger is the most comprehensive and up-to-date reference for request/response models of each endpoint.

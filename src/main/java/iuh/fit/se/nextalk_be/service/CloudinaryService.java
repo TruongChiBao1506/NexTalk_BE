@@ -14,6 +14,7 @@ import java.util.Map;
 
 public interface CloudinaryService {
     public Map uploadFile(MultipartFile file) throws IOException;
+    FileUploadResponse uploadGeneratedImage(byte[] data, String contentType, String fileName) throws IOException;
     DirectUploadPrepareResponse prepareDirectUpload(DirectUploadPrepareRequest request);
     FileUploadResponse confirmDirectUpload(DirectUploadConfirmRequest request) throws Exception;
 }

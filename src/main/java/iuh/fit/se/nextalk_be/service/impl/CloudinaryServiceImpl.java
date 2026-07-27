@@ -166,15 +166,40 @@ public class CloudinaryServiceImpl implements CloudinaryService {
                     return toUploadResult(existing);
                 }
 
-                return uploadAndRemember(file, bytes, hash);
+                return uploadAndRemember(bytes, hash, file.getContentType());
             }
         } finally {
             uploadLocks.remove(hash, lock);
         }
     }
 
-    private Map uploadAndRemember(MultipartFile file, byte[] bytes, String hash) throws IOException {
-        String contentType = file.getContentType();
+    @Override
+    public FileUploadResponse uploadGeneratedImage(byte[] data, String contentType, String fileName) throws IOException {
+        validateUploadMetadata(contentType, data == null ? 0L : (long) data.length);
+        if (!contentType.startsWith("image/")) {
+            throw new IllegalArgumentException("Generated asset must be an image");
+        }
+        String hash = sha256(data);
+        MediaAsset existing = mediaAssetRepository.findById(hash).orElse(null);
+        if (existing == null) {
+            Object lock = uploadLocks.computeIfAbsent(hash, ignored -> new Object());
+            try {
+                synchronized (lock) {
+                    existing = mediaAssetRepository.findById(hash).orElse(null);
+                    if (existing == null) {
+                        uploadAndRemember(data, hash, contentType);
+                        existing = mediaAssetRepository.findById(hash)
+                                .orElseThrow(() -> new IOException("Generated image was not registered"));
+                    }
+                }
+            } finally {
+                uploadLocks.remove(hash, lock);
+            }
+        }
+        return toFileUploadResponse(existing, fileName, contentType, (long) data.length);
+    }
+
+    private Map uploadAndRemember(byte[] bytes, String hash, String contentType) throws IOException {
         String resourceType = resourceTypeFor(contentType);
 
         Map uploadResult = cloudinary.uploader().upload(
@@ -194,7 +219,7 @@ public class CloudinaryServiceImpl implements CloudinaryService {
                 .publicId((String) uploadResult.get("public_id"))
                 .resourceType(stringValue(uploadResult.get("resource_type")))
                 .format(stringValue(uploadResult.get("format")))
-                .size(file.getSize())
+                .size((long) bytes.length)
                 .contentType(contentType)
                 .createdAt(LocalDateTime.now())
                 .build();

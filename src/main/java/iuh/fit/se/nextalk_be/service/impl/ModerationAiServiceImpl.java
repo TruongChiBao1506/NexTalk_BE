@@ -49,7 +49,7 @@ public class ModerationAiServiceImpl implements ModerationAiService {
     @Value("${app.ai-bot.gemini-api-key:}")
     private String geminiApiKey;
 
-    @Value("${app.ai-bot.gemini-model:gemini-2.5-flash}")
+    @Value("${app.ai-bot.gemini-model:gemini-3.6-flash}")
     private String geminiModel;
 
     @Value("${app.ai-bot.gemini-url}")

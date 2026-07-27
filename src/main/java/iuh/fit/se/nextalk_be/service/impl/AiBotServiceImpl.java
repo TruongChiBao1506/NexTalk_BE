@@ -81,13 +81,13 @@ public class AiBotServiceImpl implements AiBotService {
     @Value("${app.ai-bot.message-limit:12}")
     private int messageLimit;
 
-    @Value("${app.summary.preferred-model:gemini-2.5-flash}")
+    @Value("${app.summary.preferred-model:gemini-3.6-flash}")
     private String preferredModel;
 
     @Value("${app.ai-bot.gemini-api-key:}")
     private String geminiApiKey;
 
-    @Value("${app.ai-bot.gemini-model:gemini-2.5-flash}")
+    @Value("${app.ai-bot.gemini-model:gemini-3.6-flash}")
     private String geminiModel;
 
     @Value("${app.ai-bot.gemini-url}")
@@ -164,7 +164,6 @@ public class AiBotServiceImpl implements AiBotService {
                         "parts", List.of(Map.of("text", buildRouterPrompt(request)))
                 )),
                 "generationConfig", Map.of(
-                        "temperature", 0.1,
                         "maxOutputTokens", Math.min(maxOutputTokens, 1400),
                         "responseMimeType", "application/json"
                 )
@@ -422,7 +421,6 @@ public class AiBotServiceImpl implements AiBotService {
                         "parts", List.of(Map.of("text", buildPrompt(request)))
                 )),
                 "generationConfig", Map.of(
-                        "temperature", 0.5,
                         "maxOutputTokens", maxOutputTokens
                 )
         );

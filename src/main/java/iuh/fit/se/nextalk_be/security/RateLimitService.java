@@ -26,14 +26,18 @@ public class RateLimitService {
     private final StringRedisTemplate redisTemplate;
 
     public void check(String scope, String identity, int maxRequests, Duration window) {
+        check(scope, identity, maxRequests, window, "Too many requests. Please wait a moment and try again.");
+    }
+
+    public void check(String scope, String identity, int maxRequests, Duration window, String exceededMessage) {
         if (maxRequests <= 0 || window == null || window.isNegative() || window.isZero()) {
             return;
         }
 
         String safeIdentity = normalizeIdentity(identity);
         String key = scope + ":" + safeIdentity;
-        if (checkRedis(key, maxRequests, window)) return;
-        checkLocal(key, maxRequests, window);
+        if (checkRedis(key, maxRequests, window, exceededMessage)) return;
+        checkLocal(key, maxRequests, window, exceededMessage);
     }
 
     /**
@@ -45,10 +49,15 @@ public class RateLimitService {
         if (maxRequests <= 0 || window == null || window.isNegative() || window.isZero()) {
             return;
         }
-        checkLocal("local:" + scope + ":" + normalizeIdentity(identity), maxRequests, window);
+        checkLocal(
+                "local:" + scope + ":" + normalizeIdentity(identity),
+                maxRequests,
+                window,
+                "Too many requests. Please wait a moment and try again."
+        );
     }
 
-    private boolean checkRedis(String key, int maxRequests, Duration window) {
+    private boolean checkRedis(String key, int maxRequests, Duration window, String exceededMessage) {
         try {
             String redisKey = "nextalk:rate-limit:" + key;
             Long count = redisTemplate.opsForValue().increment(redisKey);
@@ -57,7 +66,7 @@ public class RateLimitService {
             if (count > maxRequests) {
                 Long ttl = redisTemplate.getExpire(redisKey);
                 throw new RateLimitExceededException(
-                        "Too many requests. Please wait a moment and try again.",
+                        exceededMessage,
                         ttl != null && ttl > 0 ? ttl : Math.max(1, window.toSeconds()));
             }
             return true;
@@ -69,7 +78,7 @@ public class RateLimitService {
         }
     }
 
-    private void checkLocal(String key, int maxRequests, Duration window) {
+    private void checkLocal(String key, int maxRequests, Duration window, String exceededMessage) {
         long now = System.currentTimeMillis();
         long cutoff = now - window.toMillis();
 
@@ -83,7 +92,7 @@ public class RateLimitService {
                 long retryAfterMillis = Math.max(1, timestamps.peekFirst() + window.toMillis() - now);
                 long retryAfterSeconds = Math.max(1, (retryAfterMillis + 999) / 1000);
                 throw new RateLimitExceededException(
-                        "Too many requests. Please wait a moment and try again.", retryAfterSeconds);
+                        exceededMessage, retryAfterSeconds);
             }
 
             timestamps.addLast(now);
