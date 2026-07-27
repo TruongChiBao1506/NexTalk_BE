@@ -15,6 +15,7 @@ import iuh.fit.se.nextalk_be.repository.TaskAssistantPendingActionRepository;
 import iuh.fit.se.nextalk_be.service.ChannelTaskService;
 import iuh.fit.se.nextalk_be.service.MessageReminderService;
 import iuh.fit.se.nextalk_be.service.MessageService;
+import iuh.fit.se.nextalk_be.service.ScheduledMessageService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,7 @@ class TaskAssistantServiceImplTest {
     @Mock private TaskAssistantPendingActionRepository pendingActionRepository;
     @Mock private MessageService messageService;
     @Mock private MessageReminderService messageReminderService;
+    @Mock private ScheduledMessageService scheduledMessageService;
     @Mock private ChannelTaskService channelTaskService;
     @Mock private UserService userService;
     @Mock private RestTemplate restTemplate;
@@ -66,6 +68,7 @@ class TaskAssistantServiceImplTest {
                 pendingActionRepository,
                 messageService,
                 messageReminderService,
+                scheduledMessageService,
                 channelTaskService,
                 userService,
                 restTemplate

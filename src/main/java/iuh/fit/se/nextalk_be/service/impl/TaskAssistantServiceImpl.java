@@ -4,10 +4,13 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import iuh.fit.se.nextalk_be.dto.request.CreateChannelTaskRequest;
 import iuh.fit.se.nextalk_be.dto.request.CreateMessageReminderRequest;
+import iuh.fit.se.nextalk_be.dto.request.MessageRequest;
+import iuh.fit.se.nextalk_be.dto.request.ScheduleMessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.TaskAssistantRequest;
 import iuh.fit.se.nextalk_be.dto.response.ChannelTaskResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageReminderResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
+import iuh.fit.se.nextalk_be.dto.response.ScheduledMessageResponse;
 import iuh.fit.se.nextalk_be.dto.response.TaskAssistantActionResponse;
 import iuh.fit.se.nextalk_be.dto.response.TaskAssistantResponse;
 import iuh.fit.se.nextalk_be.entity.ChannelTaskPriority;
@@ -25,6 +28,7 @@ import iuh.fit.se.nextalk_be.repository.TaskAssistantPendingActionRepository;
 import iuh.fit.se.nextalk_be.service.ChannelTaskService;
 import iuh.fit.se.nextalk_be.service.MessageReminderService;
 import iuh.fit.se.nextalk_be.service.MessageService;
+import iuh.fit.se.nextalk_be.service.ScheduledMessageService;
 import iuh.fit.se.nextalk_be.service.TaskAssistantService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -61,7 +65,7 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class TaskAssistantServiceImpl implements TaskAssistantService {
     private static final Set<String> READ_TOOLS = Set.of("search_messages", "get_conversation_context");
-    private static final Set<String> MUTATION_TOOLS = Set.of("create_channel_task", "schedule_reminder");
+    private static final Set<String> MUTATION_TOOLS = Set.of("create_channel_task", "schedule_reminder", "schedule_message");
     private static final int MAX_TOOL_TURNS = 6;
     private static final int INITIAL_CONTEXT_MESSAGE_LIMIT = 16;
     private static final DateTimeFormatter VIETNAMESE_DATE_TIME =
@@ -82,6 +86,7 @@ public class TaskAssistantServiceImpl implements TaskAssistantService {
     private final TaskAssistantPendingActionRepository pendingActionRepository;
     private final MessageService messageService;
     private final MessageReminderService messageReminderService;
+    private final ScheduledMessageService scheduledMessageService;
     private final ChannelTaskService channelTaskService;
     private final UserService userService;
     private final RestTemplate restTemplate;
@@ -428,6 +433,27 @@ public class TaskAssistantServiceImpl implements TaskAssistantService {
                         "priority", task.getPriority()
                 );
             }
+            case "schedule_message" -> {
+                String content = requiredString(arguments, "content", 1000);
+                String scheduledAt = requiredString(arguments, "scheduledAt", 80);
+                boolean silent = Boolean.parseBoolean(stringValue(arguments.get("silent")));
+                ScheduledMessageResponse scheduled = scheduledMessageService.schedule(
+                        ScheduleMessageRequest.builder()
+                                .message(MessageRequest.builder()
+                                        .conversationId(context.conversation().getId())
+                                        .content(content)
+                                        .build())
+                                .scheduledAt(scheduledAt)
+                                .silent(silent)
+                                .build()
+                );
+                yield Map.of(
+                        "success", true,
+                        "scheduledMessageId", scheduled.getId(),
+                        "scheduledAt", scheduled.getScheduledAt(),
+                        "content", scheduled.getContent()
+                );
+            }
             default -> throw new BadRequestException("Tool không được phép thực thi.");
         };
     }
@@ -462,6 +488,12 @@ public class TaskAssistantServiceImpl implements TaskAssistantService {
             safe.put("note", optionalString(arguments, "note", 500));
             return safe;
         }
+        if ("schedule_message".equals(toolName)) {
+            safe.put("content", requiredString(arguments, "content", 1000));
+            safe.put("scheduledAt", requiredString(arguments, "scheduledAt", 80));
+            safe.put("silent", Boolean.parseBoolean(stringValue(arguments.get("silent"))));
+            return safe;
+        }
         safe.put("title", requiredString(arguments, "title", 200));
         safe.put("description", optionalString(arguments, "description", 1000));
         safe.put("priority", priorityValue(arguments.get("priority")).name());
@@ -479,6 +511,15 @@ public class TaskAssistantServiceImpl implements TaskAssistantService {
                     .label("Tạo lời nhắc")
                     .summary("Nhắc lúc " + friendlyDateTime(arguments.get("remindAt"))
                             + (stringValue(arguments.get("note")).isBlank() ? "" : ": " + arguments.get("note")))
+                    .arguments(arguments)
+                    .build();
+        }
+        if ("schedule_message".equals(pending.getToolName())) {
+            return TaskAssistantActionResponse.builder()
+                    .toolName(pending.getToolName())
+                    .label("Hẹn giờ gửi tin nhắn")
+                    .summary("Gửi lúc " + friendlyDateTime(arguments.get("scheduledAt"))
+                            + ": " + shorten(stringValue(arguments.get("content")), 80))
                     .arguments(arguments)
                     .build();
         }
@@ -652,6 +693,19 @@ public class TaskAssistantServiceImpl implements TaskAssistantService {
                                 ),
                                 "required", List.of("title")
                         )
+                ),
+                functionTool(
+                        "schedule_message",
+                        "Đề xuất lên lịch gửi một tin nhắn mới trong cuộc trò chuyện hiện tại vào mốc thời gian ISO 8601 đã chỉ định. Luôn cần người dùng xác nhận.",
+                        Map.of(
+                                "type", "object",
+                                "properties", Map.of(
+                                        "content", Map.of("type", "string", "description", "Nội dung tin nhắn văn bản cần gửi"),
+                                        "scheduledAt", Map.of("type", "string", "description", "Thời gian hẹn giờ gửi ISO 8601 có múi giờ, ví dụ 2026-07-28T08:00:00+07:00"),
+                                        "silent", Map.of("type", "boolean", "description", "Gửi im lặng không phát âm thanh thông báo")
+                                ),
+                                "required", List.of("content", "scheduledAt")
+                        )
                 )
         );
     }
@@ -686,6 +740,7 @@ public class TaskAssistantServiceImpl implements TaskAssistantService {
                 Bạn là Trợ lý tác vụ của NexTalk. Trả lời bằng tiếng Việt, ngắn gọn và chính xác.
                 Chỉ sử dụng các function được cung cấp; không được giả định rằng dữ liệu đã thay đổi.
                 Hãy gọi search_messages hoặc get_conversation_context để lấy messageId thật trước khi tạo lời nhắc.
+                Khi người dùng muốn hẹn giờ gửi tin nhắn mới vào mốc thời gian cụ thể, hãy gọi function schedule_message với content và scheduledAt (dạng ISO 8601).
                 Khi cần thay đổi dữ liệu, hãy gọi function tương ứng; NexTalk sẽ yêu cầu người dùng xác nhận.
                 Không tự tạo userId, messageId, ngày giờ hoặc thông tin không có trong yêu cầu/ngữ cảnh.
                 Ngày giờ hiện tại của máy chủ: %s.
@@ -858,9 +913,9 @@ public class TaskAssistantServiceImpl implements TaskAssistantService {
     }
 
     private String localSuccessMessage(String toolName) {
-        return "schedule_reminder".equals(toolName)
-                ? "Đã tạo lời nhắc thành công."
-                : "Đã tạo công việc thành công.";
+        if ("schedule_reminder".equals(toolName)) return "Đã tạo lời nhắc thành công.";
+        if ("schedule_message".equals(toolName)) return "Đã hẹn giờ gửi tin nhắn thành công.";
+        return "Đã tạo công việc thành công.";
     }
 
     private String shorten(String value, int maxLength) {
