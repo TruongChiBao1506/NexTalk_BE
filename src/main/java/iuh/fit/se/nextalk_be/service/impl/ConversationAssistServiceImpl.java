@@ -234,7 +234,7 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
                         "parts", List.of(Map.of("text", prompt))
                 )),
                 "generationConfig", Map.of(
-                        "maxOutputTokens", 512,
+                        "maxOutputTokens", 2048,
                         "responseMimeType", "application/json"
                 )
         );
@@ -243,8 +243,8 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
                     geminiUrl, payload, Object.class, geminiModel, geminiApiKey);
             String json = extractGeminiText(response.getBody());
             List<String> suggestions = parseSuggestions(json);
-            if (suggestions.size() != 3) {
-                throw new IllegalStateException("AI response did not contain three suggestions");
+            if (suggestions.isEmpty()) {
+                throw new IllegalStateException("AI response did not contain suggestions");
             }
             return suggestions;
         } catch (BadRequestException exception) {
@@ -267,7 +267,7 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
             throw new BadRequestException("Dịch vụ Gemini đang tạm thời không khả dụng.");
         } catch (Exception exception) {
             log.warn("Unable to generate reply suggestions with Gemini model {}: {}",
-                    geminiModel, exception.getClass().getSimpleName());
+                    geminiModel, exception.getMessage(), exception);
             throw new BadRequestException("Không thể tạo gợi ý lúc này. Vui lòng thử lại sau.");
         }
     }
@@ -283,10 +283,18 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
         if (!(contentObject instanceof Map<?, ?> content)) return null;
         Object partsObject = content.get("parts");
         if (!(partsObject instanceof List<?> parts) || parts.isEmpty()) return null;
-        Object partObject = parts.get(0);
-        if (!(partObject instanceof Map<?, ?> part)) return null;
-        Object text = part.get("text");
-        return text == null ? null : text.toString();
+
+        StringBuilder textBuilder = new StringBuilder();
+        for (Object partObject : parts) {
+            if (partObject instanceof Map<?, ?> part) {
+                Object text = part.get("text");
+                if (text != null) {
+                    textBuilder.append(text);
+                }
+            }
+        }
+        String result = textBuilder.toString().trim();
+        return result.isBlank() ? null : result;
     }
 
     private List<String> parseSuggestions(String rawJson) throws Exception {
@@ -294,8 +302,11 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
         String json = rawJson.trim()
                 .replaceFirst("(?s)^```(?:json)?\\s*", "")
                 .replaceFirst("(?s)\\s*```$", "");
-        Map<?, ?> parsed = objectMapper.readValue(json, Map.class);
-        Object values = parsed.get("suggestions");
+        Object parsed = objectMapper.readValue(json, Object.class);
+        Object values = parsed;
+        if (parsed instanceof Map<?, ?> map) {
+            values = map.get("suggestions");
+        }
         if (!(values instanceof List<?> list)) return List.of();
         return list.stream()
                 .map(Object::toString)
