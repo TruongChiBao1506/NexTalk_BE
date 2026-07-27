@@ -228,6 +228,17 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
         if (geminiApiKey == null || geminiApiKey.isBlank()) {
             throw new BadRequestException("Tính năng gợi ý AI chưa được cấu hình");
         }
+
+        List<String> modelsToTry = new ArrayList<>();
+        if (geminiModel != null && !geminiModel.isBlank()) {
+            modelsToTry.add(geminiModel.trim());
+        }
+        for (String fallbackModel : List.of("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash")) {
+            if (!modelsToTry.contains(fallbackModel)) {
+                modelsToTry.add(fallbackModel);
+            }
+        }
+
         Map<String, Object> payload = Map.of(
                 "contents", List.of(Map.of(
                         "role", "user",
@@ -238,38 +249,29 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
                         "responseMimeType", "application/json"
                 )
         );
-        try {
-            ResponseEntity<Object> response = restTemplate.postForEntity(
-                    geminiUrl, payload, Object.class, geminiModel, geminiApiKey);
-            String json = extractGeminiText(response.getBody());
-            List<String> suggestions = parseSuggestions(json);
-            if (suggestions.isEmpty()) {
-                throw new IllegalStateException("AI response did not contain suggestions");
+
+        Exception lastException = null;
+        for (String modelName : modelsToTry) {
+            try {
+                ResponseEntity<Object> response = restTemplate.postForEntity(
+                        geminiUrl, payload, Object.class, modelName, geminiApiKey);
+                String json = extractGeminiText(response.getBody());
+                List<String> suggestions = parseSuggestions(json);
+                if (!suggestions.isEmpty()) {
+                    if (!Objects.equals(modelName, geminiModel)) {
+                        log.info("Successfully generated reply suggestions using fallback Gemini model {}", modelName);
+                    }
+                    return suggestions;
+                }
+            } catch (Exception exception) {
+                lastException = exception;
+                log.warn("Gemini model {} failed for reply suggestions: {}. Trying fallback model...",
+                        modelName, exception.getMessage());
             }
-            return suggestions;
-        } catch (BadRequestException exception) {
-            throw exception;
-        } catch (RestClientResponseException exception) {
-            int status = exception.getStatusCode().value();
-            log.warn("Gemini reply suggestion request failed with HTTP {} using model {}", status, geminiModel);
-            if (status == 400) {
-                throw new BadRequestException("Gemini từ chối yêu cầu tạo gợi ý. Vui lòng kiểm tra cấu hình model.");
-            }
-            if (status == 401 || status == 403) {
-                throw new BadRequestException("Khóa Gemini không hợp lệ hoặc chưa được cấp quyền.");
-            }
-            if (status == 404) {
-                throw new BadRequestException("Không tìm thấy model Gemini đã cấu hình.");
-            }
-            if (status == 429) {
-                throw new BadRequestException("Gemini đã hết hạn mức hoặc đang bị giới hạn tần suất.");
-            }
-            throw new BadRequestException("Dịch vụ Gemini đang tạm thời không khả dụng.");
-        } catch (Exception exception) {
-            log.warn("Unable to generate reply suggestions with Gemini model {}: {}",
-                    geminiModel, exception.getMessage(), exception);
-            throw new BadRequestException("Không thể tạo gợi ý lúc này. Vui lòng thử lại sau.");
         }
+
+        log.error("All Gemini fallback models failed for reply suggestions", lastException);
+        throw new BadRequestException("Dịch vụ AI đang bận hoặc bị giới hạn tần suất. Vui lòng thử lại sau giây lát.");
     }
 
     @SuppressWarnings("unchecked")
