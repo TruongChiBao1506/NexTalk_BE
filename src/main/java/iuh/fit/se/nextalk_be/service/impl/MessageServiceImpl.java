@@ -400,13 +400,23 @@ public class MessageServiceImpl implements MessageService {
                     }
 
                     boolean isMentioned = isMemberMentioned(savedMessage, member);
+                    boolean mentionsEveryone = savedMessage.getMetadata() != null
+                            && Boolean.TRUE.equals(savedMessage.getMetadata().get("mentionAll"));
                     String notificationContent;
                     if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
                         notificationContent = isMentioned
                                 ? pushTitlePrefix + "Bạn được nhắc trong một cuộc trò chuyện"
                                 : pushTitlePrefix + "Bạn có tin nhắn mới";
                     } else if (isMentioned) {
-                        notificationContent = pushTitlePrefix + currentUser.getUsername() + " đã nhắc tới bạn: "
+                        String mentionLabel = mentionsEveryone
+                                ? " đã nhắc đến mọi người"
+                                : " đã nhắc đến bạn";
+                        String conversationLabel = conversation.getName() != null
+                                && !conversation.getName().isBlank()
+                                ? " trong " + conversation.getName().trim()
+                                : "";
+                        notificationContent = pushTitlePrefix + currentUser.getUsername()
+                                + mentionLabel + conversationLabel + ": "
                                 + priorityPrefix + (contentPreview != null && contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
                     } else {
                         notificationContent = pushTitlePrefix + "Bạn có tin nhắn mới từ " + currentUser.getUsername() + ": " + 
@@ -435,6 +445,11 @@ public class MessageServiceImpl implements MessageService {
 
                     if (notificationAllowed && member.getFcmTokens() != null && !member.getFcmTokens().isEmpty()) {
                         String pushBody = priorityPrefix + (contentPreview != null ? contentPreview : "");
+                        if (isMentioned) {
+                            pushBody = (mentionsEveryone
+                                    ? "Đã nhắc đến mọi người: "
+                                    : "Đã nhắc đến bạn: ") + pushBody;
+                        }
                         if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
                             pushBody = isMentioned ? "Bạn được nhắc trong một cuộc trò chuyện" : "Bạn có tin nhắn mới";
                         }
