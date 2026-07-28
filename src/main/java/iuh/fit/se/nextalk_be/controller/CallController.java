@@ -51,6 +51,7 @@ import java.security.MessageDigest;
 import java.security.Principal;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -59,6 +60,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
@@ -83,6 +85,7 @@ public class CallController {
     private final Map<String, Long> closedCallSessions = new ConcurrentHashMap<>();
 
     private static final String CALL_SESSION_KEY_PREFIX = "nextalk:call:session:";
+    private static final String CALL_USER_INDEX_KEY_PREFIX = "nextalk:call:user:";
 
     @Value("${app.agora.app-id}")
     private String appId;
@@ -95,6 +98,36 @@ public class CallController {
 
     @Value("${app.calls.connected-ttl:2h}")
     private Duration connectedCallTtl;
+
+    @GetMapping("/active")
+    public ResponseEntity<ApiResponse<List<CallSignal>>> getActiveCalls(Principal principal) {
+        if (principal == null) return ResponseEntity.badRequest().build();
+        User currentUser = findUserByPrincipal(principal);
+        if (currentUser == null) return ResponseEntity.badRequest().build();
+
+        LinkedHashSet<String> callIds = new LinkedHashSet<>();
+        activeCallSessions.values().stream()
+                .filter(session -> isSessionVisibleToUser(session, currentUser.getId()))
+                .map(session -> session.callId)
+                .forEach(callIds::add);
+        try {
+            Set<String> persistedCallIds = redisTemplate.opsForSet()
+                    .members(callUserIndexKey(currentUser.getId()));
+            if (persistedCallIds != null) callIds.addAll(persistedCallIds);
+        } catch (Exception ignored) {
+            // The in-memory index still supports recovery while Redis is unavailable.
+        }
+
+        List<CallSignal> activeCalls = callIds.stream()
+                .map(this::getCallSession)
+                .filter(Objects::nonNull)
+                .filter(session -> isSessionVisibleToUser(session, currentUser.getId()))
+                .map(session -> toActiveCallSignal(session, currentUser))
+                .filter(Objects::nonNull)
+                .toList();
+
+        return ResponseEntity.ok(ApiResponse.success(activeCalls, "Active calls retrieved"));
+    }
 
     @GetMapping("/token")
     public ResponseEntity<ApiResponse<CallTokenResponse>> getCallToken(
@@ -695,6 +728,90 @@ public class CallController {
         return CALL_SESSION_KEY_PREFIX + callId;
     }
 
+    private String callUserIndexKey(String userId) {
+        return CALL_USER_INDEX_KEY_PREFIX + userId;
+    }
+
+    private Set<String> indexedUserIds(CallSession session) {
+        LinkedHashSet<String> userIds = new LinkedHashSet<>(session.participantIds);
+        userIds.addAll(session.invitedResponderIds);
+        userIds.add(session.initiatorId);
+        userIds.remove(null);
+        return userIds;
+    }
+
+    private boolean isSessionVisibleToUser(CallSession session, String userId) {
+        if (session == null || userId == null) return false;
+        if (session.participantIds.contains(userId)) return true;
+        return session.invitedResponderIds.contains(userId)
+                && !session.respondedUserIds.contains(userId);
+    }
+
+    private CallSignal toActiveCallSignal(CallSession session, User currentUser) {
+        String userId = currentUser.getId();
+        boolean isInitiator = userId.equals(session.initiatorId);
+        boolean acceptedParticipant = session.hadAcceptedParticipant
+                && session.participantIds.contains(userId);
+        boolean pendingInvite = session.invitedResponderIds.contains(userId)
+                && !session.respondedUserIds.contains(userId);
+
+        String callState;
+        String signalType;
+        if (acceptedParticipant) {
+            callState = "CONNECTED";
+            signalType = "HANDOFF_REQUEST";
+        } else if (pendingInvite) {
+            callState = "RINGING_INCOMING";
+            signalType = "INVITE";
+        } else if (isInitiator) {
+            callState = "RINGING_OUTGOING";
+            signalType = "ACTIVE_CALL";
+        } else {
+            return null;
+        }
+
+        User initiator = userRepository.findById(session.initiatorId).orElse(null);
+        Conversation conversation = conversationRepository.findById(session.conversationId).orElse(null);
+        User peer = conversation == null || conversation.getMembers() == null
+                ? null
+                : conversation.getMembers().stream()
+                .filter(member -> !member.getId().equals(userId))
+                .findFirst()
+                .orElse(null);
+        Duration ttl = session.hadAcceptedParticipant ? connectedCallTtl : ringingCallTtl;
+        LocalDateTime reference = session.hadAcceptedParticipant && session.connectedAt != null
+                ? session.connectedAt
+                : session.startedAt;
+
+        return CallSignal.builder()
+                .callId(session.callId)
+                .conversationId(session.conversationId)
+                .groupName(conversation != null && conversation.getType() == ConversationType.GROUP
+                        ? conversation.getName()
+                        : null)
+                .groupMemberCount(conversation != null && conversation.getMembers() != null
+                        ? conversation.getMembers().size()
+                        : null)
+                .callerId(session.initiatorId)
+                .receiverId("PRIVATE".equals(session.scope)
+                        ? session.invitedResponderIds.stream().findFirst().orElse(null)
+                        : null)
+                .callerName(initiator != null ? initiator.getUsername() : "NexTalk user")
+                .callerAvatar(initiator != null ? initiator.getAvatarUrl() : null)
+                .type(session.type)
+                .signalType(signalType)
+                .sourceDeviceId("active-call-recovery")
+                .handoffPeerId(peer != null ? peer.getId() : null)
+                .handoffPeerName(peer != null ? peer.getUsername() : null)
+                .handoffPeerAvatar(peer != null ? peer.getAvatarUrl() : null)
+                .callState(callState)
+                .startedAt(session.startedAt)
+                .expiresAt(reference != null
+                        ? reference.plus(ttl).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        : null)
+                .build();
+    }
+
     private CallSession getCallSession(String callId) {
         Long closedUntil = closedCallSessions.get(callId);
         if (closedUntil != null && closedUntil > System.currentTimeMillis()) return null;
@@ -718,6 +835,11 @@ public class CallController {
                     objectMapper.writeValueAsString(session),
                     ttl
             );
+            for (String userId : indexedUserIds(session)) {
+                String indexKey = callUserIndexKey(userId);
+                redisTemplate.opsForSet().add(indexKey, session.callId);
+                redisTemplate.expire(indexKey, ttl);
+            }
         } catch (Exception ignored) {
             // Calls continue in-memory when Redis is temporarily unavailable.
         }
@@ -726,6 +848,7 @@ public class CallController {
     private CallSession removeKnownCallSession(String callId, CallSession session) {
         markCallSessionClosed(callId);
         deletePersistedCallSession(callId);
+        removePersistedCallIndexes(callId, session);
         if (!activeCallSessions.remove(callId, session)) return null;
         return session;
     }
@@ -739,6 +862,16 @@ public class CallController {
             redisTemplate.delete(callSessionKey(callId));
         } catch (Exception ignored) {
             // Redis TTL will remove the fallback copy later.
+        }
+    }
+
+    private void removePersistedCallIndexes(String callId, CallSession session) {
+        try {
+            for (String userId : indexedUserIds(session)) {
+                redisTemplate.opsForSet().remove(callUserIndexKey(userId), callId);
+            }
+        } catch (Exception ignored) {
+            // Index keys expire with the call TTL and stale IDs are ignored on recovery.
         }
     }
 

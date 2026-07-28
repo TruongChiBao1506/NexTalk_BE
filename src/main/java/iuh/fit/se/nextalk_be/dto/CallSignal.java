@@ -2,6 +2,8 @@ package iuh.fit.se.nextalk_be.dto;
 
 import lombok.*;
 
+import java.time.LocalDateTime;
+
 @Getter
 @Setter
 @Builder
@@ -27,4 +29,7 @@ public class CallSignal {
     private String handoffPeerId;
     private String handoffPeerName;
     private String handoffPeerAvatar;
+    private String callState; // RINGING_INCOMING, RINGING_OUTGOING, CONNECTED
+    private LocalDateTime startedAt;
+    private Long expiresAt;
 }

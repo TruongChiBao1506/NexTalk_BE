@@ -34,6 +34,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.security.Principal;
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -145,11 +146,62 @@ class CallControllerStateTest {
         assertEquals(409, otherDevice.getStatusCode().value());
 
         ArgumentCaptor<CallSignal> responderSignals = ArgumentCaptor.forClass(CallSignal.class);
-        verify(messagingTemplate, org.mockito.Mockito.times(2))
+        verify(messagingTemplate, org.mockito.Mockito.times(3))
                 .convertAndSendToUser(eq(firstResponder.getUsername()), eq("/queue/calls"), responderSignals.capture());
         CallSignal handledSignal = responderSignals.getAllValues().get(1);
         assertEquals("CALL_HANDLED", handledSignal.getSignalType());
         assertEquals("device-a", handledSignal.getHandledByDeviceId());
+    }
+
+    @Test
+    void activeCallRecoveryReturnsIncomingInviteBeforeItExpires() {
+        Conversation conversation = conversation("private-recovery", ConversationType.PRIVATE,
+                caller, firstResponder);
+        when(conversationRepository.findById(conversation.getId())).thenReturn(Optional.of(conversation));
+        when(userRepository.findById(caller.getId())).thenReturn(Optional.of(caller));
+
+        controller.inviteCall(
+                invite("recovery-call", conversation.getId(), firstResponder.getId()),
+                principal(caller)
+        );
+
+        ResponseEntity<ApiResponse<List<CallSignal>>> response =
+                controller.getActiveCalls(principal(firstResponder));
+
+        assertEquals(200, response.getStatusCode().value());
+        List<CallSignal> calls = response.getBody().getData();
+        assertEquals(1, calls.size());
+        assertEquals("INVITE", calls.get(0).getSignalType());
+        assertEquals("RINGING_INCOMING", calls.get(0).getCallState());
+        assertEquals(caller.getUsername(), calls.get(0).getCallerName());
+        assertTrue(calls.get(0).getExpiresAt() > System.currentTimeMillis());
+    }
+
+    @Test
+    void activeCallRecoveryOffersConnectedCallToAnotherDevice() {
+        Conversation conversation = conversation("private-handoff-recovery", ConversationType.PRIVATE,
+                caller, firstResponder);
+        when(conversationRepository.findById(conversation.getId())).thenReturn(Optional.of(conversation));
+        when(userRepository.findById(caller.getId())).thenReturn(Optional.of(caller));
+
+        controller.inviteCall(
+                invite("handoff-recovery-call", conversation.getId(), firstResponder.getId()),
+                principal(caller)
+        );
+        controller.answerCall(
+                answer("handoff-recovery-call", conversation.getId(), true),
+                principal(firstResponder)
+        );
+
+        ResponseEntity<ApiResponse<List<CallSignal>>> response =
+                controller.getActiveCalls(principal(firstResponder));
+
+        assertEquals(200, response.getStatusCode().value());
+        List<CallSignal> calls = response.getBody().getData();
+        assertEquals(1, calls.size());
+        assertEquals("HANDOFF_REQUEST", calls.get(0).getSignalType());
+        assertEquals("CONNECTED", calls.get(0).getCallState());
+        assertEquals(caller.getId(), calls.get(0).getHandoffPeerId());
     }
 
     @Test
