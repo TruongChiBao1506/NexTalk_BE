@@ -85,6 +85,24 @@ public class PresenceEventListener {
                 String currentStatus = presenceService.getUserStatus(user.getId());
                 log.info("User {} disconnected with session {}. New status is {}", user.getUsername(), sessionId, currentStatus);
 
+                // Always clean up voice channel membership for the specific disconnecting session
+                String[] sessionVoiceInfo = voiceChannelService.leaveChannelBySessionId(sessionId);
+                if (sessionVoiceInfo != null) {
+                    String channelId = sessionVoiceInfo[0];
+                    String groupId = sessionVoiceInfo[1];
+                    String voiceUserId = sessionVoiceInfo[2];
+
+                    VoiceChannelEvent leaveEvent = VoiceChannelEvent.builder()
+                            .type("LEAVE")
+                            .channelId(channelId)
+                            .groupId(groupId)
+                            .userId(voiceUserId)
+                            .currentMembers(voiceChannelService.getChannelMembers(channelId))
+                            .build();
+
+                    messagingTemplate.convertAndSend("/topic/group." + groupId + ".voice", leaveEvent);
+                }
+
                 // Only the final device disconnect makes the user offline.
                 // Disconnecting another signed-in device must not remove an
                 // active voice presence owned by the remaining connection.

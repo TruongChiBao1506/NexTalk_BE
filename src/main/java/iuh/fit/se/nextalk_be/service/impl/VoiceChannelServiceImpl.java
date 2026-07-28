@@ -12,6 +12,7 @@ import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,17 +31,28 @@ public class VoiceChannelServiceImpl implements VoiceChannelService {
 
     private static final String CHANNEL_MEMBERS_PREFIX = "voice:channel:";
     private static final String USER_CHANNEL_PREFIX = "voice:user:";
+    private static final String SESSION_USER_PREFIX = "voice:session:";
 
     public void joinChannel(String channelId, String userId, String groupId) {
+        joinChannel(channelId, userId, groupId, null);
+    }
+
+    public void joinChannel(String channelId, String userId, String groupId, String sessionId) {
         leaveCurrentChannel(userId);
 
         String channelKey = CHANNEL_MEMBERS_PREFIX + channelId;
         String userKey = USER_CHANNEL_PREFIX + userId;
         redisTemplate.opsForSet().add(channelKey, userId);
-        redisTemplate.opsForValue().set(userKey, channelId + ":" + groupId);
+        redisTemplate.opsForValue().set(userKey, channelId + ":" + groupId + (sessionId != null ? ":" + sessionId : ""));
         redisTemplate.expire(channelKey, voiceTtl);
         redisTemplate.expire(userKey, voiceTtl);
-        log.info("User {} joined voice channel {} in group {}", userId, channelId, groupId);
+
+        if (sessionId != null) {
+            String sessionKey = SESSION_USER_PREFIX + sessionId;
+            redisTemplate.opsForValue().set(sessionKey, userId + ":" + channelId + ":" + groupId);
+            redisTemplate.expire(sessionKey, voiceTtl);
+        }
+        log.info("User {} (session {}) joined voice channel {} in group {}", userId, sessionId, channelId, groupId);
     }
 
     public String[] leaveCurrentChannel(String userId) {
@@ -50,10 +62,35 @@ public class VoiceChannelServiceImpl implements VoiceChannelService {
             if (parts.length >= 2) {
                 String channelId = parts[0];
                 String groupId = parts[1];
+                if (parts.length >= 3) {
+                    String sessionId = parts[2];
+                    redisTemplate.delete(SESSION_USER_PREFIX + sessionId);
+                }
                 redisTemplate.opsForSet().remove(CHANNEL_MEMBERS_PREFIX + channelId, userId);
                 redisTemplate.delete(USER_CHANNEL_PREFIX + userId);
                 log.info("User {} left voice channel {}", userId, channelId);
                 return new String[]{channelId, groupId};
+            }
+        }
+        return null;
+    }
+
+    public String[] leaveChannelBySessionId(String sessionId) {
+        if (sessionId == null) return null;
+        String sessionKey = SESSION_USER_PREFIX + sessionId;
+        String sessionInfo = redisTemplate.opsForValue().get(sessionKey);
+        if (sessionInfo != null) {
+            String[] parts = sessionInfo.split(":");
+            if (parts.length >= 3) {
+                String userId = parts[0];
+                String channelId = parts[1];
+                String groupId = parts[2];
+
+                redisTemplate.opsForSet().remove(CHANNEL_MEMBERS_PREFIX + channelId, userId);
+                redisTemplate.delete(USER_CHANNEL_PREFIX + userId);
+                redisTemplate.delete(sessionKey);
+                log.info("Session {} (user {}) left voice channel {}", sessionId, userId, channelId);
+                return new String[]{channelId, groupId, userId};
             }
         }
         return null;
@@ -70,10 +107,13 @@ public class VoiceChannelServiceImpl implements VoiceChannelService {
         String userKey = USER_CHANNEL_PREFIX + userId;
         String channelInfo = redisTemplate.opsForValue().get(userKey);
         if (channelInfo == null) return;
-        String[] parts = channelInfo.split(":", 2);
-        if (parts.length != 2) return;
+        String[] parts = channelInfo.split(":");
+        if (parts.length < 2) return;
         redisTemplate.expire(userKey, voiceTtl);
         redisTemplate.expire(CHANNEL_MEMBERS_PREFIX + parts[0], voiceTtl);
+        if (parts.length >= 3) {
+            redisTemplate.expire(SESSION_USER_PREFIX + parts[2], voiceTtl);
+        }
     }
 
     @Scheduled(fixedDelayString = "${app.redis.voice-cleanup-delay:30000}")

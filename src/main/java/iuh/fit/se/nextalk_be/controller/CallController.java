@@ -194,11 +194,13 @@ public class CallController {
     }
 
     @MessageMapping("/voice.join")
-    public void joinVoiceChannel(@Payload VoiceChannelEvent event, Principal principal) {
+    public void joinVoiceChannel(@Payload VoiceChannelEvent event, Principal principal, org.springframework.messaging.simp.SimpMessageHeaderAccessor headerAccessor) {
         if (principal == null) return;
         User user = findUserByPrincipal(principal);
         if (user == null) return;
         if (!hasVoiceChannelAccess(event.getChannelId(), event.getGroupId(), user)) return;
+
+        String sessionId = headerAccessor != null ? headerAccessor.getSessionId() : null;
 
         // A user can move directly between voice channels. Notify listeners of
         // the old channel as well, otherwise clients keep rendering a ghost
@@ -217,7 +219,7 @@ public class CallController {
             messagingTemplate.convertAndSend("/topic/group." + previousGroupId + ".voice", leaveEvent);
         }
 
-        voiceChannelService.joinChannel(event.getChannelId(), user.getId(), event.getGroupId());
+        voiceChannelService.joinChannel(event.getChannelId(), user.getId(), event.getGroupId(), sessionId);
         
         event.setType("JOIN");
         event.setUserId(user.getId());
