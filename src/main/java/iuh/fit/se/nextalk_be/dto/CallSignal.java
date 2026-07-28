@@ -31,5 +31,6 @@ public class CallSignal {
     private String handoffPeerAvatar;
     private String callState; // RINGING_INCOMING, RINGING_OUTGOING, CONNECTED
     private LocalDateTime startedAt;
+    private Long connectedAtEpochMs;
     private Long expiresAt;
 }

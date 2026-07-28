@@ -60,6 +60,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -376,11 +377,28 @@ public class CallController {
 
         signal.setCallerId(currentUser.getId());
         signal.setReceiverId(currentUser.getId());
+        LocalDateTime connectedAt = session.connectedAt != null ? session.connectedAt : session.startedAt;
+        signal.setStartedAt(connectedAt);
+        signal.setConnectedAtEpochMs(connectedAt != null
+                ? connectedAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                : null);
         messagingTemplate.convertAndSendToUser(
                 currentUser.getUsername(),
                 "/queue/calls",
                 signal
         );
+
+        // Let the other participant distinguish an Agora handoff disconnect
+        // from an actual hangup.
+        session.participantIds.stream()
+                .filter(participantId -> !participantId.equals(currentUser.getId()))
+                .map(userRepository::findById)
+                .flatMap(Optional::stream)
+                .forEach(participant -> messagingTemplate.convertAndSendToUser(
+                        participant.getUsername(),
+                        "/queue/calls",
+                        signal
+                ));
     }
 
     private boolean registerCallInvite(CallSignal signal, User caller) {
@@ -805,7 +823,12 @@ public class CallController {
                 .handoffPeerName(peer != null ? peer.getUsername() : null)
                 .handoffPeerAvatar(peer != null ? peer.getAvatarUrl() : null)
                 .callState(callState)
-                .startedAt(session.startedAt)
+                .startedAt(session.connectedAt != null ? session.connectedAt : session.startedAt)
+                .connectedAtEpochMs(session.connectedAt != null
+                        ? session.connectedAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        : session.startedAt != null
+                                ? session.startedAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                                : null)
                 .expiresAt(reference != null
                         ? reference.plus(ttl).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
                         : null)

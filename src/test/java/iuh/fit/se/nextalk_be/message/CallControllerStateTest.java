@@ -46,6 +46,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -202,6 +203,44 @@ class CallControllerStateTest {
         assertEquals("HANDOFF_REQUEST", calls.get(0).getSignalType());
         assertEquals("CONNECTED", calls.get(0).getCallState());
         assertEquals(caller.getId(), calls.get(0).getHandoffPeerId());
+        assertTrue(calls.get(0).getStartedAt() != null);
+        assertTrue(calls.get(0).getConnectedAtEpochMs() != null);
+    }
+
+    @Test
+    void handoffSignalsAreForwardedToThePeerWithTheOriginalConnectedTime() {
+        Conversation conversation = conversation("private-handoff", ConversationType.PRIVATE,
+                caller, firstResponder);
+        when(conversationRepository.findById(conversation.getId())).thenReturn(Optional.of(conversation));
+        when(userRepository.findById(caller.getId())).thenReturn(Optional.of(caller));
+
+        controller.inviteCall(
+                invite("handoff-call", conversation.getId(), firstResponder.getId()),
+                principal(caller)
+        );
+        controller.answerCall(
+                answer("handoff-call", conversation.getId(), true),
+                principal(firstResponder)
+        );
+        clearInvocations(messagingTemplate);
+
+        CallSignal handoff = CallSignal.builder()
+                .callId("handoff-call")
+                .conversationId(conversation.getId())
+                .signalType("HANDOFF_ACCEPTED")
+                .handledByDeviceId("mobile-device")
+                .build();
+        controller.handoffCall(handoff, principal(firstResponder));
+
+        ArgumentCaptor<CallSignal> peerSignal = ArgumentCaptor.forClass(CallSignal.class);
+        verify(messagingTemplate)
+                .convertAndSendToUser(eq(caller.getUsername()), eq("/queue/calls"), peerSignal.capture());
+        verify(messagingTemplate)
+                .convertAndSendToUser(eq(firstResponder.getUsername()), eq("/queue/calls"), any(CallSignal.class));
+        assertEquals(firstResponder.getId(), peerSignal.getValue().getCallerId());
+        assertEquals("HANDOFF_ACCEPTED", peerSignal.getValue().getSignalType());
+        assertTrue(peerSignal.getValue().getStartedAt() != null);
+        assertTrue(peerSignal.getValue().getConnectedAtEpochMs() != null);
     }
 
     @Test
