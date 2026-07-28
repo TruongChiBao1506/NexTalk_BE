@@ -1,5 +1,6 @@
 package iuh.fit.se.nextalk_be.message;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.ConversationType;
 import iuh.fit.se.nextalk_be.entity.User;
@@ -23,6 +24,7 @@ import java.util.UUID;
 
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -85,6 +87,31 @@ public class CallControllerTest {
                 .andExpect(jsonPath("$.data.token", notNullValue()))
                 .andExpect(jsonPath("$.data.channelName", is(conversation.getId().toString())))
                 .andExpect(jsonPath("$.data.uid", notNullValue()));
+    }
+
+    @Test
+    @WithMockUser(username = "member@gmail.com")
+    void getCallToken_HandoffDeviceUsesDifferentAgoraUid() throws Exception {
+        String regularResponse = mockMvc.perform(get("/api/calls/token")
+                        .param("conversationId", conversation.getId().toString())
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String handoffResponse = mockMvc.perform(get("/api/calls/token")
+                        .param("conversationId", conversation.getId().toString())
+                        .param("handoffDeviceId", "web-device")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        int regularUid = objectMapper.readTree(regularResponse).path("data").path("uid").asInt();
+        int handoffUid = objectMapper.readTree(handoffResponse).path("data").path("uid").asInt();
+        assertNotEquals(regularUid, handoffUid);
     }
 
     @Test

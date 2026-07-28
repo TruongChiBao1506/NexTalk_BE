@@ -132,7 +132,8 @@ public class CallController {
 
     @GetMapping("/token")
     public ResponseEntity<ApiResponse<CallTokenResponse>> getCallToken(
-            @RequestParam("conversationId") String conversationId
+            @RequestParam("conversationId") String conversationId,
+            @RequestParam(value = "handoffDeviceId", required = false) String handoffDeviceId
     ) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Conversation conversation = conversationRepository.findById(conversationId)
@@ -148,7 +149,7 @@ public class CallController {
             throw new BadRequestException("Bạn chỉ có thể gọi cho người đã kết bạn.");
         }
 
-        int uid = currentUser.getId().hashCode() & 0x7FFFFFFF;
+        int uid = resolveCallUid(currentUser.getId(), handoffDeviceId);
         String channelName = conversationId;
         String resolvedAppId = resolveAgoraConfig("AGORA_APP_ID", appId);
         String resolvedAppCertificate = resolveAgoraConfig("AGORA_APP_CERTIFICATE", appCertificate);
@@ -179,6 +180,14 @@ public class CallController {
                 .build();
 
         return ResponseEntity.ok(ApiResponse.success(response, "Agora token generated successfully"));
+    }
+
+    private int resolveCallUid(String userId, String handoffDeviceId) {
+        String uidSource = handoffDeviceId == null || handoffDeviceId.isBlank()
+                ? userId
+                : userId + ":handoff:" + handoffDeviceId.trim();
+        int uid = uidSource.hashCode() & 0x7FFFFFFF;
+        return uid == 0 ? 1 : uid;
     }
 
     @GetMapping("/channel-token")
