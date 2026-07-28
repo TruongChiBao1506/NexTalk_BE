@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.dto.response.TaskActivityResponse;
 import iuh.fit.se.nextalk_be.entity.*;
 import iuh.fit.se.nextalk_be.repository.*;
 import iuh.fit.se.nextalk_be.service.ChannelTaskActivityService;
+import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -26,6 +27,7 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
     private final UserService userService;
     private final iuh.fit.se.nextalk_be.service.FCMService fcmService;
     private final SimpMessagingTemplate messagingTemplate;
+    private final NotificationService notificationService;
 
     @Override
     public List<TaskActivityResponse> getActivities(String groupId, String channelId) {
@@ -140,6 +142,7 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
                                 TaskActivityType.TASK_OVERDUE,
                                 "🔴 Công việc \"" + task.getTitle() + "\" đã quá hạn chót!"
                         );
+                        notifyTaskDeadline(task, "Công việc \"" + task.getTitle() + "\" đã quá hạn", NotificationType.TASK_DUE);
                     }
                 }
                 // Check if approaching due date (within 1 hour)
@@ -158,12 +161,34 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
                                 TaskActivityType.DUE_APPROACHING,
                                 "⚠️ Công việc \"" + task.getTitle() + "\" sẽ hết hạn chót trong 1 giờ nữa!"
                         );
+                        notifyTaskDeadline(task, "Công việc \"" + task.getTitle() + "\" sẽ hết hạn trong 1 giờ", NotificationType.TASK_DUE);
                     }
                 }
             } catch (Exception ignored) {
                 // Ignore single task resolution exception
             }
         }
+    }
+
+    private void notifyTaskDeadline(ChannelTask task, String content, NotificationType type) {
+        Set<User> recipients = new HashSet<>();
+        if (task.getAssignees() != null) {
+            recipients.addAll(task.getAssignees());
+        }
+        if (recipients.isEmpty() && task.getCreatedBy() != null) {
+            recipients.add(task.getCreatedBy());
+        }
+        String conversationId = task.getChannel() != null && task.getChannel().getConversation() != null
+                ? task.getChannel().getConversation().getId()
+                : null;
+
+        recipients.stream().filter(java.util.Objects::nonNull).forEach(recipient -> {
+            try {
+                notificationService.createAndSend(recipient, type, content, conversationId, task.getId());
+            } catch (Exception ignored) {
+                // Deadline scan must continue for the remaining tasks.
+            }
+        });
     }
 
     private TaskActivityResponse mapToResponse(ChannelTaskActivity activity, String currentUserId) {

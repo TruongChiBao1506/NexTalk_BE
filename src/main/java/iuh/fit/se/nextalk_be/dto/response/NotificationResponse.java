@@ -15,6 +15,9 @@ public class NotificationResponse {
     private String type;
     private String content;
     private String referenceId;
+    private String secondaryReferenceId;
     private boolean isRead;
+    private String actionStatus;
+    private LocalDateTime snoozedUntil;
     private LocalDateTime createdAt;
 }

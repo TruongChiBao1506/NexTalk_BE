@@ -6,5 +6,8 @@ public enum NotificationType {
     FRIEND_REQUEST,
     GROUP_INVITE,
     CHAT_REQUEST,
-    REMINDER
+    REMINDER,
+    TASK_ASSIGNED,
+    TASK_DUE,
+    MISSED_CALL
 }

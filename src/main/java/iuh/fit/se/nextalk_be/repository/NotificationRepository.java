@@ -22,4 +22,7 @@ public interface NotificationRepository extends MongoRepository<Notification, St
 
     @Query(value = "{'isRead': false, '$or': [{'recipient': ?0}, {'recipient.$id': ?0}, {'recipient._id': ?0}, {'recipient': ?1}, {'recipient.$id': ?1}, {'recipient._id': ?1}]}", count = true)
     long countUnreadByRecipientUser(String recipientId, ObjectId recipientObjectId);
+
+    @Query(value = "{'actionStatus': {'$exists': true, '$ne': null}, '$or': [{'recipient': ?0}, {'recipient.$id': ?0}, {'recipient._id': ?0}, {'recipient': ?1}, {'recipient.$id': ?1}, {'recipient._id': ?1}]}", sort = "{'createdAt': -1}")
+    List<Notification> findActionItemsByRecipientUser(String recipientId, ObjectId recipientObjectId);
 }

@@ -5,6 +5,8 @@ import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.DocumentReference;
 
+import java.time.LocalDateTime;
+
 @Getter
 @Setter
 @Builder
@@ -23,6 +25,12 @@ public class Notification extends BaseEntity {
 
     private String referenceId;
 
+    private String secondaryReferenceId;
+
     @Builder.Default
     private boolean isRead = false;
+
+    private NotificationActionStatus actionStatus;
+
+    private LocalDateTime snoozedUntil;
 }

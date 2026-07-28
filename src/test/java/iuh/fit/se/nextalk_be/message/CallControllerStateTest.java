@@ -19,6 +19,7 @@ import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.service.FCMService;
 import iuh.fit.se.nextalk_be.service.MessageService;
+import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import iuh.fit.se.nextalk_be.service.VoiceChannelService;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,6 +64,7 @@ class CallControllerStateTest {
     @Mock private MessageService messageService;
     @Mock private VoiceChannelService voiceChannelService;
     @Mock private FCMService fcmService;
+    @Mock private NotificationService notificationService;
     @Mock private StringRedisTemplate redisTemplate;
 
     private CallController controller;
@@ -83,6 +85,7 @@ class CallControllerStateTest {
                 messageService,
                 voiceChannelService,
                 fcmService,
+                notificationService,
                 redisTemplate
         );
         ReflectionTestUtils.setField(controller, "ringingCallTtl", Duration.ofSeconds(75));

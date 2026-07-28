@@ -12,6 +12,7 @@ import iuh.fit.se.nextalk_be.repository.GroupRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.service.ChannelTaskActivityService;
+import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,7 @@ class ChannelTaskServiceImplTest {
     @Mock private MessageRepository messageRepository;
     @Mock private UserService userService;
     @Mock private ChannelTaskActivityService taskActivityService;
+    @Mock private NotificationService notificationService;
 
     private ChannelTaskServiceImpl service;
     private User owner;
@@ -58,7 +60,8 @@ class ChannelTaskServiceImplTest {
                 userRepository,
                 messageRepository,
                 userService,
-                taskActivityService);
+                taskActivityService,
+                notificationService);
 
         owner = User.builder().username("owner").email("owner@example.com").build();
         owner.setId("user-1");

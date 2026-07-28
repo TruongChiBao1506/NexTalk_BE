@@ -1,8 +1,9 @@
 package iuh.fit.se.nextalk_be.controller;
 
+import iuh.fit.se.nextalk_be.dto.request.UpdateNotificationActionRequest;
 import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
 import iuh.fit.se.nextalk_be.dto.response.NotificationResponse;
-import iuh.fit.se.nextalk_be.entity.Notification;
+import iuh.fit.se.nextalk_be.entity.NotificationActionStatus;
 import iuh.fit.se.nextalk_be.service.NotificationService;
 
 
@@ -41,5 +42,39 @@ public class NotificationController {
     public ResponseEntity<ApiResponse<Long>> getUnreadCount() {
         long count = notificationService.countUnread();
         return ResponseEntity.ok(ApiResponse.success(count, "Unread count retrieved successfully"));
+    }
+
+    @GetMapping("/action-items")
+    @Operation(summary = "Get action inbox items without changing conversation unread state")
+    public ResponseEntity<ApiResponse<List<NotificationResponse>>> getActionItems(
+            @RequestParam(value = "status", required = false) NotificationActionStatus status
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(
+                notificationService.getMyActionItems(status),
+                "Action items retrieved successfully"
+        ));
+    }
+
+    @PutMapping("/{id}/action")
+    @Operation(summary = "Resolve, dismiss, or snooze an action inbox item")
+    public ResponseEntity<ApiResponse<NotificationResponse>> updateAction(
+            @PathVariable("id") String id,
+            @RequestBody UpdateNotificationActionRequest request
+    ) {
+        NotificationResponse response = notificationService.updateActionStatus(
+                id,
+                request.getStatus(),
+                request.getSnoozedUntil()
+        );
+        return ResponseEntity.ok(ApiResponse.success(response, "Action item updated successfully"));
+    }
+
+    @GetMapping("/action-items/pending-count")
+    @Operation(summary = "Get pending action inbox count")
+    public ResponseEntity<ApiResponse<Long>> getPendingActionCount() {
+        return ResponseEntity.ok(ApiResponse.success(
+                notificationService.countPendingActions(),
+                "Pending action count retrieved successfully"
+        ));
     }
 }

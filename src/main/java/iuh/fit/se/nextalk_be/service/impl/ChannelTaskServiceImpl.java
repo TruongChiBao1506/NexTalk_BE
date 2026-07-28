@@ -16,6 +16,7 @@ import iuh.fit.se.nextalk_be.repository.GroupRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.service.ChannelTaskService;
+import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -45,6 +46,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
     private final MessageRepository messageRepository;
     private final UserService userService;
     private final iuh.fit.se.nextalk_be.service.ChannelTaskActivityService taskActivityService;
+    private final NotificationService notificationService;
 
     @Override
     public List<ChannelTaskResponse> getTasks(String groupId, String channelId, boolean archived) {
@@ -127,6 +129,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         try {
             taskActivityService.logActivity(groupId, channelId, savedTask.getId(), currentUser, iuh.fit.se.nextalk_be.entity.TaskActivityType.TASK_CREATED, "đã tạo công việc \"" + savedTask.getTitle() + "\".");
         } catch (Exception ignored) {}
+        notifyNewAssignees(savedTask, currentUser, Set.of());
 
         return mapToResponse(savedTask);
     }
@@ -154,7 +157,11 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         if (request.getDueAt() != null) {
             task.setDueAt(parseOptionalDateTime(request.getDueAt(), "Invalid due date"));
         }
-        if (request.getAssigneeIds() != null) {
+        Set<String> previousAssigneeIds = task.getAssignees() == null
+                ? Set.of()
+                : task.getAssignees().stream().map(User::getId).collect(Collectors.toSet());
+        boolean assigneesChanged = request.getAssigneeIds() != null;
+        if (assigneesChanged) {
             task.setAssignees(resolveAssignees(groupId, channel, request.getAssigneeIds()));
         }
         if (request.getStatus() != null) {
@@ -190,7 +197,11 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
 
         validateSchedule(task);
         task.setUpdatedAt(LocalDateTime.now());
-        return mapToResponse(channelTaskRepository.save(task));
+        ChannelTask savedTask = channelTaskRepository.save(task);
+        if (assigneesChanged) {
+            notifyNewAssignees(savedTask, currentUser, previousAssigneeIds);
+        }
+        return mapToResponse(savedTask);
     }
 
     @Override
@@ -333,6 +344,36 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
             assignees.add(user);
         }
         return assignees;
+    }
+
+    private void notifyNewAssignees(ChannelTask task, User actor, Set<String> previousAssigneeIds) {
+        if (task.getAssignees() == null || task.getAssignees().isEmpty()) {
+            return;
+        }
+
+        String conversationId = task.getChannel() != null && task.getChannel().getConversation() != null
+                ? task.getChannel().getConversation().getId()
+                : null;
+        String channelName = task.getChannel() != null ? task.getChannel().getName() : "công việc";
+        for (User assignee : task.getAssignees()) {
+            if (assignee == null
+                    || assignee.getId() == null
+                    || assignee.getId().equals(actor.getId())
+                    || previousAssigneeIds.contains(assignee.getId())) {
+                continue;
+            }
+            try {
+                notificationService.createAndSend(
+                        assignee,
+                        NotificationType.TASK_ASSIGNED,
+                        actor.getUsername() + " đã giao bạn công việc \"" + task.getTitle() + "\" trong #" + channelName,
+                        conversationId,
+                        task.getId()
+                );
+            } catch (Exception ignored) {
+                // Task creation must still succeed if notification delivery is unavailable.
+            }
+        }
     }
 
     private Set<String> getAllowedUserIds(String groupId, Channel channel) {

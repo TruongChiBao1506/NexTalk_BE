@@ -3,6 +3,7 @@ import iuh.fit.se.nextalk_be.service.NotificationService;
 
 import iuh.fit.se.nextalk_be.dto.response.NotificationResponse;
 import iuh.fit.se.nextalk_be.entity.Notification;
+import iuh.fit.se.nextalk_be.entity.NotificationActionStatus;
 import iuh.fit.se.nextalk_be.entity.NotificationType;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
@@ -33,12 +34,25 @@ public class NotificationServiceImpl implements NotificationService {
      */
     // @Transactional
     public NotificationResponse createAndSend(User recipient, NotificationType type, String content, String referenceId) {
+        return createAndSend(recipient, type, content, referenceId, null);
+    }
+
+    @Override
+    public NotificationResponse createAndSend(
+            User recipient,
+            NotificationType type,
+            String content,
+            String referenceId,
+            String secondaryReferenceId
+    ) {
         Notification notification = Notification.builder()
                 .recipient(recipient)
                 .type(type)
                 .content(content)
                 .referenceId(referenceId)
+                .secondaryReferenceId(secondaryReferenceId)
                 .isRead(false)
+                .actionStatus(isActionableType(type) ? NotificationActionStatus.PENDING : null)
                 .build();
 
         Notification saved = notificationRepository.save(notification);
@@ -118,10 +132,84 @@ public class NotificationServiceImpl implements NotificationService {
         return count;
     }
 
+    @Override
+    public List<NotificationResponse> getMyActionItems(NotificationActionStatus status) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        String userId = currentUser.getId();
+        org.bson.types.ObjectId userObjectId = (userId != null && org.bson.types.ObjectId.isValid(userId))
+                ? new org.bson.types.ObjectId(userId)
+                : null;
+        LocalDateTime now = LocalDateTime.now();
+
+        return notificationRepository.findActionItemsByRecipientUser(userId, userObjectId).stream()
+                .filter(notification -> status == null || notification.getActionStatus() == status)
+                .filter(notification -> status != NotificationActionStatus.PENDING
+                        || notification.getSnoozedUntil() == null
+                        || !notification.getSnoozedUntil().isAfter(now))
+                .limit(100)
+                .map(this::mapToResponse)
+                .toList();
+    }
+
+    @Override
+    public NotificationResponse updateActionStatus(
+            String notificationId,
+            NotificationActionStatus status,
+            LocalDateTime snoozedUntil
+    ) {
+        if (status == null) {
+            throw new IllegalArgumentException("Action status is required");
+        }
+
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Notification notification = notificationRepository.findById(notificationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Notification not found: " + notificationId));
+
+        if (notification.getRecipient() == null
+                || !notification.getRecipient().getId().equals(currentUser.getId())
+                || notification.getActionStatus() == null) {
+            throw new ResourceNotFoundException("Action item not found: " + notificationId);
+        }
+
+        notification.setActionStatus(status);
+        notification.setSnoozedUntil(status == NotificationActionStatus.PENDING ? snoozedUntil : null);
+        notification.setUpdatedAt(LocalDateTime.now());
+        return mapToResponse(notificationRepository.save(notification));
+    }
+
+    @Override
+    public long countPendingActions() {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        String userId = currentUser.getId();
+        org.bson.types.ObjectId userObjectId = (userId != null && org.bson.types.ObjectId.isValid(userId))
+                ? new org.bson.types.ObjectId(userId)
+                : null;
+        LocalDateTime now = LocalDateTime.now();
+
+        return notificationRepository.findActionItemsByRecipientUser(userId, userObjectId).stream()
+                .filter(notification -> notification.getActionStatus() == NotificationActionStatus.PENDING)
+                .filter(notification -> notification.getSnoozedUntil() == null
+                        || !notification.getSnoozedUntil().isAfter(now))
+                .count();
+    }
+
     private boolean shouldSendPush(NotificationType type) {
         return type != NotificationType.NEW_MESSAGE
                 && type != NotificationType.MENTION
-                && type != NotificationType.REMINDER;
+                && type != NotificationType.REMINDER
+                && type != NotificationType.TASK_ASSIGNED
+                && type != NotificationType.TASK_DUE;
+    }
+
+    private boolean isActionableType(NotificationType type) {
+        return type == NotificationType.MENTION
+                || type == NotificationType.FRIEND_REQUEST
+                || type == NotificationType.GROUP_INVITE
+                || type == NotificationType.CHAT_REQUEST
+                || type == NotificationType.REMINDER
+                || type == NotificationType.TASK_ASSIGNED
+                || type == NotificationType.TASK_DUE
+                || type == NotificationType.MISSED_CALL;
     }
 
     private NotificationResponse mapToResponse(Notification notification) {
@@ -130,7 +218,10 @@ public class NotificationServiceImpl implements NotificationService {
                 .type(notification.getType().name())
                 .content(notification.getContent())
                 .referenceId(notification.getReferenceId())
+                .secondaryReferenceId(notification.getSecondaryReferenceId())
                 .isRead(notification.isRead())
+                .actionStatus(notification.getActionStatus() != null ? notification.getActionStatus().name() : null)
+                .snoozedUntil(notification.getSnoozedUntil())
                 .createdAt(notification.getCreatedAt() != null ? notification.getCreatedAt() : LocalDateTime.now())
                 .build();
     }

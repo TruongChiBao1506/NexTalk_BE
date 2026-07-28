@@ -9,6 +9,7 @@ import iuh.fit.se.nextalk_be.entity.ChannelType;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.ConversationType;
 import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
+import iuh.fit.se.nextalk_be.entity.NotificationType;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.event.VoiceChannelEvent;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
@@ -19,6 +20,7 @@ import iuh.fit.se.nextalk_be.repository.FriendshipRepository;
 import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.service.MessageService;
+import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import iuh.fit.se.nextalk_be.service.VoiceChannelService;
 import iuh.fit.se.nextalk_be.service.FCMService;
@@ -80,6 +82,7 @@ public class CallController {
     private final MessageService messageService;
     private final VoiceChannelService voiceChannelService;
     private final FCMService fcmService;
+    private final NotificationService notificationService;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final Map<String, CallSession> activeCallSessions = new ConcurrentHashMap<>();
@@ -627,6 +630,26 @@ public class CallController {
                 .toList());
 
         messageService.createAndBroadcastCallHistoryMessage(conversation, actor, content, metadata);
+
+        if ("MISSED".equals(status)) {
+            participants.stream()
+                    .filter(participant -> !participant.getId().equals(actor.getId()))
+                    .forEach(participant -> {
+                        try {
+                            notificationService.createAndSend(
+                                    participant,
+                                    NotificationType.MISSED_CALL,
+                                    groupCall
+                                            ? "Bạn có một cuộc gọi nhóm bị lỡ"
+                                            : "Bạn có một cuộc gọi nhỡ từ " + actor.getUsername(),
+                                    conversation.getId(),
+                                    session.callId
+                            );
+                        } catch (Exception ignored) {
+                            // Call history must still be saved if notification delivery fails.
+                        }
+                    });
+        }
     }
 
     private Map<String, Object> toParticipantMetadata(User user) {
