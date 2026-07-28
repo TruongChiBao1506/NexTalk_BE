@@ -9,6 +9,7 @@ import java.util.List;
 
 public interface ChannelTaskService {
     List<ChannelTaskResponse> getTasks(String groupId, String channelId, boolean archived);
+    List<ChannelTaskResponse> getMyTasks(boolean archived);
     ChannelTaskResponse createTask(String groupId, String channelId, CreateChannelTaskRequest request);
     ChannelTaskResponse updateTask(String groupId, String channelId, String taskId, UpdateChannelTaskRequest request);
     ChannelTaskResponse updateStatus(String groupId, String channelId, String taskId, ChannelTaskStatus status);

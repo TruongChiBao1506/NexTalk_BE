@@ -126,6 +126,19 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
                 String groupId = task.getGroup().getId();
                 String channelId = task.getChannel().getId();
 
+                if (task.getReminderAt() != null
+                        && !task.isReminderSent()
+                        && !task.getReminderAt().isAfter(now)) {
+                    notifyTaskDeadline(
+                            task,
+                            "Đến giờ nhắc công việc \"" + task.getTitle() + "\"",
+                            NotificationType.TASK_DUE
+                    );
+                    task.setReminderSent(true);
+                    task.setUpdatedAt(now);
+                    taskRepository.save(task);
+                }
+
                 // Check if overdue
                 if (task.getDueAt().isBefore(now)) {
                     boolean alreadyOverdueLogged = activityRepository
@@ -174,6 +187,9 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
         Set<User> recipients = new HashSet<>();
         if (task.getAssignees() != null) {
             recipients.addAll(task.getAssignees());
+        }
+        if (task.getWatchers() != null) {
+            recipients.addAll(task.getWatchers());
         }
         if (recipients.isEmpty() && task.getCreatedBy() != null) {
             recipients.add(task.getCreatedBy());

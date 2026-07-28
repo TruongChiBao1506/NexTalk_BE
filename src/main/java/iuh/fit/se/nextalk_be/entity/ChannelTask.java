@@ -48,6 +48,28 @@ public class ChannelTask extends BaseEntity {
     private Set<User> assignees = new HashSet<>();
 
     @Builder.Default
+    @DocumentReference(lazy = true)
+    private Set<User> watchers = new HashSet<>();
+
+    @Builder.Default
+    private Set<String> dependencyTaskIds = new HashSet<>();
+
+    private LocalDateTime reminderAt;
+
+    @Builder.Default
+    private boolean reminderSent = false;
+
+    @Builder.Default
+    private TaskRecurrence recurrence = TaskRecurrence.NONE;
+
+    @Builder.Default
+    private boolean recurrenceSpawned = false;
+
+    private String recurrenceSourceTaskId;
+
+    private String nextRecurringTaskId;
+
+    @Builder.Default
     private boolean isPinned = false;
 
     private LocalDateTime pinnedAt;

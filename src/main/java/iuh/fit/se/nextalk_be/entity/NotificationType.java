@@ -9,5 +9,6 @@ public enum NotificationType {
     REMINDER,
     TASK_ASSIGNED,
     TASK_DUE,
+    TASK_UPDATED,
     MISSED_CALL
 }

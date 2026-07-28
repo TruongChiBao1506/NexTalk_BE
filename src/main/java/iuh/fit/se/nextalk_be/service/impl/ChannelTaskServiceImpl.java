@@ -73,6 +73,21 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
     }
 
     @Override
+    public List<ChannelTaskResponse> getMyTasks(boolean archived) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        String userId = currentUser.getId();
+        org.bson.types.ObjectId userObjectId = userId != null && org.bson.types.ObjectId.isValid(userId)
+                ? new org.bson.types.ObjectId(userId)
+                : null;
+        List<ChannelTask> myTasks = archived
+                ? channelTaskRepository.findMyArchivedTasks(userId, userObjectId)
+                : channelTaskRepository.findMyActiveTasks(userId, userObjectId);
+        return myTasks.stream()
+                .map(this::mapToResponse)
+                .toList();
+    }
+
+    @Override
     public ChannelTaskResponse createTask(String groupId, String channelId, CreateChannelTaskRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Channel channel = getAccessibleChannel(groupId, channelId, currentUser);
@@ -89,6 +104,10 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 .startAt(parseOptionalDateTime(request.getStartAt(), "Invalid start date"))
                 .dueAt(parseOptionalDateTime(request.getDueAt(), "Invalid due date"))
                 .assignees(resolveAssignees(groupId, channel, request.getAssigneeIds()))
+                .watchers(resolveAssignees(groupId, channel, request.getWatcherIds()))
+                .dependencyTaskIds(resolveDependencyIds(channel, null, request.getDependencyTaskIds()))
+                .reminderAt(parseOptionalDateTime(request.getReminderAt(), "Invalid reminder date"))
+                .recurrence(request.getRecurrence() != null ? request.getRecurrence() : TaskRecurrence.NONE)
                 .build();
 
         if (request.getSourceMessageId() != null && !request.getSourceMessageId().isBlank()) {
@@ -157,6 +176,15 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         if (request.getDueAt() != null) {
             task.setDueAt(parseOptionalDateTime(request.getDueAt(), "Invalid due date"));
         }
+        if (request.getReminderAt() != null) {
+            task.setReminderAt(parseOptionalDateTime(request.getReminderAt(), "Invalid reminder date"));
+            task.setReminderSent(false);
+        }
+        if (request.getRecurrence() != null) {
+            task.setRecurrence(request.getRecurrence());
+            task.setRecurrenceSpawned(false);
+            task.setNextRecurringTaskId(null);
+        }
         Set<String> previousAssigneeIds = task.getAssignees() == null
                 ? Set.of()
                 : task.getAssignees().stream().map(User::getId).collect(Collectors.toSet());
@@ -164,7 +192,14 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         if (assigneesChanged) {
             task.setAssignees(resolveAssignees(groupId, channel, request.getAssigneeIds()));
         }
+        if (request.getWatcherIds() != null) {
+            task.setWatchers(resolveAssignees(groupId, channel, request.getWatcherIds()));
+        }
+        if (request.getDependencyTaskIds() != null) {
+            task.setDependencyTaskIds(resolveDependencyIds(channel, task.getId(), request.getDependencyTaskIds()));
+        }
         if (request.getStatus() != null) {
+            ensureDependenciesCompleted(task, request.getStatus());
             applyStatus(task, request.getStatus());
         }
         if (request.getSubtasks() != null) {
@@ -212,12 +247,18 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         ensureTaskIsActive(task);
         ensureCanModifyTask(groupId, task, currentUser);
 
+        ensureDependenciesCompleted(task, status);
         applyStatus(task, status);
         task.setUpdatedAt(LocalDateTime.now());
+        ChannelTask savedTask = channelTaskRepository.save(task);
+        if (status == ChannelTaskStatus.DONE) {
+            savedTask = spawnNextRecurringTask(savedTask, currentUser);
+        }
         try {
             taskActivityService.logActivity(groupId, channelId, task.getId(), currentUser, iuh.fit.se.nextalk_be.entity.TaskActivityType.STATUS_CHANGED, "đã chuyển trạng thái công việc \"" + task.getTitle() + "\" sang " + status.name() + ".");
         } catch (Exception ignored) {}
-        return mapToResponse(channelTaskRepository.save(task));
+        notifyWatchers(savedTask, currentUser, "Công việc \"" + savedTask.getTitle() + "\" đã chuyển sang " + status.name());
+        return mapToResponse(savedTask);
     }
 
     @Override
@@ -346,6 +387,42 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         return assignees;
     }
 
+    private Set<String> resolveDependencyIds(Channel channel, String currentTaskId, Set<String> dependencyTaskIds) {
+        if (dependencyTaskIds == null || dependencyTaskIds.isEmpty()) {
+            return new HashSet<>();
+        }
+
+        Set<String> resolved = new HashSet<>();
+        for (String dependencyId : dependencyTaskIds) {
+            if (dependencyId == null || dependencyId.isBlank()) continue;
+            if (dependencyId.equals(currentTaskId)) {
+                throw new BadRequestException("A task cannot depend on itself");
+            }
+            ChannelTask dependency = getTaskInChannel(dependencyId, channel);
+            if (dependency.isArchived()) {
+                throw new BadRequestException("Archived tasks cannot be dependencies");
+            }
+            resolved.add(dependency.getId());
+        }
+        return resolved;
+    }
+
+    private void ensureDependenciesCompleted(ChannelTask task, ChannelTaskStatus nextStatus) {
+        if (nextStatus != ChannelTaskStatus.IN_PROGRESS && nextStatus != ChannelTaskStatus.DONE) {
+            return;
+        }
+        if (task.getDependencyTaskIds() == null || task.getDependencyTaskIds().isEmpty()) {
+            return;
+        }
+
+        List<ChannelTask> blockedBy = channelTaskRepository.findAllById(task.getDependencyTaskIds()).stream()
+                .filter(dependency -> dependency.getStatus() != ChannelTaskStatus.DONE)
+                .toList();
+        if (!blockedBy.isEmpty()) {
+            throw new BadRequestException("Complete dependency first: " + blockedBy.get(0).getTitle());
+        }
+    }
+
     private void notifyNewAssignees(ChannelTask task, User actor, Set<String> previousAssigneeIds) {
         if (task.getAssignees() == null || task.getAssignees().isEmpty()) {
             return;
@@ -374,6 +451,84 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 // Task creation must still succeed if notification delivery is unavailable.
             }
         }
+    }
+
+    private void notifyWatchers(ChannelTask task, User actor, String content) {
+        if (task.getWatchers() == null || task.getWatchers().isEmpty()) return;
+        String conversationId = task.getChannel() != null && task.getChannel().getConversation() != null
+                ? task.getChannel().getConversation().getId()
+                : null;
+        task.getWatchers().stream()
+                .filter(watcher -> watcher != null && !watcher.getId().equals(actor.getId()))
+                .forEach(watcher -> {
+                    try {
+                        notificationService.createAndSend(
+                                watcher,
+                                NotificationType.TASK_UPDATED,
+                                content,
+                                conversationId,
+                                task.getId()
+                        );
+                    } catch (Exception ignored) {
+                        // Updating a task must not fail because a watcher is offline.
+                    }
+                });
+    }
+
+    private ChannelTask spawnNextRecurringTask(ChannelTask completedTask, User actor) {
+        TaskRecurrence recurrence = completedTask.getRecurrence() != null
+                ? completedTask.getRecurrence()
+                : TaskRecurrence.NONE;
+        if (recurrence == TaskRecurrence.NONE || completedTask.isRecurrenceSpawned()) {
+            return completedTask;
+        }
+
+        ChannelTask nextTask = ChannelTask.builder()
+                .title(completedTask.getTitle())
+                .description(completedTask.getDescription())
+                .status(ChannelTaskStatus.TODO)
+                .priority(completedTask.getPriority())
+                .startAt(shiftRecurringDate(completedTask.getStartAt(), recurrence))
+                .dueAt(shiftRecurringDate(completedTask.getDueAt(), recurrence))
+                .group(completedTask.getGroup())
+                .channel(completedTask.getChannel())
+                .createdBy(completedTask.getCreatedBy())
+                .assignees(completedTask.getAssignees() != null ? new HashSet<>(completedTask.getAssignees()) : new HashSet<>())
+                .watchers(completedTask.getWatchers() != null ? new HashSet<>(completedTask.getWatchers()) : new HashSet<>())
+                .dependencyTaskIds(completedTask.getDependencyTaskIds() != null ? new HashSet<>(completedTask.getDependencyTaskIds()) : new HashSet<>())
+                .reminderAt(shiftRecurringDate(completedTask.getReminderAt(), recurrence))
+                .recurrence(recurrence)
+                .recurrenceSourceTaskId(completedTask.getId())
+                .subtasks(completedTask.getSubtasks() == null
+                        ? new java.util.ArrayList<>()
+                        : completedTask.getSubtasks().stream()
+                            .map(subtask -> Subtask.builder()
+                                    .id(UUID.randomUUID().toString())
+                                    .title(subtask.getTitle())
+                                    .isCompleted(false)
+                                    .build())
+                            .collect(Collectors.toList()))
+                .attachments(completedTask.getAttachments() != null
+                        ? new java.util.ArrayList<>(completedTask.getAttachments())
+                        : new java.util.ArrayList<>())
+                .build();
+
+        ChannelTask savedNextTask = channelTaskRepository.save(nextTask);
+        completedTask.setRecurrenceSpawned(true);
+        completedTask.setNextRecurringTaskId(savedNextTask.getId());
+        ChannelTask savedCompletedTask = channelTaskRepository.save(completedTask);
+        notifyNewAssignees(savedNextTask, actor, Set.of());
+        return savedCompletedTask;
+    }
+
+    private LocalDateTime shiftRecurringDate(LocalDateTime value, TaskRecurrence recurrence) {
+        if (value == null) return null;
+        return switch (recurrence) {
+            case DAILY -> value.plusDays(1);
+            case WEEKLY -> value.plusWeeks(1);
+            case MONTHLY -> value.plusMonths(1);
+            default -> value;
+        };
     }
 
     private Set<String> getAllowedUserIds(String groupId, Channel channel) {
@@ -483,13 +638,21 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         if (task.getStartAt() != null && task.getDueAt() != null && task.getDueAt().isBefore(task.getStartAt())) {
             throw new BadRequestException("Due date must not be before start date");
         }
+        if (task.getReminderAt() != null && task.getDueAt() != null && task.getReminderAt().isAfter(task.getDueAt())) {
+            throw new BadRequestException("Reminder must not be after due date");
+        }
     }
 
     private ChannelTaskResponse mapToResponse(ChannelTask task) {
         return ChannelTaskResponse.builder()
                 .id(task.getId())
                 .groupId(task.getGroup() != null ? task.getGroup().getId() : null)
+                .groupName(task.getGroup() != null ? task.getGroup().getName() : null)
                 .channelId(task.getChannel() != null ? task.getChannel().getId() : null)
+                .channelName(task.getChannel() != null ? task.getChannel().getName() : null)
+                .conversationId(task.getChannel() != null && task.getChannel().getConversation() != null
+                        ? task.getChannel().getConversation().getId()
+                        : null)
                 .title(task.getTitle())
                 .description(task.getDescription())
                 .status(task.getStatus())
@@ -497,8 +660,14 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 .createdById(task.getCreatedBy() != null ? task.getCreatedBy().getId() : null)
                 .createdByUsername(task.getCreatedBy() != null ? task.getCreatedBy().getUsername() : null)
                 .assignees(mapAssignees(task.getAssignees()))
+                .watchers(mapAssignees(task.getWatchers()))
+                .dependencies(mapDependencies(task.getDependencyTaskIds()))
                 .startAt(task.getStartAt() != null ? task.getStartAt().atZone(ZoneId.systemDefault()).toInstant().toString() : null)
                 .dueAt(task.getDueAt() != null ? task.getDueAt().atZone(ZoneId.systemDefault()).toInstant().toString() : null)
+                .reminderAt(task.getReminderAt() != null ? task.getReminderAt().atZone(ZoneId.systemDefault()).toInstant().toString() : null)
+                .recurrence((task.getRecurrence() != null ? task.getRecurrence() : TaskRecurrence.NONE).name())
+                .recurrenceSourceTaskId(task.getRecurrenceSourceTaskId())
+                .nextRecurringTaskId(task.getNextRecurringTaskId())
                 .completedAt(task.getCompletedAt())
                 .subtasks(mapSubtasks(task.getSubtasks()))
                 .attachments(mapAttachments(task.getAttachments()))
@@ -512,6 +681,19 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 .createdAt(task.getCreatedAt())
                 .updatedAt(task.getUpdatedAt())
                 .build();
+    }
+
+    private List<iuh.fit.se.nextalk_be.dto.response.TaskDependencyResponse> mapDependencies(Set<String> dependencyTaskIds) {
+        if (dependencyTaskIds == null || dependencyTaskIds.isEmpty()) {
+            return List.of();
+        }
+        return channelTaskRepository.findAllById(dependencyTaskIds).stream()
+                .map(task -> iuh.fit.se.nextalk_be.dto.response.TaskDependencyResponse.builder()
+                        .taskId(task.getId())
+                        .title(task.getTitle())
+                        .status(task.getStatus())
+                        .build())
+                .toList();
     }
 
     private TaskSourceMessage resolveSourceMessage(Channel channel, User currentUser, String sourceMessageId) {

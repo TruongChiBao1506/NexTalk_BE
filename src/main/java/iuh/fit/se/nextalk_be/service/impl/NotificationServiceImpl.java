@@ -198,7 +198,8 @@ public class NotificationServiceImpl implements NotificationService {
                 && type != NotificationType.MENTION
                 && type != NotificationType.REMINDER
                 && type != NotificationType.TASK_ASSIGNED
-                && type != NotificationType.TASK_DUE;
+                && type != NotificationType.TASK_DUE
+                && type != NotificationType.TASK_UPDATED;
     }
 
     private boolean isActionableType(NotificationType type) {
@@ -209,6 +210,7 @@ public class NotificationServiceImpl implements NotificationService {
                 || type == NotificationType.REMINDER
                 || type == NotificationType.TASK_ASSIGNED
                 || type == NotificationType.TASK_DUE
+                || type == NotificationType.TASK_UPDATED
                 || type == NotificationType.MISSED_CALL;
     }
 

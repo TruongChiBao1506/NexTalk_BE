@@ -15,7 +15,10 @@ import java.util.List;
 public class ChannelTaskResponse {
     private String id;
     private String groupId;
+    private String groupName;
     private String channelId;
+    private String channelName;
+    private String conversationId;
     private String title;
     private String description;
     private ChannelTaskStatus status;
@@ -23,8 +26,14 @@ public class ChannelTaskResponse {
     private String createdById;
     private String createdByUsername;
     private List<ChannelTaskAssigneeResponse> assignees;
+    private List<ChannelTaskAssigneeResponse> watchers;
+    private List<TaskDependencyResponse> dependencies;
     private String startAt;
     private String dueAt;
+    private String reminderAt;
+    private String recurrence;
+    private String recurrenceSourceTaskId;
+    private String nextRecurringTaskId;
     private LocalDateTime completedAt;
     private List<SubtaskResponse> subtasks;
     private List<TaskAttachmentResponse> attachments;

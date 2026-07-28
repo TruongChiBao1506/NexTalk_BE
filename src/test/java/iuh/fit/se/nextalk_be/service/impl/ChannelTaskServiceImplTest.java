@@ -2,9 +2,12 @@ package iuh.fit.se.nextalk_be.service.impl;
 
 import iuh.fit.se.nextalk_be.entity.Channel;
 import iuh.fit.se.nextalk_be.entity.ChannelTask;
+import iuh.fit.se.nextalk_be.entity.ChannelTaskStatus;
 import iuh.fit.se.nextalk_be.entity.Group;
 import iuh.fit.se.nextalk_be.entity.TaskActivityType;
+import iuh.fit.se.nextalk_be.entity.TaskRecurrence;
 import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.repository.ChannelRepository;
 import iuh.fit.se.nextalk_be.repository.ChannelTaskRepository;
 import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
@@ -22,11 +25,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.time.LocalDateTime;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -132,5 +139,67 @@ class ChannelTaskServiceImplTest {
                 eq(owner),
                 eq(TaskActivityType.TASK_RESTORED),
                 any(String.class));
+    }
+
+    @Test
+    void taskCannotStartUntilDependenciesAreCompleted() {
+        ChannelTask dependency = ChannelTask.builder()
+                .title("Thiết kế")
+                .group(group)
+                .channel(channel)
+                .createdBy(owner)
+                .status(ChannelTaskStatus.IN_PROGRESS)
+                .build();
+        dependency.setId("dependency-1");
+        ChannelTask task = ChannelTask.builder()
+                .title("Triển khai")
+                .group(group)
+                .channel(channel)
+                .createdBy(owner)
+                .dependencyTaskIds(Set.of(dependency.getId()))
+                .build();
+        task.setId("task-1");
+
+        when(channelTaskRepository.findById(task.getId())).thenReturn(Optional.of(task));
+        when(channelTaskRepository.findAllById(task.getDependencyTaskIds())).thenReturn(List.of(dependency));
+
+        assertThrows(
+                BadRequestException.class,
+                () -> service.updateStatus(group.getId(), channel.getId(), task.getId(), ChannelTaskStatus.IN_PROGRESS)
+        );
+    }
+
+    @Test
+    void completingRecurringTaskCreatesNextOccurrence() {
+        LocalDateTime dueAt = LocalDateTime.of(2026, 7, 30, 9, 0);
+        ChannelTask task = ChannelTask.builder()
+                .title("Daily standup")
+                .group(group)
+                .channel(channel)
+                .createdBy(owner)
+                .status(ChannelTaskStatus.IN_PROGRESS)
+                .dueAt(dueAt)
+                .recurrence(TaskRecurrence.DAILY)
+                .build();
+        task.setId("task-1");
+
+        when(channelTaskRepository.findById(task.getId())).thenReturn(Optional.of(task));
+        when(channelTaskRepository.save(any(ChannelTask.class))).thenAnswer(invocation -> {
+            ChannelTask saved = invocation.getArgument(0);
+            if (saved.getId() == null) saved.setId("task-2");
+            return saved;
+        });
+
+        var response = service.updateStatus(
+                group.getId(),
+                channel.getId(),
+                task.getId(),
+                ChannelTaskStatus.DONE
+        );
+
+        assertEquals("task-2", response.getNextRecurringTaskId());
+        assertTrue(task.isRecurrenceSpawned());
+        assertEquals(ChannelTaskStatus.DONE, response.getStatus());
+        assertNotNull(response.getCompletedAt());
     }
 }
