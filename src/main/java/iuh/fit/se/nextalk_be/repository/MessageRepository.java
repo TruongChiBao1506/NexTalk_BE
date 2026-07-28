@@ -72,4 +72,8 @@ public interface MessageRepository extends MongoRepository<Message, String> {
             String senderId,
             String clientMessageId
     );
+
+    @Query("{'expiresAt': {'$lte': ?0}, 'isRecalled': false}")
+    List<Message> findExpiredMessages(LocalDateTime now);
 }
+

@@ -309,7 +309,10 @@ public class MessageServiceImpl implements MessageService {
 
         Message message = Message.builder()
                 .conversation(conversation)
+                .conversationId(conversation.getId())
                 .sender(currentUser)
+                .senderId(currentUser.getId())
+                .senderUsername(currentUser.getUsername())
                 .content(content)
                 .messageType(type)
                 .attachments(attachments)
@@ -318,8 +321,15 @@ public class MessageServiceImpl implements MessageService {
                 .forwardedFromSenderUsername(forwardedFromSenderUsername)
                 .metadata(metadata)
                 .build();
-        if (conversation.getSelfDestructSeconds() > 0) {
-            message.setExpiresAt(LocalDateTime.now().plusSeconds(conversation.getSelfDestructSeconds()));
+        Integer perMessageSelfDestruct = request.getSelfDestructSeconds();
+        if (perMessageSelfDestruct == null && request.getMetadata() != null && request.getMetadata().get("selfDestructSeconds") instanceof Number num) {
+            perMessageSelfDestruct = num.intValue();
+        }
+        int effectiveSelfDestruct = (perMessageSelfDestruct != null && perMessageSelfDestruct > 0)
+                ? perMessageSelfDestruct
+                : conversation.getSelfDestructSeconds();
+        if (effectiveSelfDestruct > 0) {
+            message.setExpiresAt(LocalDateTime.now().plusSeconds(effectiveSelfDestruct));
         }
 
         boolean triggersAiBot = shouldTriggerAiBot(message, conversation);
