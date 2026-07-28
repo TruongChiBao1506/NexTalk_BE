@@ -1,5 +1,6 @@
 package iuh.fit.se.nextalk_be.service.impl;
 import iuh.fit.se.nextalk_be.service.ConversationSummaryService;
+import iuh.fit.se.nextalk_be.service.GeminiMultimodalService;
 
 import iuh.fit.se.nextalk_be.dto.SummaryMessagePayload;
 import iuh.fit.se.nextalk_be.dto.request.ConversationSummaryRequest;
@@ -40,6 +41,7 @@ public class ConversationSummaryServiceImpl implements ConversationSummaryServic
     private final SimpMessagingTemplate messagingTemplate;
     private final RestTemplate restTemplate;
     private final RateLimitService rateLimitService;
+    private final GeminiMultimodalService geminiMultimodalService;
 
     @Value("${app.rate-limit.ai-summary.limit:3}")
     private int summaryRateLimit;
@@ -89,8 +91,9 @@ public class ConversationSummaryServiceImpl implements ConversationSummaryServic
                 .map(message -> SummaryMessagePayload.builder()
                         .senderId(message.getSender().getId())
                         .senderUsername(message.getSender().getUsername())
-                        .content(message.getContent().trim())
+                        .content(message.getContent() == null ? "" : message.getContent().trim())
                         .createdAt(message.getCreatedAt())
+                        .attachments(message.getAttachments() == null ? List.of() : message.getAttachments())
                         .build())
                 .toList();
 
@@ -153,9 +156,13 @@ public class ConversationSummaryServiceImpl implements ConversationSummaryServic
 
         StringBuilder transcript = new StringBuilder();
         for (SummaryMessagePayload message : request.getMessages()) {
+            String attachmentDescription = geminiMultimodalService.describeAttachments(message.getAttachments());
+            String content = message.getContent() == null ? "" : message.getContent().trim();
             transcript.append(message.getSenderUsername())
                     .append(": ")
-                    .append(message.getContent())
+                    .append(content)
+                    .append(content.isBlank() || attachmentDescription.isBlank() ? "" : " ")
+                    .append(attachmentDescription)
                     .append('\n');
         }
         String prompt = """
@@ -170,7 +177,7 @@ public class ConversationSummaryServiceImpl implements ConversationSummaryServic
         Map<String, Object> payload = Map.of(
                 "contents", List.of(Map.of(
                         "role", "user",
-                        "parts", List.of(Map.of("text", prompt))
+                        "parts", geminiMultimodalService.buildParts(prompt, request.getMessages())
                 )),
                 "generationConfig", Map.of(
                         "maxOutputTokens", maxOutputTokens
@@ -210,14 +217,11 @@ public class ConversationSummaryServiceImpl implements ConversationSummaryServic
         if (message.isRecalled() || message.getMessageType() == MessageType.SYSTEM) {
             return false;
         }
-        if (message.getMessageType() != MessageType.TEXT || message.getContent() == null) {
-            return false;
-        }
-        String content = message.getContent().trim();
-        if (content.isBlank()) {
-            return false;
-        }
-        return content.codePoints().anyMatch(Character::isLetterOrDigit);
+        String content = message.getContent() == null ? "" : message.getContent().trim();
+        boolean hasReadableText = message.getMessageType() == MessageType.TEXT
+                && content.codePoints().anyMatch(Character::isLetterOrDigit);
+        boolean hasAttachments = message.getAttachments() != null && !message.getAttachments().isEmpty();
+        return hasReadableText || hasAttachments;
     }
 
     private String extractSummary(Object body) {

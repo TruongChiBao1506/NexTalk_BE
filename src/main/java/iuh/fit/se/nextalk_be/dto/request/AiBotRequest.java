@@ -1,8 +1,10 @@
 package iuh.fit.se.nextalk_be.dto.request;
 
 import iuh.fit.se.nextalk_be.dto.SummaryMessagePayload;
+import iuh.fit.se.nextalk_be.entity.MessageAttachment;
 import lombok.*;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Getter
@@ -22,4 +24,7 @@ public class AiBotRequest {
     private String preferredModel;
     private String instruction;
     private List<SummaryMessagePayload> messages;
+
+    @Builder.Default
+    private List<MessageAttachment> triggerAttachments = new ArrayList<>();
 }

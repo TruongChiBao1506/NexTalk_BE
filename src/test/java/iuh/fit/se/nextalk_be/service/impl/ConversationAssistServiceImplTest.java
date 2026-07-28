@@ -12,6 +12,7 @@ import iuh.fit.se.nextalk_be.repository.FriendshipRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.UserService;
+import iuh.fit.se.nextalk_be.service.GeminiMultimodalService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -49,7 +50,8 @@ class ConversationAssistServiceImplTest {
                 userService,
                 mock(StringRedisTemplate.class),
                 mock(RestTemplate.class),
-                mock(RateLimitService.class)
+                mock(RateLimitService.class),
+                mock(GeminiMultimodalService.class)
         );
 
         requester = User.builder()

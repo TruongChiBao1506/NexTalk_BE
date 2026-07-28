@@ -1,6 +1,7 @@
 package iuh.fit.se.nextalk_be.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import iuh.fit.se.nextalk_be.dto.SummaryMessagePayload;
 import iuh.fit.se.nextalk_be.dto.response.BirthdayContextResponse;
 import iuh.fit.se.nextalk_be.dto.response.ReplySuggestionsResponse;
 import iuh.fit.se.nextalk_be.entity.BirthdayVisibility;
@@ -17,6 +18,7 @@ import iuh.fit.se.nextalk_be.repository.FriendshipRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.ConversationAssistService;
+import iuh.fit.se.nextalk_be.service.GeminiMultimodalService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.jsoup.Jsoup;
@@ -58,6 +60,7 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
     private final StringRedisTemplate redisTemplate;
     private final RestTemplate restTemplate;
     private final RateLimitService rateLimitService;
+    private final GeminiMultimodalService geminiMultimodalService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${app.ai-reply.gemini-api-key:}")
@@ -106,7 +109,7 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
 
                 Hội thoại:
                 """ + context.transcript();
-        List<String> suggestions = requestSuggestions(prompt);
+        List<String> suggestions = requestSuggestions(prompt, context.messages());
         writeCache(cacheKey, suggestions);
         return response(suggestions, context.lastMessageId(), false);
     }
@@ -173,7 +176,7 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
                 Hội thoại gần đây:
                 %s
                 """.formatted(birthday.getDisplayName(), context.transcript());
-        List<String> suggestions = requestSuggestions(prompt);
+        List<String> suggestions = requestSuggestions(prompt, context.messages());
         writeCache(cacheKey, suggestions);
         return response(suggestions, context.lastMessageId(), false);
     }
@@ -202,13 +205,15 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
 
         String lastMessageId = recent.get(0).getId();
         List<String> lines = new ArrayList<>();
+        List<SummaryMessagePayload> contextMessages = new ArrayList<>();
         for (int index = recent.size() - 1; index >= 0; index--) {
             Message message = recent.get(index);
             if (message.isRecalled() || message.getMessageType() == MessageType.SYSTEM) {
                 continue;
             }
             String content = Jsoup.parse(message.getContent() == null ? "" : message.getContent()).text().trim();
-            if (content.isBlank()) {
+            String attachmentDescription = geminiMultimodalService.describeAttachments(message.getAttachments());
+            if (content.isBlank() && attachmentDescription.isBlank()) {
                 continue;
             }
             String sender = Objects.equals(message.getSenderId(), requester.getId())
@@ -216,15 +221,25 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
                     ? "Tôi"
                     : firstNonBlank(message.getSenderUsername(),
                     message.getSender() == null ? null : message.getSender().getUsername(), "Người khác");
-            lines.add(sender + ": " + content);
+            String transcriptContent = content.isBlank()
+                    ? attachmentDescription
+                    : attachmentDescription.isBlank() ? content : content + " " + attachmentDescription;
+            lines.add(sender + ": " + transcriptContent);
+            contextMessages.add(SummaryMessagePayload.builder()
+                    .senderId(message.getSenderId())
+                    .senderUsername(sender)
+                    .content(content)
+                    .createdAt(message.getCreatedAt())
+                    .attachments(message.getAttachments() == null ? List.of() : message.getAttachments())
+                    .build());
         }
         if (lines.isEmpty()) {
-            throw new BadRequestException("Không có nội dung văn bản phù hợp để tạo gợi ý");
+            throw new BadRequestException("Không có nội dung phù hợp để tạo gợi ý");
         }
-        return new Context(lastMessageId, String.join("\n", lines));
+        return new Context(lastMessageId, String.join("\n", lines), contextMessages);
     }
 
-    private List<String> requestSuggestions(String prompt) {
+    private List<String> requestSuggestions(String prompt, List<SummaryMessagePayload> messages) {
         if (geminiApiKey == null || geminiApiKey.isBlank()) {
             throw new BadRequestException("Tính năng gợi ý AI chưa được cấu hình");
         }
@@ -242,7 +257,7 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
         Map<String, Object> payload = Map.of(
                 "contents", List.of(Map.of(
                         "role", "user",
-                        "parts", List.of(Map.of("text", prompt))
+                        "parts", geminiMultimodalService.buildParts(prompt, messages)
                 )),
                 "generationConfig", Map.of(
                         "maxOutputTokens", 2048,
@@ -398,6 +413,10 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
         return fallback;
     }
 
-    private record Context(String lastMessageId, String transcript) {
+    private record Context(
+            String lastMessageId,
+            String transcript,
+            List<SummaryMessagePayload> messages
+    ) {
     }
 }

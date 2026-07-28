@@ -17,6 +17,7 @@ import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.repository.MessageStatusRepository;
 import iuh.fit.se.nextalk_be.service.AiBotService;
 import iuh.fit.se.nextalk_be.service.ConversationSummaryService;
+import iuh.fit.se.nextalk_be.service.GeminiMultimodalService;
 import iuh.fit.se.nextalk_be.service.MessageReminderService;
 import iuh.fit.se.nextalk_be.service.MessageService;
 import lombok.RequiredArgsConstructor;
@@ -72,6 +73,7 @@ public class AiBotServiceImpl implements AiBotService {
     private final RestTemplate restTemplate;
     private final MessageReminderService messageReminderService;
     private final ConversationSummaryService conversationSummaryService;
+    private final GeminiMultimodalService geminiMultimodalService;
     private final ObjectProvider<MessageService> messageServiceProvider;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -161,7 +163,10 @@ public class AiBotServiceImpl implements AiBotService {
         Map<String, Object> payload = Map.of(
                 "contents", List.of(Map.of(
                         "role", "user",
-                        "parts", List.of(Map.of("text", buildRouterPrompt(request)))
+                        "parts", geminiMultimodalService.buildParts(
+                                buildRouterPrompt(request),
+                                geminiMessages(request)
+                        )
                 )),
                 "generationConfig", Map.of(
                         "maxOutputTokens", Math.min(maxOutputTokens, 1400),
@@ -381,13 +386,14 @@ public class AiBotServiceImpl implements AiBotService {
                 .findByConversationIdOrderByCreatedAtDesc(conversation.getId(), PageRequest.of(0, messageLimit))
                 .getContent()
                 .stream()
-                .filter(message -> isReadableText(message) && !message.getId().equals(triggerMessage.getId()))
+                .filter(message -> isReadableContext(message) && !message.getId().equals(triggerMessage.getId()))
                 .sorted(Comparator.comparing(Message::getCreatedAt))
                 .map(message -> SummaryMessagePayload.builder()
                         .senderId(message.getSender().getId())
                         .senderUsername(message.getSender().getUsername())
                         .content(stripHtml(message.getContent()).trim())
                         .createdAt(message.getCreatedAt())
+                        .attachments(message.getAttachments() == null ? List.of() : message.getAttachments())
                         .build())
                 .toList();
     }
@@ -411,6 +417,9 @@ public class AiBotServiceImpl implements AiBotService {
                 .preferredModel(preferredModel)
                 .instruction("Route user request to a safe NexTalk action or answer directly.")
                 .messages(contextMessages)
+                .triggerAttachments(triggerMessage.getAttachments() == null
+                        ? List.of()
+                        : triggerMessage.getAttachments())
                 .build();
     }
 
@@ -418,7 +427,10 @@ public class AiBotServiceImpl implements AiBotService {
         Map<String, Object> payload = Map.of(
                 "contents", List.of(Map.of(
                         "role", "user",
-                        "parts", List.of(Map.of("text", buildPrompt(request)))
+                        "parts", geminiMultimodalService.buildParts(
+                                buildPrompt(request),
+                                geminiMessages(request)
+                        )
                 )),
                 "generationConfig", Map.of(
                         "maxOutputTokens", maxOutputTokens
@@ -442,7 +454,7 @@ public class AiBotServiceImpl implements AiBotService {
                 contextBuilder
                         .append(message.getSenderUsername())
                         .append(": ")
-                        .append(message.getContent())
+                        .append(contextContent(message))
                         .append('\n');
             }
         }
@@ -486,7 +498,7 @@ public class AiBotServiceImpl implements AiBotService {
                 contextBuilder
                         .append(message.getSenderUsername())
                         .append(": ")
-                        .append(message.getContent())
+                        .append(contextContent(message))
                         .append('\n');
             }
         }
@@ -559,12 +571,36 @@ public class AiBotServiceImpl implements AiBotService {
         return answer.toString().trim();
     }
 
-    private boolean isReadableText(Message message) {
+    private boolean isReadableContext(Message message) {
         return message != null
                 && !message.isRecalled()
-                && message.getMessageType() == MessageType.TEXT
-                && message.getContent() != null
-                && !stripHtml(message.getContent()).isBlank();
+                && message.getMessageType() != MessageType.SYSTEM
+                && (!stripHtml(message.getContent()).isBlank()
+                || (message.getAttachments() != null && !message.getAttachments().isEmpty()));
+    }
+
+    private String contextContent(SummaryMessagePayload message) {
+        String content = message.getContent() == null ? "" : message.getContent().trim();
+        String attachments = geminiMultimodalService.describeAttachments(message.getAttachments());
+        if (content.isBlank()) return attachments;
+        if (attachments.isBlank()) return content;
+        return content + " " + attachments;
+    }
+
+    private List<SummaryMessagePayload> geminiMessages(AiBotRequest request) {
+        List<SummaryMessagePayload> messages = new ArrayList<>();
+        if (request.getMessages() != null) {
+            messages.addAll(request.getMessages());
+        }
+        if (request.getTriggerAttachments() != null && !request.getTriggerAttachments().isEmpty()) {
+            messages.add(SummaryMessagePayload.builder()
+                    .senderId(request.getRequestedByUserId())
+                    .senderUsername(request.getRequestedByUsername())
+                    .content(request.getQuestion())
+                    .attachments(request.getTriggerAttachments())
+                    .build());
+        }
+        return messages;
     }
 
     private String stripHtml(String value) {
