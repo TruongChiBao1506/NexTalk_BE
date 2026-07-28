@@ -686,7 +686,7 @@ public class MessageServiceImpl implements MessageService {
         long mappingStartedAt = System.nanoTime();
         List<MessageResponse> content = mapMessagesToResponses(messages.getContent());
         content = content.stream()
-                .filter(message -> message.getExpiresAt() == null || message.getExpiresAt().isAfter(LocalDateTime.now()))
+                .filter(message -> message.isRecalled() || message.getExpiresAt() == null || message.getExpiresAt().isAfter(LocalDateTime.now()))
                 .toList();
         long estimatedTotal = pageable.getOffset() + content.size() + (messages.hasNext() ? 1 : 0);
         log.debug("Message history timing conversation={} lookupMs={} queryMs={} mapMs={} count={}", conversationId,
@@ -761,7 +761,7 @@ public class MessageServiceImpl implements MessageService {
         List<Message> visibleChanges = changesById.values().stream()
                 .filter(message -> message.getDeletedByUsers() == null
                         || !message.getDeletedByUsers().contains(currentUser.getId()))
-                .filter(message -> message.getExpiresAt() == null || message.getExpiresAt().isAfter(now))
+                .filter(message -> message.isRecalled() || message.getExpiresAt() == null || message.getExpiresAt().isAfter(now))
                 .sorted(Comparator.comparing(
                         Message::getCreatedAt,
                         Comparator.nullsLast(Comparator.reverseOrder())))
@@ -787,7 +787,7 @@ public class MessageServiceImpl implements MessageService {
         );
         LocalDateTime now = LocalDateTime.now();
         List<MessageResponse> messages = mapMessagesToResponses(snapshot.getContent()).stream()
-                .filter(message -> message.getExpiresAt() == null || message.getExpiresAt().isAfter(now))
+                .filter(message -> message.isRecalled() || message.getExpiresAt() == null || message.getExpiresAt().isAfter(now))
                 .toList();
         return MessageSyncResponse.builder()
                 .messages(messages)
@@ -1668,7 +1668,7 @@ public class MessageServiceImpl implements MessageService {
         List<Message> pinnedMessages = messageRepository.findByConversationIdAndIsPinnedTrue(conversationId);
         List<Message> filtered = pinnedMessages.stream()
                 .filter(m -> m.getDeletedByUsers() == null || !m.getDeletedByUsers().contains(currentUser.getId()))
-                .filter(m -> m.getExpiresAt() == null || m.getExpiresAt().isAfter(LocalDateTime.now()))
+                .filter(m -> m.isRecalled() || m.getExpiresAt() == null || m.getExpiresAt().isAfter(LocalDateTime.now()))
                 .toList();
         return mapMessagesToResponses(filtered);
     }
@@ -1813,7 +1813,7 @@ public class MessageServiceImpl implements MessageService {
 
         List<Message> filtered = messages.stream()
                 .filter(m -> m.getDeletedByUsers() == null || !m.getDeletedByUsers().contains(currentUser.getId()))
-                .filter(m -> m.getExpiresAt() == null || m.getExpiresAt().isAfter(LocalDateTime.now()))
+                .filter(m -> m.isRecalled() || m.getExpiresAt() == null || m.getExpiresAt().isAfter(LocalDateTime.now()))
                 .toList();
         return mapMessagesToResponses(filtered);
     }
