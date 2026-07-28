@@ -275,7 +275,8 @@ public class CallController {
 
         // Route the reply back to the caller while keeping receiverId as the responder.
         signal.setReceiverId(responder.getId());
-        if (registerCallResponse(signal, responder, null) != CallResponseOutcome.ACCEPTED) return;
+        CallResponseOutcome outcome = registerCallResponse(signal, responder, null);
+        if (outcome != CallResponseOutcome.ACCEPTED && outcome != CallResponseOutcome.DUPLICATE_SAME_DEVICE) return;
         String callerUsername = userRepository.findById(signal.getCallerId())
                 .map(User::getUsername)
                 .orElse(null);
@@ -831,10 +832,7 @@ public class CallController {
         signal.setSignalType("ANSWER");
         CallResponseOutcome outcome = registerCallResponse(
                 signal, responder, responseDeviceKey(respondingDeviceId, respondingDeviceToken));
-        if (outcome == CallResponseOutcome.DUPLICATE_SAME_DEVICE) {
-            return ResponseEntity.ok(ApiResponse.success(null, "Call response already handled by this device"));
-        }
-        if (outcome != CallResponseOutcome.ACCEPTED) {
+        if (outcome != CallResponseOutcome.ACCEPTED && outcome != CallResponseOutcome.DUPLICATE_SAME_DEVICE) {
             return ResponseEntity.status(409)
                     .body(ApiResponse.error("Call already handled on another device or expired"));
         }
@@ -851,7 +849,9 @@ public class CallController {
             );
         }
         notifyOtherResponderDevices(signal, responder, respondingDeviceToken, respondingDeviceId);
-        return ResponseEntity.ok(ApiResponse.success(null, "Call response handled"));
+        return ResponseEntity.ok(ApiResponse.success(null, outcome == CallResponseOutcome.DUPLICATE_SAME_DEVICE
+                ? "Call response already handled by this device"
+                : "Call response handled"));
     }
 
     private void notifyOtherResponderDevices(CallSignal original, User responder, String respondingDeviceToken) {
