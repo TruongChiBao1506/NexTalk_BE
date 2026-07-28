@@ -24,9 +24,10 @@ public class ChannelTaskController {
     @GetMapping
     public ResponseEntity<ApiResponse<List<ChannelTaskResponse>>> getTasks(
             @PathVariable String groupId,
-            @PathVariable String channelId) {
+            @PathVariable String channelId,
+            @RequestParam(defaultValue = "false") boolean archived) {
         return ResponseEntity.ok(ApiResponse.success(
-                channelTaskService.getTasks(groupId, channelId),
+                channelTaskService.getTasks(groupId, channelId, archived),
                 "Tasks retrieved successfully"));
     }
 
@@ -70,6 +71,17 @@ public class ChannelTaskController {
         return ResponseEntity.ok(ApiResponse.success(
                 channelTaskService.togglePinTask(groupId, channelId, taskId),
                 "Task pin status toggled successfully"));
+    }
+
+    @PatchMapping("/{taskId}/archive")
+    public ResponseEntity<ApiResponse<ChannelTaskResponse>> setArchived(
+            @PathVariable String groupId,
+            @PathVariable String channelId,
+            @PathVariable String taskId,
+            @RequestParam(defaultValue = "true") boolean archived) {
+        return ResponseEntity.ok(ApiResponse.success(
+                channelTaskService.setArchived(groupId, channelId, taskId, archived),
+                archived ? "Task archived successfully" : "Task restored successfully"));
     }
 
     @DeleteMapping("/{taskId}")

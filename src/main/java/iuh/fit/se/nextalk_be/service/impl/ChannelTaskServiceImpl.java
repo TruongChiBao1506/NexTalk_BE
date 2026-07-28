@@ -47,11 +47,15 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
     private final iuh.fit.se.nextalk_be.service.ChannelTaskActivityService taskActivityService;
 
     @Override
-    public List<ChannelTaskResponse> getTasks(String groupId, String channelId) {
+    public List<ChannelTaskResponse> getTasks(String groupId, String channelId, boolean archived) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Channel channel = getAccessibleChannel(groupId, channelId, currentUser);
 
-        return channelTaskRepository.findAllByChannelIdOrderByCreatedAtDesc(channel.getId())
+        List<ChannelTask> tasks = archived
+                ? channelTaskRepository.findAllByChannelIdAndArchivedTrueOrderByCreatedAtDesc(channel.getId())
+                : channelTaskRepository.findAllByChannelIdAndArchivedNotOrderByCreatedAtDesc(channel.getId(), true);
+
+        return tasks
                 .stream()
                 .sorted((t1, t2) -> {
                     if (t1.isPinned() != t2.isPinned()) {
@@ -132,6 +136,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Channel channel = getAccessibleChannel(groupId, channelId, currentUser);
         ChannelTask task = getTaskInChannel(taskId, channel);
+        ensureTaskIsActive(task);
         ensureCanModifyTask(groupId, task, currentUser);
 
         if (request.getTitle() != null) {
@@ -193,6 +198,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Channel channel = getAccessibleChannel(groupId, channelId, currentUser);
         ChannelTask task = getTaskInChannel(taskId, channel);
+        ensureTaskIsActive(task);
         ensureCanModifyTask(groupId, task, currentUser);
 
         applyStatus(task, status);
@@ -208,6 +214,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Channel channel = getAccessibleChannel(groupId, channelId, currentUser);
         ChannelTask task = getTaskInChannel(taskId, channel);
+        ensureTaskIsActive(task);
 
         ensureCanModifyTask(groupId, task, currentUser);
 
@@ -224,6 +231,44 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
             } catch (Exception ignored) {}
         });
 
+        return mapToResponse(saved);
+    }
+
+    @Override
+    public ChannelTaskResponse setArchived(String groupId, String channelId, String taskId, boolean archived) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Channel channel = getAccessibleChannel(groupId, channelId, currentUser);
+        ChannelTask task = getTaskInChannel(taskId, channel);
+
+        if (!isCreator(task, currentUser) && !isLeaderRole(getRole(channel.getGroup(), currentUser).orElse(null))) {
+            throw new UnauthorizedException("Only task creators or group leaders can archive tasks");
+        }
+
+        if (task.isArchived() == archived) {
+            return mapToResponse(task);
+        }
+
+        task.setArchived(archived);
+        task.setArchivedAt(archived ? LocalDateTime.now() : null);
+        task.setArchivedBy(archived ? currentUser : null);
+        task.setUpdatedAt(LocalDateTime.now());
+        if (archived) {
+            task.setPinned(false);
+            task.setPinnedAt(null);
+        }
+
+        ChannelTask saved = channelTaskRepository.save(task);
+        try {
+            taskActivityService.logActivity(
+                    groupId,
+                    channelId,
+                    taskId,
+                    currentUser,
+                    archived ? TaskActivityType.TASK_ARCHIVED : TaskActivityType.TASK_RESTORED,
+                    archived
+                            ? "đã lưu trữ công việc \"" + task.getTitle() + "\"."
+                            : "đã khôi phục công việc \"" + task.getTitle() + "\".");
+        } catch (Exception ignored) {}
         return mapToResponse(saved);
     }
 
@@ -312,6 +357,12 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
             return;
         }
         throw new UnauthorizedException("Only task creators, assignees, or group leaders can update tasks");
+    }
+
+    private void ensureTaskIsActive(ChannelTask task) {
+        if (task.isArchived()) {
+            throw new BadRequestException("Restore the task before modifying it");
+        }
     }
 
     private boolean isCreator(ChannelTask task, User user) {
@@ -413,6 +464,10 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 .sourceMessage(mapSourceMessage(task.getSourceMessage()))
                 .isPinned(task.isPinned())
                 .pinnedAt(task.getPinnedAt())
+                .isArchived(task.isArchived())
+                .archivedAt(task.getArchivedAt())
+                .archivedById(task.getArchivedBy() != null ? task.getArchivedBy().getId() : null)
+                .archivedByUsername(task.getArchivedBy() != null ? task.getArchivedBy().getUsername() : null)
                 .createdAt(task.getCreatedAt())
                 .updatedAt(task.getUpdatedAt())
                 .build();

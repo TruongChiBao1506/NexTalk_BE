@@ -32,6 +32,11 @@ public class ChannelTaskResponse {
     @com.fasterxml.jackson.annotation.JsonProperty("isPinned")
     private boolean isPinned;
     private LocalDateTime pinnedAt;
+    @com.fasterxml.jackson.annotation.JsonProperty("isArchived")
+    private boolean isArchived;
+    private LocalDateTime archivedAt;
+    private String archivedById;
+    private String archivedByUsername;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

@@ -15,7 +15,7 @@ import java.util.Set;
 @NoArgsConstructor
 @AllArgsConstructor
 @Document(collection = "channel_tasks")
-@CompoundIndex(name = "group_channel_status_due_idx", def = "{'group': 1, 'channel': 1, 'status': 1, 'dueAt': 1}")
+@CompoundIndex(name = "group_channel_archived_status_due_idx", def = "{'group': 1, 'channel': 1, 'archived': 1, 'status': 1, 'dueAt': 1}")
 public class ChannelTask extends BaseEntity {
 
     private String title;
@@ -51,6 +51,14 @@ public class ChannelTask extends BaseEntity {
     private boolean isPinned = false;
 
     private LocalDateTime pinnedAt;
+
+    @Builder.Default
+    private boolean archived = false;
+
+    private LocalDateTime archivedAt;
+
+    @DocumentReference(lazy = true)
+    private User archivedBy;
 
     @Builder.Default
     private java.util.List<Subtask> subtasks = new java.util.ArrayList<>();

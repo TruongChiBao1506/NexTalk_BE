@@ -8,7 +8,8 @@ import java.util.List;
 
 @Repository
 public interface ChannelTaskRepository extends MongoRepository<ChannelTask, String> {
-    List<ChannelTask> findAllByChannelIdOrderByCreatedAtDesc(String channelId);
+    List<ChannelTask> findAllByChannelIdAndArchivedNotOrderByCreatedAtDesc(String channelId, boolean archived);
+    List<ChannelTask> findAllByChannelIdAndArchivedTrueOrderByCreatedAtDesc(String channelId);
     void deleteAllByChannelId(String channelId);
     void deleteAllByGroupId(String groupId);
 }
