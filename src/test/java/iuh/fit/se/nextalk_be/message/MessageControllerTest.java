@@ -23,6 +23,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Map;
 import java.util.Set;
 
 import static org.hamcrest.Matchers.hasSize;
@@ -174,5 +175,29 @@ public class MessageControllerTest {
                 .andExpect(jsonPath("$.data.messages", hasSize(0)))
                 .andExpect(jsonPath("$.data.deletedMessageIds", hasSize(1)))
                 .andExpect(jsonPath("$.data.deletedMessageIds[0]", is(message.getId())));
+    }
+
+    @Test
+    @WithMockUser(username = "sender@gmail.com")
+    void syncConversationMessages_RespectsRequestedInitialSnapshotLimit() throws Exception {
+        for (int index = 0; index < 30; index++) {
+            messageRepository.save(Message.builder()
+                    .conversation(conversation)
+                    .conversationId(conversation.getId())
+                    .sender(senderUser)
+                    .senderId(senderUser.getId())
+                    .senderUsername(senderUser.getUsername())
+                    .content("Snapshot message " + index)
+                    .messageType(MessageType.TEXT)
+                    .metadata(Map.of("clientMessageId", "snapshot-" + index))
+                    .build());
+        }
+
+        mockMvc.perform(get("/api/messages/" + conversation.getId() + "/sync")
+                        .param("limit", "12")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fullSnapshot", is(true)))
+                .andExpect(jsonPath("$.data.messages", hasSize(12)));
     }
 }

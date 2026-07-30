@@ -717,7 +717,7 @@ public class MessageServiceImpl implements MessageService {
         }
         int safeLimit = Math.max(1, Math.min(limit, 200));
         if (since == null || since.isAfter(queryUntil)) {
-            return buildFullMessageSnapshot(conversationId, currentUser.getId(), cursor);
+            return buildFullMessageSnapshot(conversationId, currentUser.getId(), cursor, safeLimit);
         }
 
         Pageable changePage = org.springframework.data.domain.PageRequest.of(0, safeLimit + 1);
@@ -728,7 +728,7 @@ public class MessageServiceImpl implements MessageService {
                         conversationId, since, queryUntil, changePage);
 
         if (changedMessages.size() > safeLimit || changedStatuses.size() > safeLimit) {
-            return buildFullMessageSnapshot(conversationId, currentUser.getId(), cursor);
+            return buildFullMessageSnapshot(conversationId, currentUser.getId(), cursor, safeLimit);
         }
 
         LinkedHashMap<String, Message> changesById = new LinkedHashMap<>();
@@ -751,7 +751,7 @@ public class MessageServiceImpl implements MessageService {
         }
 
         if (changesById.size() > safeLimit) {
-            return buildFullMessageSnapshot(conversationId, currentUser.getId(), cursor);
+            return buildFullMessageSnapshot(conversationId, currentUser.getId(), cursor, safeLimit);
         }
 
         List<String> deletedMessageIds = changesById.values().stream()
@@ -780,12 +780,14 @@ public class MessageServiceImpl implements MessageService {
     private MessageSyncResponse buildFullMessageSnapshot(
             String conversationId,
             String currentUserId,
-            LocalDateTime cursor
+            LocalDateTime cursor,
+            int requestedLimit
     ) {
+        int snapshotSize = Math.max(1, Math.min(requestedLimit, 50));
         Slice<Message> snapshot = messageRepository.findVisibleConversationMessages(
                 conversationId,
                 currentUserId,
-                org.springframework.data.domain.PageRequest.of(0, 50)
+                org.springframework.data.domain.PageRequest.of(0, snapshotSize)
         );
         LocalDateTime now = LocalDateTime.now();
         List<MessageResponse> messages = mapMessagesToResponses(snapshot.getContent()).stream()
