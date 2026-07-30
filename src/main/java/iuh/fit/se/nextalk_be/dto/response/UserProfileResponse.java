@@ -20,6 +20,7 @@ public class UserProfileResponse {
     private LocalDateTime lastSeen;
     private boolean showActivityStatus;
     private boolean blockStrangerMessages;
+    private boolean friendSuggestionDiscoverable;
     @com.fasterxml.jackson.annotation.JsonProperty("isVerified")
     private boolean isVerified;
     private boolean hasChatPin;

@@ -4,8 +4,11 @@ import iuh.fit.se.nextalk_be.entity.User;
 
 
 import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.data.mongodb.repository.Query;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -26,4 +29,8 @@ public interface UserRepository extends MongoRepository<User, String> {
     java.util.List<User> findByBirthdayNotNullAndEnableBirthdayNotificationTrue();
 
     java.util.List<User> findAllByFcmTokensContaining(String token);
+
+    @Query("{ 'isAccountLocked': {'$ne': true}, 'role': {'$ne': 'ADMIN'}, "
+            + "'friendSuggestionDiscoverable': {'$ne': false} }")
+    List<User> findFriendSuggestionDiscoveryCandidates(Pageable pageable);
 }

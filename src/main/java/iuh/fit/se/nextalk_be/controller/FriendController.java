@@ -7,6 +7,7 @@ import iuh.fit.se.nextalk_be.dto.response.FriendRelationStatusResponse;
 import iuh.fit.se.nextalk_be.dto.response.FriendResponse;
 import iuh.fit.se.nextalk_be.dto.response.FriendSuggestionResponse;
 import iuh.fit.se.nextalk_be.dto.response.FriendshipAcceptResponse;
+import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.FriendService;
 
 
@@ -17,6 +18,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Duration;
 import java.util.List;
 
 @RestController
@@ -26,10 +28,16 @@ import java.util.List;
 public class FriendController {
 
     private final FriendService friendService;
+    private final RateLimitService rateLimitService;
 
     @PostMapping("/request")
     @Operation(summary = "Send a friend request to another user")
     public ResponseEntity<ApiResponse<Void>> sendFriendRequest(@Valid @RequestBody FriendshipRequest request) {
+        rateLimitService.check(
+                "friend-request:send",
+                rateLimitService.currentUserIdentity(),
+                30,
+                Duration.ofHours(1));
         friendService.sendFriendRequest(request.getReceiverId());
         return ResponseEntity.ok(ApiResponse.success(null, "Friend request sent successfully"));
     }
@@ -84,9 +92,28 @@ public class FriendController {
     }
 
     @GetMapping("/suggestions")
-    @Operation(summary = "Retrieve friend suggestions based on mutual friends")
-    public ResponseEntity<ApiResponse<List<FriendSuggestionResponse>>> getFriendSuggestions() {
-        List<FriendSuggestionResponse> suggestions = friendService.getFriendSuggestions();
+    @Operation(summary = "Retrieve ranked friend suggestions")
+    public ResponseEntity<ApiResponse<List<FriendSuggestionResponse>>> getFriendSuggestions(
+            @RequestParam(name = "limit", defaultValue = "20") int limit) {
+        rateLimitService.check(
+                "friend-suggestion:list",
+                rateLimitService.currentUserIdentity(),
+                60,
+                Duration.ofMinutes(1));
+        List<FriendSuggestionResponse> suggestions = friendService.getFriendSuggestions(limit);
         return ResponseEntity.ok(ApiResponse.success(suggestions, "Friend suggestions retrieved successfully"));
+    }
+
+    @PostMapping("/suggestions/{userId}/dismiss")
+    @Operation(summary = "Hide a friend suggestion for 30 days")
+    public ResponseEntity<ApiResponse<Void>> dismissFriendSuggestion(
+            @PathVariable("userId") String userId) {
+        rateLimitService.check(
+                "friend-suggestion:dismiss",
+                rateLimitService.currentUserIdentity(),
+                60,
+                Duration.ofMinutes(1));
+        friendService.dismissFriendSuggestion(userId);
+        return ResponseEntity.ok(ApiResponse.success(null, "Friend suggestion hidden"));
     }
 }

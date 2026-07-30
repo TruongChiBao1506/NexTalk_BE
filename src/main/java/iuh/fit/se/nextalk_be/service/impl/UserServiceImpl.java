@@ -201,6 +201,10 @@ public class UserServiceImpl implements UserService {
             currentUser.setBlockStrangerMessages(request.getBlockStrangerMessages());
         }
 
+        if (request.getFriendSuggestionDiscoverable() != null) {
+            currentUser.setFriendSuggestionDiscoverable(request.getFriendSuggestionDiscoverable());
+        }
+
         User savedUser = userRepository.save(currentUser);
         return mapToProfileResponse(savedUser);
     }
@@ -294,6 +298,7 @@ public class UserServiceImpl implements UserService {
                 .lastSeen(user.isShowActivityStatus() ? presenceService.getUserLastSeen(user.getId()) : null)
                 .showActivityStatus(user.isShowActivityStatus())
                 .blockStrangerMessages(user.isBlockStrangerMessages())
+                .friendSuggestionDiscoverable(user.isFriendSuggestionDiscoverable())
                 .isVerified(user.isVerified())
                 .hasChatPin(user.getChatPin() != null && !user.getChatPin().isEmpty())
                 .birthday(canViewBirthday(user) ? user.getBirthday() : null)

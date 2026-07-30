@@ -14,11 +14,12 @@ import java.time.LocalDateTime;
 public class FriendSuggestionResponse {
     private String id;
     private String username;
-    private String email;
     private String avatarUrl;
     private String bio;
     private String status;
     private LocalDateTime lastSeen;
     private int mutualFriendsCount;
+    private int sharedGroupsCount;
+    private String suggestionReason;
     private boolean isRequestSent;
 }

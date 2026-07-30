@@ -43,5 +43,6 @@ public interface FriendService {
     @Transactional(readOnly = true) public List<FriendResponse> getFriendsList();
     @Transactional(readOnly = true) public List<FriendResponse> getPendingRequests();
     @Transactional(readOnly = true) public FriendRelationStatusResponse getFriendRelationStatus(String targetUserId);
-    @Transactional(readOnly = true) public List<FriendSuggestionResponse> getFriendSuggestions();
+    @Transactional(readOnly = true) public List<FriendSuggestionResponse> getFriendSuggestions(int limit);
+    @Transactional public void dismissFriendSuggestion(String candidateUserId);
 }

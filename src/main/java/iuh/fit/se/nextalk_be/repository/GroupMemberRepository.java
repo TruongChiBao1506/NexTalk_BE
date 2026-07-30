@@ -5,6 +5,7 @@ import iuh.fit.se.nextalk_be.entity.GroupMember;
 
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.stereotype.Repository;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Optional;
@@ -16,6 +17,14 @@ public interface GroupMemberRepository extends MongoRepository<GroupMember, Stri
 
     @org.springframework.data.mongodb.repository.Query("{'$or': [{'group': {'$in': ?0}}, {'group.$id': {'$in': ?0}}, {'group._id': {'$in': ?0}}, {'group': {'$in': ?1}}, {'group.$id': {'$in': ?1}}, {'group._id': {'$in': ?1}}]}")
     List<GroupMember> findAllByGroupIdIn(java.util.Collection<String> stringIds, java.util.Collection<org.bson.types.ObjectId> objectIds);
+
+    @org.springframework.data.mongodb.repository.Query("{'$or': ["
+            + "{'group': {'$in': ?0}}, {'group.$id': {'$in': ?0}}, {'group._id': {'$in': ?0}}, "
+            + "{'group': {'$in': ?1}}, {'group.$id': {'$in': ?1}}, {'group._id': {'$in': ?1}}]}")
+    List<GroupMember> findFriendSuggestionCandidatesByGroupIdIn(
+            java.util.Collection<String> stringIds,
+            java.util.Collection<org.bson.types.ObjectId> objectIds,
+            Pageable pageable);
 
     List<GroupMember> findAllByUserId(String userId);
 

@@ -10,6 +10,8 @@ import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.ConversationType;
 import iuh.fit.se.nextalk_be.entity.Friendship;
 import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
+import iuh.fit.se.nextalk_be.entity.FriendSuggestionDismissal;
+import iuh.fit.se.nextalk_be.entity.GroupMember;
 import iuh.fit.se.nextalk_be.entity.Message;
 import iuh.fit.se.nextalk_be.entity.MessageType;
 import iuh.fit.se.nextalk_be.entity.NotificationType;
@@ -19,6 +21,8 @@ import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.repository.ChatRequestRepository;
 import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.FriendshipRepository;
+import iuh.fit.se.nextalk_be.repository.FriendSuggestionDismissalRepository;
+import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.repository.UserBlockRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
@@ -32,8 +36,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.bson.types.ObjectId;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -52,6 +64,8 @@ public class FriendServiceImpl implements FriendService {
     private final SimpMessagingTemplate messagingTemplate;
     private final ChatRequestRepository chatRequestRepository;
     private final UserBlockRepository userBlockRepository;
+    private final GroupMemberRepository groupMemberRepository;
+    private final FriendSuggestionDismissalRepository friendSuggestionDismissalRepository;
 
     @Transactional
     public void sendFriendRequest(String receiverId) {
@@ -256,71 +270,233 @@ public class FriendServiceImpl implements FriendService {
     }
 
     @Transactional(readOnly = true)
-    public List<FriendSuggestionResponse> getFriendSuggestions() {
+    public List<FriendSuggestionResponse> getFriendSuggestions(int requestedLimit) {
+        int limit = Math.max(1, Math.min(requestedLimit, 50));
         User currentUser = userService.getCurrentAuthenticatedUser();
         String currentUserId = currentUser.getId();
+        LocalDateTime now = LocalDateTime.now();
 
-        // 1. Get my accepted friends
         List<Friendship> myAcceptedFriendships = friendshipRepository.findAllByUserIdAndStatus(currentUserId, FriendshipStatus.ACCEPTED);
         Set<String> myFriendIds = myAcceptedFriendships.stream()
                 .map(f -> f.getSender().getId().equals(currentUserId) ? f.getReceiver().getId() : f.getSender().getId())
                 .collect(Collectors.toSet());
 
-        // 2. Get my sent pending requests (to know if I already sent a request)
         List<Friendship> mySentRequests = friendshipRepository.findBySenderIdAndStatus(currentUserId, FriendshipStatus.PENDING);
         Set<String> sentRequestUserIds = mySentRequests.stream()
                 .map(f -> f.getReceiver().getId())
                 .collect(Collectors.toSet());
-        
-        // 3. Get my received pending requests (to avoid suggesting people who already requested me)
+
         List<Friendship> myReceivedRequests = friendshipRepository.findByReceiverIdAndStatus(currentUserId, FriendshipStatus.PENDING);
         Set<String> receivedRequestUserIds = myReceivedRequests.stream()
                 .map(f -> f.getSender().getId())
                 .collect(Collectors.toSet());
 
-        // 4. Calculate mutual friends
-        java.util.Map<String, Integer> mutualFriendsCountMap = new java.util.HashMap<>();
-        java.util.Map<String, User> potentialFriendsMap = new java.util.HashMap<>();
+        Set<String> blockedUserIds = userBlockRepository
+                .findAllByBlockerIdOrBlockedId(currentUserId, currentUserId)
+                .stream()
+                .map(block -> block.getBlocker().getId().equals(currentUserId)
+                        ? block.getBlocked().getId()
+                        : block.getBlocker().getId())
+                .collect(Collectors.toSet());
 
-        // For each friend, fetch their friends
-        for (String friendId : myFriendIds) {
-            List<Friendship> friendsOfFriend = friendshipRepository.findAllByUserIdAndStatus(friendId, FriendshipStatus.ACCEPTED);
-            for (Friendship f : friendsOfFriend) {
-                User candidate = f.getSender().getId().equals(friendId) ? f.getReceiver() : f.getSender();
-                String candidateId = candidate.getId();
+        Set<String> dismissedUserIds = friendSuggestionDismissalRepository
+                .findAllByUserIdAndExpiresAtAfter(currentUserId, now)
+                .stream()
+                .map(FriendSuggestionDismissal::getCandidateUserId)
+                .collect(Collectors.toSet());
 
-                // Exclude myself, my existing friends, people who already requested me, and blocked users
-                if (!candidateId.equals(currentUserId) && 
-                    !myFriendIds.contains(candidateId) && 
-                    !receivedRequestUserIds.contains(candidateId) &&
-                    !userBlockRepository.existsBetweenUsers(currentUserId, candidateId)) {
-                    
-                    mutualFriendsCountMap.put(candidateId, mutualFriendsCountMap.getOrDefault(candidateId, 0) + 1);
-                    potentialFriendsMap.putIfAbsent(candidateId, candidate);
+        Set<String> excludedUserIds = new HashSet<>();
+        excludedUserIds.add(currentUserId);
+        excludedUserIds.addAll(myFriendIds);
+        excludedUserIds.addAll(receivedRequestUserIds);
+        excludedUserIds.addAll(sentRequestUserIds);
+        excludedUserIds.addAll(blockedUserIds);
+        excludedUserIds.addAll(dismissedUserIds);
+
+        Map<String, SuggestionCandidate> candidates = new HashMap<>();
+
+        if (!myFriendIds.isEmpty()) {
+            List<Friendship> friendNetwork = friendshipRepository
+                    .findBySenderIdInAndStatusOrReceiverIdInAndStatus(
+                            myFriendIds,
+                            FriendshipStatus.ACCEPTED,
+                            myFriendIds,
+                            FriendshipStatus.ACCEPTED,
+                            PageRequest.of(0, 1_000));
+
+            for (Friendship friendship : friendNetwork) {
+                User sender = friendship.getSender();
+                User receiver = friendship.getReceiver();
+                User candidate = myFriendIds.contains(sender.getId()) ? receiver : sender;
+                if (!isEligibleCandidate(candidate, excludedUserIds)) {
+                    continue;
+                }
+                candidates.computeIfAbsent(candidate.getId(), ignored -> new SuggestionCandidate(candidate))
+                        .mutualFriendsCount++;
+            }
+        }
+
+        List<GroupMember> myMemberships = groupMemberRepository.findAllByUserId(currentUserId);
+        List<String> sharedGroupIds = myMemberships.stream()
+                .map(GroupMember::getGroup)
+                .filter(java.util.Objects::nonNull)
+                .map(group -> group.getId())
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .limit(25)
+                .toList();
+
+        if (!sharedGroupIds.isEmpty()) {
+            List<ObjectId> objectIds = sharedGroupIds.stream()
+                    .filter(ObjectId::isValid)
+                    .map(ObjectId::new)
+                    .toList();
+            List<GroupMember> sharedGroupMembers = groupMemberRepository
+                    .findFriendSuggestionCandidatesByGroupIdIn(
+                            sharedGroupIds,
+                            objectIds,
+                            PageRequest.of(0, 1_000));
+            for (GroupMember membership : sharedGroupMembers) {
+                User candidate = membership.getUser();
+                if (!isEligibleCandidate(candidate, excludedUserIds)) {
+                    continue;
+                }
+                candidates.computeIfAbsent(candidate.getId(), ignored -> new SuggestionCandidate(candidate))
+                        .sharedGroupsCount++;
+            }
+        }
+
+        if (candidates.size() < limit) {
+            List<User> discoveryCandidates = userRepository.findFriendSuggestionDiscoveryCandidates(
+                    PageRequest.of(0, Math.max(50, limit * 3), Sort.by(Sort.Direction.DESC, "createdAt")));
+            for (User candidate : discoveryCandidates) {
+                if (isEligibleCandidate(candidate, excludedUserIds)) {
+                    candidates.putIfAbsent(candidate.getId(), new SuggestionCandidate(candidate));
                 }
             }
         }
 
-        // 5. Sort by mutual friend count (descending) and take top 10
-        return mutualFriendsCountMap.entrySet().stream()
-                .sorted(java.util.Map.Entry.<String, Integer>comparingByValue().reversed())
-                .limit(10)
-                .map(entry -> {
-                    String candidateId = entry.getKey();
-                    User candidate = potentialFriendsMap.get(candidateId);
-                    return FriendSuggestionResponse.builder()
-                            .id(candidate.getId())
-                            .email(candidate.getEmail())
-                            .username(candidate.getUsername())
-                            .avatarUrl(candidate.getAvatarUrl())
-                            .bio(candidate.getBio())
-                            .status(candidate.isShowActivityStatus() ? presenceService.getUserStatus(candidate.getId()) : "HIDDEN")
-                            .lastSeen(candidate.isShowActivityStatus() ? presenceService.getUserLastSeen(candidate.getId()) : null)
-                            .mutualFriendsCount(entry.getValue())
-                            .isRequestSent(sentRequestUserIds.contains(candidateId))
-                            .build();
+        List<FriendSuggestionResponse> result = new ArrayList<>();
+        mySentRequests.stream()
+                .map(Friendship::getReceiver)
+                .filter(java.util.Objects::nonNull)
+                .filter(user -> !blockedUserIds.contains(user.getId()))
+                .map(user -> mapSuggestion(user, 0, 0, "Đã gửi lời mời kết bạn", true))
+                .forEach(result::add);
+
+        candidates.values().stream()
+                .sorted((left, right) -> {
+                    int scoreComparison = Integer.compare(right.score(now), left.score(now));
+                    if (scoreComparison != 0) {
+                        return scoreComparison;
+                    }
+                    return Integer.compare(
+                            dailyRotationKey(currentUserId, left.user.getId()),
+                            dailyRotationKey(currentUserId, right.user.getId()));
                 })
-                .collect(Collectors.toList());
+                .limit(limit)
+                .map(candidate -> mapSuggestion(
+                        candidate.user,
+                        candidate.mutualFriendsCount,
+                        candidate.sharedGroupsCount,
+                        candidate.reason(),
+                        false))
+                .forEach(result::add);
+
+        return result;
+    }
+
+    @Transactional
+    public void dismissFriendSuggestion(String candidateUserId) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        if (currentUser.getId().equals(candidateUserId)) {
+            throw new BadRequestException("Cannot dismiss yourself");
+        }
+        userRepository.findById(candidateUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        FriendSuggestionDismissal dismissal = friendSuggestionDismissalRepository
+                .findByUserIdAndCandidateUserId(currentUser.getId(), candidateUserId)
+                .orElseGet(() -> FriendSuggestionDismissal.builder()
+                        .userId(currentUser.getId())
+                        .candidateUserId(candidateUserId)
+                        .build());
+        dismissal.setExpiresAt(LocalDateTime.now().plusDays(30));
+        friendSuggestionDismissalRepository.save(dismissal);
+    }
+
+    private boolean isEligibleCandidate(User candidate, Set<String> excludedUserIds) {
+        return candidate != null
+                && candidate.getId() != null
+                && !excludedUserIds.contains(candidate.getId())
+                && !candidate.isAccountLocked()
+                && candidate.isFriendSuggestionDiscoverable();
+    }
+
+    private FriendSuggestionResponse mapSuggestion(
+            User candidate,
+            int mutualFriendsCount,
+            int sharedGroupsCount,
+            String suggestionReason,
+            boolean requestSent) {
+        return FriendSuggestionResponse.builder()
+                .id(candidate.getId())
+                .username(candidate.getUsername())
+                .avatarUrl(candidate.getAvatarUrl())
+                .bio(candidate.getBio())
+                .status(candidate.isShowActivityStatus()
+                        ? presenceService.getUserStatus(candidate.getId())
+                        : "HIDDEN")
+                .lastSeen(candidate.isShowActivityStatus()
+                        ? presenceService.getUserLastSeen(candidate.getId())
+                        : null)
+                .mutualFriendsCount(mutualFriendsCount)
+                .sharedGroupsCount(sharedGroupsCount)
+                .suggestionReason(suggestionReason)
+                .isRequestSent(requestSent)
+                .build();
+    }
+
+    private int dailyRotationKey(String currentUserId, String candidateUserId) {
+        return Math.floorMod(
+                (currentUserId + ':' + candidateUserId + ':' + LocalDate.now()).hashCode(),
+                Integer.MAX_VALUE);
+    }
+
+    private static final class SuggestionCandidate {
+        private final User user;
+        private int mutualFriendsCount;
+        private int sharedGroupsCount;
+
+        private SuggestionCandidate(User user) {
+            this.user = user;
+        }
+
+        private int score(LocalDateTime now) {
+            int score = mutualFriendsCount * 100 + sharedGroupsCount * 30;
+            if (user.isVerified()) {
+                score += 10;
+            }
+            if (user.getCreatedAt() != null && user.getCreatedAt().isAfter(now.minusDays(30))) {
+                score += 5;
+            }
+            return score;
+        }
+
+        private String reason() {
+            if (mutualFriendsCount > 0 && sharedGroupsCount > 0) {
+                return mutualFriendsCount + " bạn chung · " + sharedGroupsCount + " nhóm chung";
+            }
+            if (mutualFriendsCount > 0) {
+                return mutualFriendsCount + " bạn chung";
+            }
+            if (sharedGroupsCount > 0) {
+                return sharedGroupsCount + " nhóm chung";
+            }
+            return user.isVerified()
+                    ? "Thành viên đã xác minh trên NexTalk"
+                    : "Thành viên mới trên NexTalk";
+        }
     }
 
     private FriendResponse mapToFriendResponse(User user) {

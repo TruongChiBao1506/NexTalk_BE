@@ -31,4 +31,6 @@ public class UpdateProfileRequest {
     private Boolean showActivityStatus;
 
     private Boolean blockStrangerMessages;
+
+    private Boolean friendSuggestionDiscoverable;
 }

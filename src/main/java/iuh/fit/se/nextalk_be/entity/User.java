@@ -59,6 +59,13 @@ public class User extends BaseEntity implements UserDetails {
         return Boolean.TRUE.equals(blockStrangerMessages);
     }
 
+    @Builder.Default
+    private Boolean friendSuggestionDiscoverable = true;
+
+    public boolean isFriendSuggestionDiscoverable() {
+        return friendSuggestionDiscoverable == null || friendSuggestionDiscoverable;
+    }
+
     private String chatPin;
 
     @Builder.Default

@@ -7,7 +7,9 @@ import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.mongodb.repository.Query;
 import org.springframework.stereotype.Repository;
+import org.springframework.data.domain.Pageable;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -35,4 +37,11 @@ public interface FriendshipRepository extends MongoRepository<Friendship, String
     }
 
     Optional<Friendship> findBySenderIdAndReceiverIdAndStatus(String senderId, String receiverId, FriendshipStatus status);
+
+    List<Friendship> findBySenderIdInAndStatusOrReceiverIdInAndStatus(
+            Collection<String> senderIds,
+            FriendshipStatus senderStatus,
+            Collection<String> receiverIds,
+            FriendshipStatus receiverStatus,
+            Pageable pageable);
 }
