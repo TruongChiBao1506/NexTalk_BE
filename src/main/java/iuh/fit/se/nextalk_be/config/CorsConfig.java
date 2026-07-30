@@ -15,17 +15,27 @@ public class CorsConfig {
     @Value("${app.cors.allowed-origins:http://localhost:3000,http://localhost:3001}")
     private List<String> allowedOrigins;
 
+    @Value("${RENDER_EXTERNAL_URL:}")
+    private String renderExternalUrl;
+
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration apiConfig = createConfiguration(allowedOrigins);
+        CorsConfiguration websocketConfig = createConfiguration(
+                OriginAllowlist.merge(allowedOrigins, renderExternalUrl));
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/ws/**", websocketConfig);
+        source.registerCorsConfiguration("/ws-raw", websocketConfig);
+        source.registerCorsConfiguration("/ws-raw/**", websocketConfig);
+        source.registerCorsConfiguration("/**", apiConfig);
+        return source;
+    }
+
+    private CorsConfiguration createConfiguration(List<String> origins) {
         CorsConfiguration config = new CorsConfiguration();
-
-        // Cho phép các origin từ biến môi trường (dev + production Cloudflare)
-        config.setAllowedOrigins(allowedOrigins);
-
-        // Cho phép tất cả HTTP methods
+        config.setAllowedOrigins(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-
-        // Cho phép tất cả headers thường gặp
         config.setAllowedHeaders(List.of(
                 "Authorization",
                 "Content-Type",
@@ -34,15 +44,8 @@ public class CorsConfig {
                 "X-Requested-With",
                 "X-Client-Platform"
         ));
-
-        // Cho phép gửi credentials (cookie, Authorization header)
         config.setAllowCredentials(true);
-
-        // Cache preflight response trong 1 giờ
         config.setMaxAge(3600L);
-
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", config);
-        return source;
+        return config;
     }
 }

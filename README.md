@@ -183,7 +183,7 @@ Swagger is the most comprehensive and up-to-date reference for request/response 
 - Access tokens expire in 15 minutes; refresh tokens expire in 7 days.
 - Uploads are limited to 50 MB per file, and 55 MB per request.
 - Message requests to strangers are limited to 10 messages/day/sender; respects block status and prevents sharing messages from private channels to strangers.
-- Set `CORS_ALLOWED_ORIGINS` and `WS_ALLOWED_ORIGIN_PATTERNS` to explicit frontend origins when deploying; production rejects wildcard origins. On Render, the backend also automatically adds Render's trusted `RENDER_EXTERNAL_URL` to the WebSocket allowlist so React Native's same-backend Origin can complete the native handshake.
+- Set `CORS_ALLOWED_ORIGINS` and `WS_ALLOWED_ORIGIN_PATTERNS` to explicit frontend origins when deploying; production rejects wildcard origins. On Render, the backend also automatically adds Render's trusted `RENDER_EXTERNAL_URL` to both WebSocket endpoint checks and the path-specific CORS rules for `/ws/**` and `/ws-raw/**`, so React Native's same-backend Origin can complete the native handshake. This extra origin is not added to REST API CORS.
 - Do not commit `.env`, Firebase service account, or Cloudinary/Agora/JWT keys.
 
 ## Testing

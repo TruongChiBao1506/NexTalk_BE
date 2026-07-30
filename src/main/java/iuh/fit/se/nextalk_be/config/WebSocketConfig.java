@@ -34,13 +34,8 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration;
 import org.springframework.web.socket.handler.WebSocketHandlerDecorator;
 
-import java.net.URI;
 import java.time.Duration;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
-import java.util.Optional;
-import java.util.Set;
 
 @Configuration
 @EnableWebSocketMessageBroker
@@ -118,36 +113,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     }
 
     private String[] resolveAllowedOriginPatterns() {
-        Set<String> origins = new LinkedHashSet<>();
-        if (webSocketAllowedOriginPatterns != null) {
-            for (String configuredOrigin : webSocketAllowedOriginPatterns) {
-                if (configuredOrigin != null && !configuredOrigin.isBlank()) {
-                    origins.add(configuredOrigin.trim());
-                }
-            }
-        }
-        normalizeHttpOrigin(renderExternalUrl).ifPresent(origins::add);
-        return origins.toArray(String[]::new);
-    }
-
-    private Optional<String> normalizeHttpOrigin(String candidate) {
-        if (candidate == null || candidate.isBlank()) {
-            return Optional.empty();
-        }
-        try {
-            URI uri = URI.create(candidate.trim());
-            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
-            if ((!"http".equals(scheme) && !"https".equals(scheme))
-                    || uri.getHost() == null
-                    || uri.getUserInfo() != null) {
-                return Optional.empty();
-            }
-            String port = uri.getPort() == -1 ? "" : ":" + uri.getPort();
-            return Optional.of(
-                    scheme + "://" + uri.getHost().toLowerCase(Locale.ROOT) + port);
-        } catch (IllegalArgumentException ignored) {
-            return Optional.empty();
-        }
+        return OriginAllowlist.merge(webSocketAllowedOriginPatterns, renderExternalUrl)
+                .toArray(String[]::new);
     }
 
     @Override
