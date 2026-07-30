@@ -67,6 +67,7 @@ CLOUDFLARE_AI_TOKEN=your-workers-ai-api-token
 # Optional / Has default values
 PORT=8080
 CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+WS_ALLOWED_ORIGIN_PATTERNS=http://localhost:5173,http://localhost:3000
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_USERNAME=
@@ -182,7 +183,7 @@ Swagger is the most comprehensive and up-to-date reference for request/response 
 - Access tokens expire in 15 minutes; refresh tokens expire in 7 days.
 - Uploads are limited to 50 MB per file, and 55 MB per request.
 - Message requests to strangers are limited to 10 messages/day/sender; respects block status and prevents sharing messages from private channels to strangers.
-- Set `CORS_ALLOWED_ORIGINS` to the correct frontend domain when deploying. REST CORS uses this variable; the WebSocket endpoint currently accepts any origin pattern.
+- Set `CORS_ALLOWED_ORIGINS` and `WS_ALLOWED_ORIGIN_PATTERNS` to explicit frontend origins when deploying; production rejects wildcard origins. On Render, the backend also automatically adds Render's trusted `RENDER_EXTERNAL_URL` to the WebSocket allowlist so React Native's same-backend Origin can complete the native handshake.
 - Do not commit `.env`, Firebase service account, or Cloudinary/Agora/JWT keys.
 
 ## Testing

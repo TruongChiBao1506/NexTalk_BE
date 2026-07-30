@@ -1,10 +1,15 @@
 package iuh.fit.se.nextalk_be.config;
 
+import iuh.fit.se.nextalk_be.entity.User;
+import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
 import iuh.fit.se.nextalk_be.security.JwtService;
-
-
+import iuh.fit.se.nextalk_be.security.RateLimitService;
+import iuh.fit.se.nextalk_be.security.WebSocketSubscriptionAuthorizer;
+import iuh.fit.se.nextalk_be.service.SessionRevocationService;
+import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.Message;
@@ -15,29 +20,27 @@ import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.messaging.support.MessageHeaderAccessor;
+import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
-import iuh.fit.se.nextalk_be.entity.User;
-import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
-import iuh.fit.se.nextalk_be.security.WebSocketSubscriptionAuthorizer;
-import iuh.fit.se.nextalk_be.security.RateLimitService;
-import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
-import iuh.fit.se.nextalk_be.service.SessionRevocationService;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
-import org.springframework.web.socket.CloseStatus;
-import org.springframework.web.socket.handler.WebSocketHandlerDecorator;
-import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
-import org.springframework.scheduling.TaskScheduler;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
+import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration;
+import org.springframework.web.socket.handler.WebSocketHandlerDecorator;
 
-import java.util.List;
-import org.springframework.beans.factory.annotation.Value;
+import java.net.URI;
 import java.time.Duration;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
 
 @Configuration
 @EnableWebSocketMessageBroker
@@ -55,6 +58,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Value("${app.websocket.allowed-origin-patterns:http://localhost:3000,http://localhost:3001}")
     private String[] webSocketAllowedOriginPatterns;
+
+    @Value("${RENDER_EXTERNAL_URL:}")
+    private String renderExternalUrl;
 
     @Value("${app.websocket.inbound-core-pool-size:4}")
     private int inboundCorePoolSize;
@@ -103,11 +109,45 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
+        String[] allowedOriginPatterns = resolveAllowedOriginPatterns();
         registry.addEndpoint("/ws-raw")
-                .setAllowedOriginPatterns(webSocketAllowedOriginPatterns);
+                .setAllowedOriginPatterns(allowedOriginPatterns);
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns(webSocketAllowedOriginPatterns)
+                .setAllowedOriginPatterns(allowedOriginPatterns)
                 .withSockJS();
+    }
+
+    private String[] resolveAllowedOriginPatterns() {
+        Set<String> origins = new LinkedHashSet<>();
+        if (webSocketAllowedOriginPatterns != null) {
+            for (String configuredOrigin : webSocketAllowedOriginPatterns) {
+                if (configuredOrigin != null && !configuredOrigin.isBlank()) {
+                    origins.add(configuredOrigin.trim());
+                }
+            }
+        }
+        normalizeHttpOrigin(renderExternalUrl).ifPresent(origins::add);
+        return origins.toArray(String[]::new);
+    }
+
+    private Optional<String> normalizeHttpOrigin(String candidate) {
+        if (candidate == null || candidate.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            URI uri = URI.create(candidate.trim());
+            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+            if ((!"http".equals(scheme) && !"https".equals(scheme))
+                    || uri.getHost() == null
+                    || uri.getUserInfo() != null) {
+                return Optional.empty();
+            }
+            String port = uri.getPort() == -1 ? "" : ":" + uri.getPort();
+            return Optional.of(
+                    scheme + "://" + uri.getHost().toLowerCase(Locale.ROOT) + port);
+        } catch (IllegalArgumentException ignored) {
+            return Optional.empty();
+        }
     }
 
     @Override
