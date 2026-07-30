@@ -66,6 +66,24 @@ public class User extends BaseEntity implements UserDetails {
         return friendSuggestionDiscoverable == null || friendSuggestionDiscoverable;
     }
 
+    @Builder.Default
+    private Boolean systemAccount = false;
+
+    public boolean isSystemAccount() {
+        if (Boolean.TRUE.equals(systemAccount)) {
+            return true;
+        }
+        if (email != null && "moderator@nextalk.local".equalsIgnoreCase(email.trim())) {
+            return true;
+        }
+        if (username == null) {
+            return false;
+        }
+        String normalizedUsername = username.trim();
+        return "NexTalk Moderator".equalsIgnoreCase(normalizedUsername)
+                || "NexTalk AI".equalsIgnoreCase(normalizedUsername);
+    }
+
     private String chatPin;
 
     @Builder.Default

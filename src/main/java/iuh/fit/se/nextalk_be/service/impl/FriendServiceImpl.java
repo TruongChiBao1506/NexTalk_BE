@@ -78,6 +78,10 @@ public class FriendServiceImpl implements FriendService {
         User receiver = userRepository.findById(receiverId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + receiverId));
 
+        if (receiver.isSystemAccount()) {
+            throw new BadRequestException("System accounts cannot receive friend requests");
+        }
+
         if (userBlockRepository.existsBetweenUsers(currentUser.getId(), receiverId)) {
             throw new BadRequestException("Cannot send friend request because one of you has blocked the other");
         }
@@ -430,6 +434,7 @@ public class FriendServiceImpl implements FriendService {
                 && candidate.getId() != null
                 && !excludedUserIds.contains(candidate.getId())
                 && !candidate.isAccountLocked()
+                && !candidate.isSystemAccount()
                 && candidate.isFriendSuggestionDiscoverable();
     }
 

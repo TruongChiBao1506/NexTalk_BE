@@ -31,6 +31,7 @@ public interface UserRepository extends MongoRepository<User, String> {
     java.util.List<User> findAllByFcmTokensContaining(String token);
 
     @Query("{ 'isAccountLocked': {'$ne': true}, 'role': {'$ne': 'ADMIN'}, "
+            + "'systemAccount': {'$ne': true}, "
             + "'friendSuggestionDiscoverable': {'$ne': false} }")
     List<User> findFriendSuggestionDiscoveryCandidates(Pageable pageable);
 }

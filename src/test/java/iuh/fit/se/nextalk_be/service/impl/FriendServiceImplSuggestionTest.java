@@ -7,6 +7,7 @@ import iuh.fit.se.nextalk_be.entity.Group;
 import iuh.fit.se.nextalk_be.entity.GroupMember;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.entity.UserBlock;
+import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.repository.ChatRequestRepository;
 import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.FriendSuggestionDismissalRepository;
@@ -33,6 +34,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -166,11 +168,12 @@ class FriendServiceImplSuggestionTest {
     }
 
     @Test
-    void blockedAndDismissedUsersAreExcludedFromDiscovery() {
+    void blockedDismissedOptedOutAndSystemUsersAreExcludedFromDiscovery() {
         User blocked = user("blocked", "blocked-user");
         User dismissed = user("dismissed", "dismissed-user");
         User optedOut = user("opted-out", "opted-out-user");
         optedOut.setFriendSuggestionDiscoverable(false);
+        User systemAccount = user("NexTalk AI", "system-user");
         User visible = user("visible", "visible-user");
 
         when(friendshipRepository.findAllByUserIdAndStatus(currentUser.getId(), FriendshipStatus.ACCEPTED))
@@ -191,11 +194,23 @@ class FriendServiceImplSuggestionTest {
                         .build()));
         when(groupMemberRepository.findAllByUserId(currentUser.getId())).thenReturn(List.of());
         when(userRepository.findFriendSuggestionDiscoveryCandidates(any(Pageable.class)))
-                .thenReturn(List.of(blocked, dismissed, optedOut, visible));
+                .thenReturn(List.of(blocked, dismissed, optedOut, systemAccount, visible));
 
         var suggestions = service.getFriendSuggestions(10);
 
         assertEquals(List.of(visible.getId()), suggestions.stream().map(item -> item.getId()).toList());
+    }
+
+    @Test
+    void systemAccountsCannotReceiveFriendRequests() {
+        User systemAccount = user("NexTalk Moderator", "system-user");
+        when(userRepository.findById(systemAccount.getId())).thenReturn(Optional.of(systemAccount));
+
+        BadRequestException error = assertThrows(
+                BadRequestException.class,
+                () -> service.sendFriendRequest(systemAccount.getId()));
+
+        assertEquals("System accounts cannot receive friend requests", error.getMessage());
     }
 
     @Test

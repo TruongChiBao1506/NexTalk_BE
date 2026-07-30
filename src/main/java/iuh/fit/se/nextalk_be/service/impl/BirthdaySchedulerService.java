@@ -75,14 +75,23 @@ public class BirthdaySchedulerService {
             User newBot = new User();
             newBot.setUsername("NexTalk Moderator");
             newBot.setEmail(BOT_EMAIL);
-            newBot.setPassword("moderator_hidden_password");
+            newBot.setPassword(java.util.UUID.randomUUID() + "-" + java.util.UUID.randomUUID());
             newBot.setAvatarUrl(BOT_AVATAR);
             newBot.setStatus("ONLINE");
             newBot.setVerified(true);
+            newBot.setSystemAccount(true);
+            newBot.setFriendSuggestionDiscoverable(false);
+            newBot.setAccountLocked(true);
             return userRepository.save(newBot);
         });
-        if (!BOT_AVATAR.equals(bot.getAvatarUrl())) {
+        if (!BOT_AVATAR.equals(bot.getAvatarUrl())
+                || !bot.isSystemAccount()
+                || bot.isFriendSuggestionDiscoverable()
+                || !bot.isAccountLocked()) {
             bot.setAvatarUrl(BOT_AVATAR);
+            bot.setSystemAccount(true);
+            bot.setFriendSuggestionDiscoverable(false);
+            bot.setAccountLocked(true);
             bot = userRepository.save(bot);
         }
         return bot;
