@@ -10,6 +10,8 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.DocumentReference;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Getter
 @Setter
@@ -25,6 +27,13 @@ public class RefreshToken extends BaseEntity {
     @Indexed(unique = true)
     private String token;
 
+    @Indexed
+    private String familyId;
+
+    @Builder.Default
+    private List<String> usedTokenDigests = new ArrayList<>();
+
+    @Indexed(expireAfter = "0s")
     private LocalDateTime expiresAt;
 
     private String userAgent;

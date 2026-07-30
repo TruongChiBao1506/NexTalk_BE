@@ -9,11 +9,14 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.web.util.matcher.IpAddressMatcher;
 
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Locale;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -24,6 +27,12 @@ public class RateLimitService {
     private static final int MAX_TRACKED_KEYS = 25_000;
     private final Map<String, Deque<Long>> buckets = new ConcurrentHashMap<>();
     private final StringRedisTemplate redisTemplate;
+
+    @Value("${app.security.trust-forwarded-headers:false}")
+    private boolean trustForwardedHeaders;
+
+    @Value("${app.security.trusted-proxy-cidrs:}")
+    private List<String> trustedProxyCidrs;
 
     public void check(String scope, String identity, int maxRequests, Duration window) {
         check(scope, identity, maxRequests, window, "Too many requests. Please wait a moment and try again.");
@@ -106,17 +115,35 @@ public class RateLimitService {
             return "unknown";
         }
 
-        String forwardedFor = request.getHeader("X-Forwarded-For");
-        if (forwardedFor != null && !forwardedFor.isBlank()) {
-            return forwardedFor.split(",")[0].trim();
-        }
+        if (trustForwardedHeaders && isTrustedProxy(request.getRemoteAddr())) {
+            String forwardedFor = request.getHeader("X-Forwarded-For");
+            if (forwardedFor != null && !forwardedFor.isBlank()) {
+                return forwardedFor.split(",")[0].trim();
+            }
 
-        String realIp = request.getHeader("X-Real-IP");
-        if (realIp != null && !realIp.isBlank()) {
-            return realIp.trim();
+            String realIp = request.getHeader("X-Real-IP");
+            if (realIp != null && !realIp.isBlank()) {
+                return realIp.trim();
+            }
         }
 
         return request.getRemoteAddr();
+    }
+
+    private boolean isTrustedProxy(String remoteAddress) {
+        if (remoteAddress == null || trustedProxyCidrs == null || trustedProxyCidrs.isEmpty()) {
+            return false;
+        }
+        return trustedProxyCidrs.stream()
+                .filter(cidr -> cidr != null && !cidr.isBlank())
+                .map(String::trim)
+                .anyMatch(cidr -> {
+                    try {
+                        return new IpAddressMatcher(cidr).matches(remoteAddress);
+                    } catch (IllegalArgumentException ignored) {
+                        return false;
+                    }
+                });
     }
 
     public String currentUserIdentity() {

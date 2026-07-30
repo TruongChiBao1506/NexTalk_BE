@@ -18,8 +18,11 @@ import iuh.fit.se.nextalk_be.repository.QrLoginSessionRepository;
 import iuh.fit.se.nextalk_be.repository.PasswordResetTokenRepository;
 import iuh.fit.se.nextalk_be.security.JwtService;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
+import iuh.fit.se.nextalk_be.security.SecureTokenService;
+import iuh.fit.se.nextalk_be.security.AtomicTokenStore;
 import iuh.fit.se.nextalk_be.service.impl.AuthServiceImpl;
 import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
+import iuh.fit.se.nextalk_be.service.SessionRevocationService;
 import iuh.fit.se.nextalk_be.service.MailService;
 import iuh.fit.se.nextalk_be.service.UserService;
 
@@ -88,6 +91,15 @@ public class AuthServiceTest {
     private WebSocketSessionRegistry webSocketSessionRegistry;
 
     @Mock
+    private SessionRevocationService sessionRevocationService;
+
+    @Mock
+    private SecureTokenService secureTokenService;
+
+    @Mock
+    private AtomicTokenStore atomicTokenStore;
+
+    @Mock
     private HttpServletRequest httpRequest;
 
     @InjectMocks
@@ -98,6 +110,9 @@ public class AuthServiceTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(secureTokenService.generate()).thenReturn("refreshToken");
+        lenient().when(secureTokenService.digest(anyString()))
+                .thenAnswer(invocation -> "hash-" + invocation.getArgument(0));
         registerRequest = RegisterRequest.builder()
                 .email("test@gmail.com")
                 .username("testuser")
@@ -147,21 +162,22 @@ public class AuthServiceTest {
                 .verified(false)
                 .build();
 
-        when(emailVerificationRepository.findByToken("valid-token")).thenReturn(Optional.of(verification));
+        when(atomicTokenStore.consumeEmailVerification(eq("hash-valid-token"), any()))
+                .thenReturn(Optional.of(verification));
 
         authService.verifyEmail("valid-token");
 
         assertTrue(user.isVerified());
-        assertTrue(verification.isVerified());
         verify(userRepository, times(1)).save(user);
-        verify(emailVerificationRepository, times(1)).save(verification);
+        verify(emailVerificationRepository, never()).save(verification);
     }
 
     @Test
     void verifyEmail_TokenNotFound_ThrowsResourceNotFoundException() {
-        when(emailVerificationRepository.findByToken("invalid-token")).thenReturn(Optional.empty());
+        when(atomicTokenStore.consumeEmailVerification(eq("hash-invalid-token"), any()))
+                .thenReturn(Optional.empty());
 
-        assertThrows(ResourceNotFoundException.class, () -> authService.verifyEmail("invalid-token"));
+        assertThrows(BadRequestException.class, () -> authService.verifyEmail("invalid-token"));
     }
 
     @Test
@@ -170,7 +186,6 @@ public class AuthServiceTest {
         LoginRequest loginRequest = new LoginRequest("test@gmail.com", "password123");
 
         when(userRepository.findByEmail(loginRequest.getEmail())).thenReturn(Optional.of(user));
-        when(jwtService.generateRefreshToken(user)).thenReturn("refreshToken");
         when(jwtService.getRefreshExpirationMs()).thenReturn(604800000L);
         when(rateLimitService.clientIdentity(httpRequest)).thenReturn("127.0.0.1");
         when(httpRequest.getHeader("User-Agent")).thenReturn("JUnit Browser");
@@ -189,7 +204,7 @@ public class AuthServiceTest {
         assertEquals("refreshToken", response.getRefreshToken());
         verify(authenticationManager, times(1)).authenticate(any(UsernamePasswordAuthenticationToken.class));
         verify(refreshTokenRepository, times(1)).save(argThat(token ->
-                "refreshToken".equals(token.getToken())
+                "hash-refreshToken".equals(token.getToken())
                         && "127.0.0.1".equals(token.getIpAddress())
                         && "JUnit Browser".equals(token.getUserAgent())
                         && token.getLastUsedAt() != null
@@ -207,13 +222,49 @@ public class AuthServiceTest {
     }
 
     @Test
+    void refresh_LockedAccountIsRejectedAndAllSessionsAreRevoked() {
+        user.setAccountLocked(true);
+        RefreshToken session = RefreshToken.builder()
+                .user(user)
+                .token("locked-refresh-token")
+                .expiresAt(LocalDateTime.now().plusHours(1))
+                .build();
+        when(refreshTokenRepository.findByToken("hash-locked-refresh-token")).thenReturn(Optional.of(session));
+
+        assertThrows(
+                iuh.fit.se.nextalk_be.exception.UnauthorizedException.class,
+                () -> authService.refreshToken(
+                        TokenRefreshRequest.builder().refreshToken("locked-refresh-token").build(),
+                        httpRequest));
+
+        verify(sessionRevocationService).revokeAllForUser(user);
+        verify(jwtService, never()).generateAccessToken(eq(user), anyString());
+    }
+
+    @Test
+    void refresh_ReusedTokenRevokesAllUserSessions() {
+        RefreshToken reused = RefreshToken.builder().user(user).build();
+        when(refreshTokenRepository.findByToken("hash-stolen-old-token")).thenReturn(Optional.empty());
+        when(refreshTokenRepository.findByUsedTokenDigestsContaining("hash-stolen-old-token"))
+                .thenReturn(Optional.of(reused));
+
+        assertThrows(
+                iuh.fit.se.nextalk_be.exception.UnauthorizedException.class,
+                () -> authService.refreshToken(
+                        TokenRefreshRequest.builder().refreshToken("stolen-old-token").build(),
+                        httpRequest));
+
+        verify(sessionRevocationService).revokeAllForUser(user);
+    }
+
+    @Test
     void logout_ClosesSocketsBoundToDeletedSession() {
         RefreshToken session = RefreshToken.builder()
                 .user(user)
                 .token("refresh-a")
                 .build();
         session.setId("session-a");
-        when(refreshTokenRepository.findByToken("refresh-a")).thenReturn(Optional.of(session));
+        when(refreshTokenRepository.findByToken("hash-refresh-a")).thenReturn(Optional.of(session));
 
         authService.logout(TokenRefreshRequest.builder().refreshToken("refresh-a").build());
 

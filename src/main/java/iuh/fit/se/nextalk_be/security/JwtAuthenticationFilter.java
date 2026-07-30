@@ -17,6 +17,7 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.stereotype.Component;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
+import iuh.fit.se.nextalk_be.service.SessionRevocationService;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -28,6 +29,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final SessionRevocationService sessionRevocationService;
 
     @Override
     protected void doFilterInternal(
@@ -49,6 +51,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             userEmail = jwtService.extractUsername(jwt);
             if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
                 UserDetails userDetails = this.userDetailsService.loadUserByUsername(userEmail);
+                if (!isAccountUsable(userDetails)) {
+                    if (userDetails instanceof User user) {
+                        sessionRevocationService.revokeAllForUser(user);
+                    }
+                    filterChain.doFilter(request, response);
+                    return;
+                }
                 String sessionId = jwtService.extractSessionId(jwt);
                 boolean activeSession = sessionId == null
                         || (userDetails instanceof User user
@@ -71,5 +80,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private boolean isAccountUsable(UserDetails userDetails) {
+        return userDetails.isAccountNonLocked()
+                && userDetails.isAccountNonExpired()
+                && userDetails.isCredentialsNonExpired()
+                && userDetails.isEnabled();
     }
 }

@@ -25,6 +25,7 @@ public class EmailVerification extends BaseEntity {
     @Indexed(unique = true)
     private String token;
 
+    @Indexed(expireAfter = "0s")
     private LocalDateTime expiresAt;
 
     @Builder.Default

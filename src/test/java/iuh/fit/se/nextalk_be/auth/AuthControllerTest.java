@@ -7,6 +7,7 @@ import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.EmailVerificationRepository;
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
+import iuh.fit.se.nextalk_be.security.SecureTokenService;
 
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -51,6 +52,9 @@ public class AuthControllerTest {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private SecureTokenService secureTokenService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -109,7 +113,7 @@ public class AuthControllerTest {
         String token = UUID.randomUUID().toString();
         EmailVerification verification = EmailVerification.builder()
                 .user(user)
-                .token(token)
+                .token(secureTokenService.digest(token))
                 .expiresAt(LocalDateTime.now().plusHours(1))
                 .verified(false)
                 .build();

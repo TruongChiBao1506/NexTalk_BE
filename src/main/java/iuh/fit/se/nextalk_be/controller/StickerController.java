@@ -8,6 +8,7 @@ import iuh.fit.se.nextalk_be.service.StickerService;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -28,6 +29,7 @@ public class StickerController {
     }
 
     @PostMapping("/packs")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> createPack(@RequestBody StickerPackRequest request) {
         return ResponseEntity.ok(Map.of(
             "success", true,
@@ -36,24 +38,28 @@ public class StickerController {
     }
 
     @PostMapping("/packs/{packId}/stickers")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> addStickersToPack(@PathVariable String packId, @RequestBody AddStickersRequest request) {
         stickerService.addStickers(packId, request);
         return ResponseEntity.ok(Map.of("success", true));
     }
 
     @PatchMapping("/packs/{packId}/toggle")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> togglePackActive(@PathVariable String packId, @RequestBody ToggleRequest request) {
         stickerService.togglePack(packId, request.getIsActive());
         return ResponseEntity.ok(Map.of("success", true));
     }
 
     @PatchMapping("/packs/{packId}/stickers/{stickerId}/toggle")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> toggleStickerActive(@PathVariable String packId, @PathVariable String stickerId, @RequestBody ToggleRequest request) {
         stickerService.toggleSticker(packId, stickerId, request.getIsActive());
         return ResponseEntity.ok(Map.of("success", true));
     }
 
     @DeleteMapping("/packs/{packId}/stickers/{stickerId}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> deleteSticker(@PathVariable String packId, @PathVariable String stickerId) {
         stickerService.deleteSticker(packId, stickerId);
         return ResponseEntity.ok(Map.of("success", true));

@@ -5,6 +5,7 @@ import iuh.fit.se.nextalk_be.entity.User;
 
 import lombok.*;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.DocumentReference;
 
@@ -23,8 +24,10 @@ public class PasswordResetToken {
     @DocumentReference(lazy = true)
     private User user;
 
+    @Indexed(unique = true)
     private String token;
 
+    @Indexed(expireAfter = "0s")
     private LocalDateTime expiresAt;
 
     @Builder.Default

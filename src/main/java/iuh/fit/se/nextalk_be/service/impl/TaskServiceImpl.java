@@ -2,7 +2,12 @@ package iuh.fit.se.nextalk_be.service.impl;
 
 import iuh.fit.se.nextalk_be.dto.request.TaskRequest;
 import iuh.fit.se.nextalk_be.dto.response.TaskResponse;
+import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.Task;
+import iuh.fit.se.nextalk_be.exception.BadRequestException;
+import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
+import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
+import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.TaskRepository;
 import iuh.fit.se.nextalk_be.service.TaskService;
 import lombok.RequiredArgsConstructor;
@@ -18,10 +23,14 @@ import java.util.stream.Collectors;
 public class TaskServiceImpl implements TaskService {
 
     private final TaskRepository taskRepository;
+    private final ConversationRepository conversationRepository;
     private final SimpMessagingTemplate messagingTemplate;
 
     @Override
     public TaskResponse createTask(String creatorId, TaskRequest request) {
+        Conversation conversation = requireConversationMember(request.getConversationId(), creatorId);
+        validateAssignees(conversation, request.getAssigneeIds());
+
         Task task = Task.builder()
                 .conversationId(request.getConversationId())
                 .name(request.getName())
@@ -48,7 +57,14 @@ public class TaskServiceImpl implements TaskService {
     @Override
     public TaskResponse updateTask(String userId, String taskId, TaskRequest request) {
         Task task = taskRepository.findById(taskId)
-                .orElseThrow(() -> new RuntimeException("Task not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Task not found"));
+        Conversation conversation = requireConversationMember(task.getConversationId(), userId);
+
+        if (request.getConversationId() != null
+                && !task.getConversationId().equals(request.getConversationId())) {
+            throw new BadRequestException("A task cannot be moved to another conversation");
+        }
+        validateAssignees(conversation, request.getAssigneeIds());
 
         if (request.getName() != null) task.setName(request.getName());
         if (request.getDescription() != null) task.setDescription(request.getDescription());
@@ -72,7 +88,8 @@ public class TaskServiceImpl implements TaskService {
     @Override
     public void deleteTask(String userId, String taskId) {
         Task task = taskRepository.findById(taskId)
-                .orElseThrow(() -> new RuntimeException("Task not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Task not found"));
+        requireConversationMember(task.getConversationId(), userId);
 
         taskRepository.delete(task);
 
@@ -80,10 +97,41 @@ public class TaskServiceImpl implements TaskService {
     }
 
     @Override
-    public List<TaskResponse> getTasksByConversation(String conversationId) {
+    public List<TaskResponse> getTasksByConversation(String userId, String conversationId) {
+        requireConversationMember(conversationId, userId);
         return taskRepository.findByConversationId(conversationId).stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
+    }
+
+    private Conversation requireConversationMember(String conversationId, String userId) {
+        if (conversationId == null || conversationId.isBlank()) {
+            throw new BadRequestException("Conversation ID is required");
+        }
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation not found"));
+        boolean isMember = conversation.getMembers() != null
+                && conversation.getMembers().stream()
+                .anyMatch(member -> member != null && userId.equals(member.getId()));
+        if (!isMember) {
+            throw new UnauthorizedException("You are not a member of this conversation");
+        }
+        return conversation;
+    }
+
+    private void validateAssignees(Conversation conversation, List<String> assigneeIds) {
+        if (assigneeIds == null || assigneeIds.isEmpty()) {
+            return;
+        }
+        java.util.Set<String> memberIds = conversation.getMembers() == null
+                ? java.util.Set.of()
+                : conversation.getMembers().stream()
+                .filter(java.util.Objects::nonNull)
+                .map(member -> member.getId())
+                .collect(java.util.stream.Collectors.toSet());
+        if (assigneeIds.stream().anyMatch(id -> id == null || !memberIds.contains(id))) {
+            throw new BadRequestException("Every task assignee must be a conversation member");
+        }
     }
 
     private TaskResponse mapToResponse(Task task) {

@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.service;
 
 import iuh.fit.se.nextalk_be.dto.SummaryMessagePayload;
 import iuh.fit.se.nextalk_be.entity.MediaAsset;
+import iuh.fit.se.nextalk_be.entity.MediaAssetStatus;
 import iuh.fit.se.nextalk_be.entity.MessageAttachment;
 import iuh.fit.se.nextalk_be.repository.MediaAssetRepository;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +46,7 @@ public class GeminiMultimodalService {
     );
 
     private final MediaAssetRepository mediaAssetRepository;
+    private final CloudinaryService cloudinaryService;
     private final RestTemplate restTemplate;
 
     @Value("${app.ai-multimodal.max-images:3}")
@@ -56,7 +58,7 @@ public class GeminiMultimodalService {
     @Value("${app.ai-multimodal.max-total-image-bytes:10485760}")
     private long maxTotalImageBytes;
 
-    @Value("${app.ai-multimodal.allowed-hosts:res.cloudinary.com}")
+    @Value("${app.ai-multimodal.allowed-hosts:res.cloudinary.com,api.cloudinary.com}")
     private String allowedHosts;
 
     public List<Map<String, Object>> buildParts(String prompt, List<SummaryMessagePayload> messages) {
@@ -129,14 +131,15 @@ public class GeminiMultimodalService {
         }
 
         MediaAsset asset = registeredAsset.get();
-        if (asset.getSize() == null || asset.getSize() <= 0 || asset.getSize() > maxImageBytes) {
+        if (asset.getStatus() == null || !asset.getStatus().isShareable()
+                || asset.getSize() == null || asset.getSize() <= 0 || asset.getSize() > maxImageBytes) {
             log.debug("Skipping Gemini image attachment because its registered size is outside the limit");
             return Optional.empty();
         }
 
         URI uri;
         try {
-            uri = URI.create(asset.getUrl());
+            uri = URI.create(cloudinaryService.createDownloadUrl(asset));
         } catch (IllegalArgumentException exception) {
             return Optional.empty();
         }

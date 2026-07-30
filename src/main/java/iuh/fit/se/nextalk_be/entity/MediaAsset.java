@@ -25,12 +25,18 @@ public class MediaAsset {
     private String hash;
 
     private String url;
+    /** Provider URL; never serialize or return this value to clients. */
+    private String storageUrl;
     private String publicId;
     private String resourceType;
     private String format;
     private Long size;
     private String contentType;
     private LocalDateTime createdAt;
+    private LocalDateTime scannedAt;
+
+    @Builder.Default
+    private MediaAssetStatus status = MediaAssetStatus.QUARANTINED;
 
     @Builder.Default
     private Set<String> allowedUserIds = new HashSet<>();

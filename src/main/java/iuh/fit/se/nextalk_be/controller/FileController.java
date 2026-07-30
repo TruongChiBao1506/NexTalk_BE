@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.controller;
 
 import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
 import iuh.fit.se.nextalk_be.dto.response.FileUploadResponse;
+import iuh.fit.se.nextalk_be.entity.MediaAsset;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.CloudinaryService;
 import iuh.fit.se.nextalk_be.service.MediaAuthorizationService;
@@ -32,6 +33,7 @@ import java.util.Map;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.client.RestTemplate;
 
 @RestController
@@ -53,7 +55,12 @@ public class FileController {
         if (request.getSize() != null && request.getSize() > 50L * 1024 * 1024) {
             return ResponseEntity.badRequest().body(ApiResponse.error("File exceeds the 50 MB limit", null));
         }
-        DirectUploadPrepareResponse response = cloudinaryService.prepareDirectUpload(request);
+        DirectUploadPrepareResponse response;
+        try {
+            response = cloudinaryService.prepareDirectUpload(request);
+        } catch (RuntimeException exception) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(exception.getMessage(), null));
+        }
         if (response.isDeduplicated() && response.getFile() != null) {
             mediaAuthorizationService.claimUpload(response.getFile().getUrl());
         }
@@ -115,19 +122,31 @@ public class FileController {
             @RequestParam("url") String url,
             @RequestParam("fileName") String fileName) {
         rateLimitService.check("file:download", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(10));
-        mediaAuthorizationService.assertCanDownload(url);
+        MediaAsset asset = mediaAuthorizationService.assertCanDownload(url);
+        return downloadFromStorage(asset, fileName, true);
+    }
 
+    @GetMapping("/content/{assetId}")
+    @Operation(summary = "Read a protected attachment")
+    public ResponseEntity<byte[]> readProtectedAsset(@PathVariable String assetId) {
+        rateLimitService.check("file:content", rateLimitService.currentUserIdentity(), 180, Duration.ofMinutes(10));
+        MediaAsset asset = mediaAuthorizationService.assertCanDownloadAsset(assetId);
+        return downloadFromStorage(asset, "attachment", false);
+    }
+
+    private ResponseEntity<byte[]> downloadFromStorage(MediaAsset asset, String fileName, boolean attachment) {
         URI source;
         try {
-            source = URI.create(url);
-        } catch (IllegalArgumentException exception) {
-            return ResponseEntity.badRequest().build();
+            source = URI.create(cloudinaryService.createDownloadUrl(asset));
+        } catch (RuntimeException exception) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).build();
         }
-
         String host = source.getHost();
         if (!"https".equalsIgnoreCase(source.getScheme())
                 || host == null
-                || !(host.equals("res.cloudinary.com") || host.endsWith(".res.cloudinary.com"))) {
+                || !(host.equals("api.cloudinary.com")
+                || host.equals("res.cloudinary.com")
+                || host.endsWith(".res.cloudinary.com"))) {
             return ResponseEntity.badRequest().build();
         }
 
@@ -141,9 +160,12 @@ public class FileController {
             MediaType contentType = upstream.getHeaders().getContentType();
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(contentType != null ? contentType : MediaType.APPLICATION_OCTET_STREAM);
-            headers.setContentDisposition(ContentDisposition.attachment()
-                    .filename(safeFileName, StandardCharsets.UTF_8)
-                    .build());
+            headers.setContentDisposition((attachment
+                    ? ContentDisposition.attachment()
+                    : ContentDisposition.inline())
+                    .filename(safeFileName, StandardCharsets.UTF_8).build());
+            headers.setCacheControl("private, no-store");
+            headers.set("X-Content-Type-Options", "nosniff");
             headers.setContentLength(upstream.getBody().length);
             return ResponseEntity.ok().headers(headers).body(upstream.getBody());
         } catch (Exception exception) {

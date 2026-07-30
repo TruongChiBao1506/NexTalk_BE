@@ -17,4 +17,6 @@ public interface CloudinaryService {
     FileUploadResponse uploadGeneratedImage(byte[] data, String contentType, String fileName) throws IOException;
     DirectUploadPrepareResponse prepareDirectUpload(DirectUploadPrepareRequest request);
     FileUploadResponse confirmDirectUpload(DirectUploadConfirmRequest request) throws Exception;
+    void deleteAsset(iuh.fit.se.nextalk_be.entity.MediaAsset asset) throws IOException;
+    String createDownloadUrl(iuh.fit.se.nextalk_be.entity.MediaAsset asset);
 }

@@ -22,6 +22,7 @@ import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
 import iuh.fit.se.nextalk_be.service.PresenceService;
 import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
 import iuh.fit.se.nextalk_be.entity.RefreshToken;
+import iuh.fit.se.nextalk_be.security.ChatPinSecurityService;
 
 
 import lombok.RequiredArgsConstructor;
@@ -51,6 +52,7 @@ public class UserServiceImpl implements UserService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final WebSocketSessionRegistry webSocketSessionRegistry;
     private final FriendshipRepository friendshipRepository;
+    private final ChatPinSecurityService chatPinSecurityService;
 
     public User getCurrentAuthenticatedUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -252,52 +254,32 @@ public class UserServiceImpl implements UserService {
             throw new BadRequestException("Chat PIN is already set. Reset it first if forgotten.");
         }
         user.setChatPin(passwordEncoder.encode(pin));
+        chatPinSecurityService.clearFailures(user);
         return mapToProfileResponse(userRepository.save(user));
     }
 
-    public UserProfileResponse resetChatPin(String pin) {
+    public UserProfileResponse resetChatPin(String pin, String currentPassword) {
         User user = getCurrentAuthenticatedUser();
+        List<Conversation> hiddenConversations =
+                conversationRepository.findAllByHiddenByUsersContaining(user.getId());
 
-        // 1. Find all conversations hidden by this user
-        List<Conversation> hiddenConversations = conversationRepository.findAllByHiddenByUsersContaining(user.getId());
-
-        if (pin != null && !pin.isEmpty()) {
-            // "Nhớ mã cũ" flow: Validate PIN
-            if (user.getChatPin() == null || !passwordEncoder.matches(pin, user.getChatPin())) {
-                throw new BadRequestException("Mã PIN không chính xác");
-            }
-            
-            // Unhide conversations without deleting messages
-            for (Conversation conv : hiddenConversations) {
-                if (conv.getHiddenByUsers() != null) {
-                    conv.getHiddenByUsers().remove(user.getId());
-                }
-                conversationRepository.save(conv);
-            }
-        } else {
-            // "Quên mã cũ" flow: Delete messages and unhide
-            for (Conversation conv : hiddenConversations) {
-                List<Message> messages = messageRepository.findAllByConversationId(conv.getId());
-                for (Message msg : messages) {
-                    if (msg.getDeletedByUsers() == null) {
-                        msg.setDeletedByUsers(new ArrayList<>());
-                    }
-                    if (!msg.getDeletedByUsers().contains(user.getId())) {
-                        msg.getDeletedByUsers().add(user.getId());
-                    }
-                }
-                messageRepository.saveAll(messages);
-
-                // Remove from hidden list
-                if (conv.getHiddenByUsers() != null) {
-                    conv.getHiddenByUsers().remove(user.getId());
-                }
-                conversationRepository.save(conv);
-            }
+        if (pin != null && !pin.isBlank()) {
+            chatPinSecurityService.verifyOrThrow(user, pin);
+        } else if (currentPassword == null || currentPassword.isBlank()
+                || !passwordEncoder.matches(currentPassword, user.getPassword())) {
+            throw new BadRequestException("Current password is required to reset a forgotten PIN");
         }
 
-        // 3. Clear user PIN
+        // A PIN reset only unhides conversations. It never marks their messages
+        // as deleted, so users cannot lose history by choosing "forgot PIN".
+        for (Conversation conversation : hiddenConversations) {
+            if (conversation.getHiddenByUsers() != null) {
+                conversation.getHiddenByUsers().remove(user.getId());
+            }
+            conversationRepository.save(conversation);
+        }
         user.setChatPin(null);
+        chatPinSecurityService.clearFailures(user);
         return mapToProfileResponse(userRepository.save(user));
     }
 

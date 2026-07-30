@@ -38,11 +38,24 @@ The application reads environment variables directly. You can set them in your t
 # Required
 SPRING_DATA_MONGODB_URI=mongodb://localhost:27017/nextalk
 JWT_SECRET=replace-with-a-long-random-secret
+TOKEN_PEPPER=replace-with-a-separate-random-secret-of-at-least-32-bytes
 SPRING_MAIL_USERNAME=your-email@example.com
 SPRING_MAIL_PASSWORD=your-app-password
 CLOUDINARY_CLOUD_NAME=your-cloud-name
 CLOUDINARY_API_KEY=your-api-key
 CLOUDINARY_API_SECRET=your-api-secret
+
+# Render Free: restricted basic upload mode without antivirus
+MALWARE_SCANNER_ENABLED=false
+ALLOW_BASIC_UNSCANNED_UPLOADS=true
+
+# Full antivirus mode (use instead when a ClamAV service is available)
+# MALWARE_SCANNER_ENABLED=true
+# ALLOW_BASIC_UNSCANNED_UPLOADS=false
+# MALWARE_SCANNER_HOST=clamav
+# MALWARE_SCANNER_PORT=3310
+# Set true only after every legacy public attachment has been migrated or removed
+MEDIA_PRIVATE_MIGRATION_COMPLETE=false
 
 # Required for AI image editing
 GEMINI_API_KEY=your-gemini-api-key
@@ -74,7 +87,7 @@ AI_REPLY_RATE_LIMIT=20
 AI_MULTIMODAL_MAX_IMAGES=3
 AI_MULTIMODAL_MAX_IMAGE_BYTES=5242880
 AI_MULTIMODAL_MAX_TOTAL_IMAGE_BYTES=10485760
-AI_MULTIMODAL_ALLOWED_HOSTS=res.cloudinary.com
+AI_MULTIMODAL_ALLOWED_HOSTS=res.cloudinary.com,api.cloudinary.com
 TASK_ASSISTANT_ENABLED=true
 TASK_ASSISTANT_AGENT=antigravity-preview-05-2026
 TASK_ASSISTANT_MODEL=gemini-3.6-flash
@@ -93,7 +106,13 @@ FCM uses `FIREBASE_CREDENTIALS` (JSON service account directly or Base64 encoded
 
 Cloudinary is the default image-editing provider and supports structured remove, replace, recolor, background replace, generative fill, and restore operations. It reuses the existing Cloudinary credentials. Gemini and Cloudflare remain available as fallbacks by setting `IMAGE_AI_PROVIDER=gemini` or `IMAGE_AI_PROVIDER=cloudflare`; Cloudflare's custom token needs both `Workers AI - Read` and `Workers AI - Edit` account permissions. Keep all provider tokens only in the deployment platform's secret manager.
 
-`SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `REDIS_HOST`, `REDIS_PORT`, `PORT`, summary, and Agora configurations all have default values in `application.properties`. MongoDB URI, JWT secret, mail credentials, and Cloudinary do not have default values.
+Private attachment delivery is compatible with the Cloudinary Free plan. The backend uses the existing `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` to mint a signed `private_download_url` that expires after 10 minutes, then proxies the bytes after checking the requesting user's access. No premium auth-token key is required or accepted.
+
+Render Free can use the explicitly acknowledged restricted mode by setting `MALWARE_SCANNER_ENABLED=false` and `ALLOW_BASIC_UNSCANNED_UPLOADS=true`; `MALWARE_SCANNER_HOST` and `MALWARE_SCANNER_PORT` are not needed in this mode. Files still go through the backend, size/extension/MIME/magic-byte checks, executable/active-content blocking, quarantine, and private Cloudinary delivery. Only JPEG, PNG, GIF, WebP, MP4, WebM, QuickTime, MP3, M4A, OGG, WAV, and plain-text files are accepted; PDF, ZIP, and Office documents are rejected. Accepted assets are marked `BASIC_VALIDATED`, not antivirus-clean. This is a cost-compatible risk reduction, not a substitute for ClamAV.
+
+For full antivirus protection, run ClamAV, set `MALWARE_SCANNER_ENABLED=true`, set its host/port, and leave `ALLOW_BASIC_UNSCANNED_UPLOADS=false`. Production refuses to start when scanning is disabled unless the restricted mode is explicitly acknowledged. It also refuses to start unless direct browser-to-Cloudinary upload is disabled and `MEDIA_PRIVATE_MIGRATION_COMPLETE=true`. Existing raw refresh/reset/email/QR tokens are intentionally invalidated when `TOKEN_PEPPER` storage is deployed, so users may need to sign in or request a new link.
+
+`SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `REDIS_HOST`, `REDIS_PORT`, `PORT`, summary, and Agora configurations all have default values in `application.properties`. MongoDB URI, JWT/token secrets, mail credentials, and Cloudinary do not have safe production defaults.
 
 ## Run Locally
 

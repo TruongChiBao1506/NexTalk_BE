@@ -30,10 +30,13 @@ import iuh.fit.se.nextalk_be.repository.QrLoginSessionRepository;
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.security.JwtService;
+import iuh.fit.se.nextalk_be.security.AtomicTokenStore;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
+import iuh.fit.se.nextalk_be.security.SecureTokenService;
 import iuh.fit.se.nextalk_be.service.MailService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
+import iuh.fit.se.nextalk_be.service.SessionRevocationService;
 
 
 import lombok.RequiredArgsConstructor;
@@ -57,7 +60,6 @@ import java.util.List;
 import java.util.UUID;
 import java.util.Map;
 
-import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -78,6 +80,9 @@ public class AuthServiceImpl implements AuthService {
     private final RateLimitService rateLimitService;
     private final SimpMessagingTemplate messagingTemplate;
     private final WebSocketSessionRegistry webSocketSessionRegistry;
+    private final SessionRevocationService sessionRevocationService;
+    private final SecureTokenService secureTokenService;
+    private final AtomicTokenStore atomicTokenStore;
 
     @Value("${server.port:8080}")
     private String serverPort;
@@ -111,10 +116,10 @@ public class AuthServiceImpl implements AuthService {
         User savedUser = userRepository.save(user);
 
         // Generate email verification token
-        String token = UUID.randomUUID().toString();
+        String token = secureTokenService.generate();
         EmailVerification verification = EmailVerification.builder()
                 .user(savedUser)
-                .token(token)
+                .token(secureTokenService.digest(token))
                 .expiresAt(LocalDateTime.now().plusHours(24))
                 .verified(false)
                 .build();
@@ -139,23 +144,13 @@ public class AuthServiceImpl implements AuthService {
 
     // @Transactional
     public void verifyEmail(String token) {
-        EmailVerification verification = emailVerificationRepository.findByToken(token)
-                .orElseThrow(() -> new ResourceNotFoundException("Verification token not found"));
-
-        if (verification.isVerified()) {
-            throw new BadRequestException("Email is already verified");
-        }
-
-        if (verification.getExpiresAt().isBefore(LocalDateTime.now())) {
-            throw new BadRequestException("Verification token has expired");
-        }
+        EmailVerification verification = atomicTokenStore
+                .consumeEmailVerification(secureTokenService.digest(token), LocalDateTime.now())
+                .orElseThrow(() -> new BadRequestException("Verification token is invalid, expired, or already used"));
 
         User user = verification.getUser();
         user.setVerified(true);
         userRepository.save(user);
-
-        verification.setVerified(true);
-        emailVerificationRepository.save(verification);
     }
 
     // @Transactional
@@ -168,6 +163,7 @@ public class AuthServiceImpl implements AuthService {
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + request.getEmail()));
 
+        ensureAccountUsable(user);
         if (!user.isVerified()) {
             throw new BadRequestException("Account not verified. Please verify your email first.");
         }
@@ -187,9 +183,10 @@ public class AuthServiceImpl implements AuthService {
     // @Transactional
     public TokenRefreshResponse refreshToken(TokenRefreshRequest request, HttpServletRequest httpRequest) {
         String requestRefreshToken = request.getRefreshToken();
+        String requestTokenDigest = secureTokenService.digest(requestRefreshToken);
 
-        RefreshToken token = refreshTokenRepository.findByToken(requestRefreshToken)
-                .orElseGet(() -> handleMissingRefreshToken(requestRefreshToken));
+        RefreshToken token = refreshTokenRepository.findByToken(requestTokenDigest)
+                .orElseGet(() -> handleMissingRefreshToken(requestTokenDigest));
 
         if (token.getExpiresAt().isBefore(LocalDateTime.now())) {
             refreshTokenRepository.delete(token);
@@ -197,16 +194,19 @@ public class AuthServiceImpl implements AuthService {
         }
 
         User user = token.getUser();
-        String newAccessToken = jwtService.generateAccessToken(user, token.getId());
-        String newRefreshToken = jwtService.generateRefreshToken(user);
-
-        // Rotate the same token record to avoid a delete/save gap.
-        token.setToken(newRefreshToken);
-        token.setExpiresAt(refreshTokenExpiresAt());
-        token.setLastUsedAt(LocalDateTime.now());
-        token.setIpAddress(resolveIpAddress(httpRequest));
-        token.setUserAgent(resolveUserAgent(httpRequest));
-        refreshTokenRepository.save(token);
+        ensureAccountUsable(user);
+        String newRefreshToken = secureTokenService.generate();
+        LocalDateTime now = LocalDateTime.now();
+        RefreshToken rotated = atomicTokenStore.rotateRefreshToken(
+                        token.getId(),
+                        requestTokenDigest,
+                        secureTokenService.digest(newRefreshToken),
+                        refreshTokenExpiresAt(),
+                        now,
+                        resolveIpAddress(httpRequest),
+                        resolveUserAgent(httpRequest))
+                .orElseGet(() -> handleMissingRefreshToken(requestTokenDigest));
+        String newAccessToken = jwtService.generateAccessToken(user, rotated.getId());
 
         return TokenRefreshResponse.builder()
                 .accessToken(newAccessToken)
@@ -215,10 +215,12 @@ public class AuthServiceImpl implements AuthService {
     }
 
     private IssuedSession issueRefreshToken(User user, HttpServletRequest httpRequest) {
-        String refreshToken = jwtService.generateRefreshToken(user);
+        ensureAccountUsable(user);
+        String refreshToken = secureTokenService.generate();
         RefreshToken refreshTokenEntity = RefreshToken.builder()
                 .user(user)
-                .token(refreshToken)
+                .token(secureTokenService.digest(refreshToken))
+                .familyId(secureTokenService.generate())
                 .expiresAt(refreshTokenExpiresAt())
                 .ipAddress(resolveIpAddress(httpRequest))
                 .userAgent(resolveUserAgent(httpRequest))
@@ -230,13 +232,23 @@ public class AuthServiceImpl implements AuthService {
 
     private record IssuedSession(RefreshToken session, String refreshToken) {}
 
+    private void ensureAccountUsable(User user) {
+        if (user == null || !user.isAccountNonLocked() || !user.isEnabled()
+                || !user.isAccountNonExpired() || !user.isCredentialsNonExpired()) {
+            if (user != null) {
+                sessionRevocationService.revokeAllForUser(user);
+            }
+            throw new UnauthorizedException("Account is disabled or locked");
+        }
+    }
+
     private LocalDateTime refreshTokenExpiresAt() {
         return LocalDateTime.now().plus(Duration.ofMillis(jwtService.getRefreshExpirationMs()));
     }
 
-    private RefreshToken handleMissingRefreshToken(String requestRefreshToken) {
-        // A missing token belongs to one revoked/rotated session. Never revoke every
-        // session for the account here, otherwise one stale device logs out all others.
+    private RefreshToken handleMissingRefreshToken(String requestTokenDigest) {
+        refreshTokenRepository.findByUsedTokenDigestsContaining(requestTokenDigest)
+                .ifPresent(reused -> sessionRevocationService.revokeAllForUser(reused.getUser()));
         throw new UnauthorizedException("Refresh token was reused or revoked. Please sign in again.");
     }
 
@@ -247,10 +259,10 @@ public class AuthServiceImpl implements AuthService {
 
         passwordResetTokenRepository.deleteByUser(user);
 
-        String token = UUID.randomUUID().toString();
+        String token = secureTokenService.generate();
         PasswordResetToken resetToken = PasswordResetToken.builder()
                 .user(user)
-                .token(token)
+                .token(secureTokenService.digest(token))
                 .expiresAt(LocalDateTime.now().plusMinutes(15))
                 .used(false)
                 .build();
@@ -275,16 +287,9 @@ public class AuthServiceImpl implements AuthService {
 
     // @Transactional
     public void resetPassword(ResetPasswordRequest request) {
-        PasswordResetToken resetToken = passwordResetTokenRepository.findByToken(request.getToken())
-                .orElseThrow(() -> new ResourceNotFoundException("Invalid or expired reset token"));
-
-        if (resetToken.isUsed()) {
-            throw new BadRequestException("Token has already been used");
-        }
-
-        if (resetToken.getExpiresAt().isBefore(LocalDateTime.now())) {
-            throw new BadRequestException("Reset token has expired");
-        }
+        PasswordResetToken resetToken = atomicTokenStore
+                .consumePasswordReset(secureTokenService.digest(request.getToken()), LocalDateTime.now())
+                .orElseThrow(() -> new BadRequestException("Reset token is invalid, expired, or already used"));
 
         User user = resetToken.getUser();
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
@@ -294,8 +299,6 @@ public class AuthServiceImpl implements AuthService {
         refreshTokenRepository.deleteByUser(user);
         webSocketSessionRegistry.closeLoginSessions(activeSessions.stream().map(RefreshToken::getId).toList());
 
-        resetToken.setUsed(true);
-        passwordResetTokenRepository.save(resetToken);
     }
 
     public LoginResponse googleLogin(GoogleLoginRequest request, HttpServletRequest httpRequest) {
@@ -359,9 +362,11 @@ public class AuthServiceImpl implements AuthService {
     }
 
     public QrLoginInitResponse initQrLogin(HttpServletRequest httpRequest) {
+        String sessionId = secureTokenService.generate();
+        String qrToken = secureTokenService.generate();
         QrLoginSession session = QrLoginSession.builder()
-                .sessionId(UUID.randomUUID().toString())
-                .qrToken(UUID.randomUUID() + "-" + UUID.randomUUID())
+                .sessionId(secureTokenService.digest(sessionId))
+                .qrToken(secureTokenService.digest(qrToken))
                 .status(QrLoginStatus.PENDING)
                 .expiresAt(LocalDateTime.now().plusMinutes(2))
                 .ipAddress(resolveIpAddress(httpRequest))
@@ -370,14 +375,15 @@ public class AuthServiceImpl implements AuthService {
 
         QrLoginSession savedSession = qrLoginSessionRepository.save(session);
         return QrLoginInitResponse.builder()
-                .sessionId(savedSession.getSessionId())
-                .qrToken(savedSession.getQrToken())
+                .sessionId(sessionId)
+                .qrToken(qrToken)
                 .expiresAt(savedSession.getExpiresAt())
                 .build();
     }
 
     public QrLoginStatusResponse getQrLoginStatus(String sessionId, HttpServletRequest httpRequest) {
-        QrLoginSession session = qrLoginSessionRepository.findBySessionId(sessionId)
+        String sessionDigest = secureTokenService.digest(sessionId);
+        QrLoginSession session = qrLoginSessionRepository.findBySessionId(sessionDigest)
                 .orElseThrow(() -> new ResourceNotFoundException("QR login session not found"));
 
         if (isQrSessionExpired(session)) {
@@ -391,6 +397,8 @@ public class AuthServiceImpl implements AuthService {
                     .build();
         }
 
+        session = atomicTokenStore.consumeConfirmedQr(sessionDigest, LocalDateTime.now())
+                .orElseThrow(() -> new BadRequestException("QR login session was already consumed"));
         User user = session.getUser();
         if (user == null) {
             return saveQrStatus(session, QrLoginStatus.EXPIRED, null);
@@ -403,10 +411,6 @@ public class AuthServiceImpl implements AuthService {
                 .user(userService.mapToProfileResponse(user))
                 .build();
 
-        session.setStatus(QrLoginStatus.CONSUMED);
-        session.setConsumedAt(LocalDateTime.now());
-        qrLoginSessionRepository.save(session);
-
         return QrLoginStatusResponse.builder()
                 .status(QrLoginStatus.CONFIRMED)
                 .expiresAt(session.getExpiresAt())
@@ -416,21 +420,12 @@ public class AuthServiceImpl implements AuthService {
 
     public QrLoginStatusResponse confirmQrLogin(QrLoginConfirmRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
-        QrLoginSession session = qrLoginSessionRepository.findByQrToken(request.getQrToken())
-                .orElseThrow(() -> new ResourceNotFoundException("QR login session not found"));
-
-        if (isQrSessionExpired(session)) {
-            return saveQrStatus(session, QrLoginStatus.EXPIRED, null);
-        }
-
-        if (session.getStatus() == QrLoginStatus.CONFIRMED || session.getStatus() == QrLoginStatus.CONSUMED) {
-            throw new BadRequestException("QR login session was already used");
-        }
-
-        session.setUser(currentUser);
-        session.setStatus(QrLoginStatus.CONFIRMED);
-        session.setConfirmedAt(LocalDateTime.now());
-        qrLoginSessionRepository.save(session);
+        QrLoginSession session = atomicTokenStore
+                .confirmPendingQr(
+                        secureTokenService.digest(request.getQrToken()),
+                        currentUser,
+                        LocalDateTime.now())
+                .orElseThrow(() -> new BadRequestException("QR login session is invalid, expired, or already used"));
 
         return QrLoginStatusResponse.builder()
                 .status(QrLoginStatus.CONFIRMED)
@@ -459,7 +454,7 @@ public class AuthServiceImpl implements AuthService {
     // @Transactional
     public void logout(TokenRefreshRequest request) {
         if (request != null && request.getRefreshToken() != null) {
-            refreshTokenRepository.findByToken(request.getRefreshToken())
+            refreshTokenRepository.findByToken(secureTokenService.digest(request.getRefreshToken()))
                     .ifPresent(token -> {
                         removeSessionFcmToken(token);
                         refreshTokenRepository.delete(token);

@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.file;
 
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.MediaAsset;
+import iuh.fit.se.nextalk_be.entity.MediaAssetStatus;
 import iuh.fit.se.nextalk_be.entity.MessageAttachment;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
@@ -37,6 +38,7 @@ class MediaAuthorizationServiceTest {
         conversation.setId("conversation-id");
         MediaAsset asset = MediaAsset.builder()
                 .url("https://res.cloudinary.com/test/file.png")
+                .status(MediaAssetStatus.BASIC_VALIDATED)
                 .allowedUserIds(new HashSet<>(Set.of(owner.getId())))
                 .conversationIds(new HashSet<>())
                 .build();

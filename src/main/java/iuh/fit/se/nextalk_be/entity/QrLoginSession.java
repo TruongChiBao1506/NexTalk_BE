@@ -27,6 +27,7 @@ public class QrLoginSession extends BaseEntity {
     @DocumentReference
     private User user;
 
+    @Indexed(expireAfter = "0s")
     private LocalDateTime expiresAt;
 
     private LocalDateTime confirmedAt;

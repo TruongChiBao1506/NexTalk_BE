@@ -9,5 +9,5 @@ public interface TaskService {
     TaskResponse createTask(String creatorId, TaskRequest request);
     TaskResponse updateTask(String userId, String taskId, TaskRequest request);
     void deleteTask(String userId, String taskId);
-    List<TaskResponse> getTasksByConversation(String conversationId);
+    List<TaskResponse> getTasksByConversation(String userId, String conversationId);
 }

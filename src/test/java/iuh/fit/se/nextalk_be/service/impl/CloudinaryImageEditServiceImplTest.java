@@ -6,6 +6,7 @@ import iuh.fit.se.nextalk_be.dto.request.ImageEditOperation;
 import iuh.fit.se.nextalk_be.dto.request.ImageEditRequest;
 import iuh.fit.se.nextalk_be.dto.response.FileUploadResponse;
 import iuh.fit.se.nextalk_be.dto.response.ImageEditResponse;
+import iuh.fit.se.nextalk_be.entity.MediaAsset;
 import iuh.fit.se.nextalk_be.entity.Message;
 import iuh.fit.se.nextalk_be.entity.MessageType;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
@@ -121,8 +122,15 @@ class CloudinaryImageEditServiceImplTest {
                 .messageType(MessageType.IMAGE)
                 .build();
         byte[] generated = new byte[]{1, 2, 3, 4};
+        MediaAsset authorizedAsset = MediaAsset.builder()
+                .hash("source-hash")
+                .publicId("nextalk/assets/source")
+                .resourceType("image")
+                .format("png")
+                .build();
 
         when(messageRepository.findById("message-1")).thenReturn(Optional.of(message));
+        when(mediaAuthorizationService.assertCanDownload(SOURCE_URL)).thenReturn(authorizedAsset);
         when(restTemplate.getForEntity(any(URI.class), eq(byte[].class)))
                 .thenReturn(ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(generated));
         when(cloudinaryService.uploadGeneratedImage(eq(generated), eq("image/png"), any()))
@@ -142,7 +150,7 @@ class CloudinaryImageEditServiceImplTest {
         String generatedUrl = uriCaptor.getValue().toString();
         assertTrue(generatedUrl.contains("/s--"));
         assertTrue(generatedUrl.contains("e_gen_remove:prompt_red%20car"));
-        assertTrue(generatedUrl.contains("/v123/nextalk/assets/source.png"));
+        assertTrue(generatedUrl.contains("/nextalk/assets/source.png"));
         verify(mediaAuthorizationService).assertCanDownload(SOURCE_URL);
         verify(mediaAuthorizationService).claimUpload(result.getUrl());
     }

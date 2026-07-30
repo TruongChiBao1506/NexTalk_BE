@@ -81,9 +81,8 @@ public class CloudflareImageEditServiceImpl implements ImageEditService {
         if (message.isRecalled() || !isImageInMessage(message, request.getSourceUrl())) {
             throw new BadRequestException("The selected image is not available in this message");
         }
-        mediaAuthorizationService.assertCanDownload(request.getSourceUrl());
-
-        SourceImage source = downloadSource(request.getSourceUrl());
+        var authorizedAsset = mediaAuthorizationService.assertCanDownload(request.getSourceUrl());
+        SourceImage source = downloadSource(cloudinaryService.createDownloadUrl(authorizedAsset));
         PreparedImage prepared = prepareForCloudflare(source.bytes());
 
         HttpHeaders headers = new HttpHeaders();
@@ -164,7 +163,9 @@ public class CloudflareImageEditServiceImpl implements ImageEditService {
         String host = uri.getHost();
         if (!"https".equalsIgnoreCase(uri.getScheme())
                 || host == null
-                || !(host.equals("res.cloudinary.com") || host.endsWith(".res.cloudinary.com"))) {
+                || !(host.equals("api.cloudinary.com")
+                || host.equals("res.cloudinary.com")
+                || host.endsWith(".res.cloudinary.com"))) {
             throw new BadRequestException("Only NexTalk Cloudinary images can be edited");
         }
 

@@ -3,6 +3,7 @@ package iuh.fit.se.nextalk_be.service;
 import iuh.fit.se.nextalk_be.dto.request.ImageEditRequest;
 import iuh.fit.se.nextalk_be.dto.response.FileUploadResponse;
 import iuh.fit.se.nextalk_be.dto.response.ImageEditResponse;
+import iuh.fit.se.nextalk_be.entity.MediaAsset;
 import iuh.fit.se.nextalk_be.entity.Message;
 import iuh.fit.se.nextalk_be.entity.MessageType;
 import iuh.fit.se.nextalk_be.exception.AppException;
@@ -47,6 +48,8 @@ import static org.mockito.Mockito.when;
 class CloudflareImageEditServiceImplTest {
     private static final String SOURCE_URL =
             "https://res.cloudinary.com/demo/image/upload/source.png";
+    private static final String PRIVATE_SOURCE_URL =
+            "https://api.cloudinary.com/v1_1/demo/image/download?signature=signed";
 
     @Mock
     private MessageRepository messageRepository;
@@ -90,9 +93,17 @@ class CloudflareImageEditServiceImplTest {
                 .build();
         byte[] largeSource = png(900, 600);
         byte[] generated = png(512, 512);
+        MediaAsset authorizedAsset = MediaAsset.builder()
+                .hash("source-hash")
+                .publicId("nextalk/assets/source")
+                .resourceType("image")
+                .format("png")
+                .build();
 
         when(messageRepository.findById("message-1")).thenReturn(Optional.of(message));
-        when(restTemplate.getForEntity(URI.create(SOURCE_URL), byte[].class))
+        when(mediaAuthorizationService.assertCanDownload(SOURCE_URL)).thenReturn(authorizedAsset);
+        when(cloudinaryService.createDownloadUrl(authorizedAsset)).thenReturn(PRIVATE_SOURCE_URL);
+        when(restTemplate.getForEntity(URI.create(PRIVATE_SOURCE_URL), byte[].class))
                 .thenReturn(ResponseEntity.ok()
                         .contentType(MediaType.IMAGE_PNG)
                         .body(largeSource));

@@ -24,10 +24,17 @@ public class UserReport extends BaseEntity {
     private String description;
 
     // AI Fields
-    private String aiVerdict; // SAFE, WARN, BAN, HUMAN_REVIEW
+    private String aiVerdict; // SAFE, WARN, HUMAN_REVIEW, ERROR (advisory only)
     private String aiReasoning;
 
     // Report Status
     @Builder.Default
-    private String status = "PENDING"; // PENDING, RESOLVED, DISMISSED
+    private String status = "PENDING"; // PENDING, PENDING_REVIEW, RESOLVED, DISMISSED
+
+    private ModerationDecision finalDecision;
+
+    @DBRef
+    private User resolvedBy;
+
+    private java.time.LocalDateTime resolvedAt;
 }

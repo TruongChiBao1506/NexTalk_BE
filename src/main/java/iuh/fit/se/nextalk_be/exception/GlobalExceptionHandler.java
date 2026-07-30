@@ -16,8 +16,11 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.UUID;
+import lombok.extern.slf4j.Slf4j;
 
 @RestControllerAdvice
+@Slf4j
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(AppException.class)
@@ -44,13 +47,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ApiResponse<Void>> handleAccessDeniedException(AccessDeniedException ex) {
-        ApiResponse<Void> response = ApiResponse.error("Access denied: " + ex.getMessage());
+        ApiResponse<Void> response = ApiResponse.error("Access denied");
         return new ResponseEntity<>(response, HttpStatus.FORBIDDEN);
     }
 
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ApiResponse<Void>> handleAuthenticationException(AuthenticationException ex) {
-        ApiResponse<Void> response = ApiResponse.error("Authentication failed: " + ex.getMessage());
+        ApiResponse<Void> response = ApiResponse.error("Authentication failed");
         return new ResponseEntity<>(response, HttpStatus.UNAUTHORIZED);
     }
 
@@ -62,7 +65,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGenericException(Exception ex) {
-        ApiResponse<Void> response = ApiResponse.error("An unexpected error occurred: " + ex.getMessage());
-        return new ResponseEntity<>(response, HttpStatus.INTERNAL_SERVER_ERROR);
+        String correlationId = UUID.randomUUID().toString();
+        log.error("Unhandled request failure; correlationId={}, errorType={}",
+                correlationId, ex.getClass().getSimpleName());
+        ApiResponse<Void> response = ApiResponse.error(
+                "An unexpected error occurred. Reference: " + correlationId);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .header("X-Correlation-Id", correlationId)
+                .body(response);
     }
 }

@@ -60,19 +60,17 @@ public class CloudinaryImageEditServiceImpl implements ImageEditService {
         if (message.isRecalled() || !isImageInMessage(message, request.getSourceUrl())) {
             throw new BadRequestException("The selected image is not available in this message");
         }
-        mediaAuthorizationService.assertCanDownload(request.getSourceUrl());
-
-        CloudinaryAsset asset = parseSource(request.getSourceUrl());
+        var authorizedAsset = mediaAuthorizationService.assertCanDownload(request.getSourceUrl());
+        CloudinaryAsset asset = validatedImageAsset(authorizedAsset);
         String transformation = buildTransformation(request);
-        String transformedUrl = cloudinary.url()
+        var urlBuilder = cloudinary.url()
                 .resourceType("image")
-                .type("upload")
+                .type("authenticated")
                 .secure(true)
                 .signed(true)
-                .version(asset.version())
                 .format(asset.format())
-                .transformation(new Transformation<>().rawTransformation(transformation))
-                .generate(asset.publicId());
+                .transformation(new Transformation<>().rawTransformation(transformation));
+        String transformedUrl = urlBuilder.generate(asset.publicId());
 
         GeneratedImage generated = downloadWhenReady(URI.create(transformedUrl));
         try {
@@ -150,40 +148,18 @@ public class CloudinaryImageEditServiceImpl implements ImageEditService {
         return value;
     }
 
-    private CloudinaryAsset parseSource(String sourceUrl) {
-        URI uri;
-        try {
-            uri = URI.create(sourceUrl);
-        } catch (IllegalArgumentException exception) {
-            throw new BadRequestException("Invalid source image URL");
+    private CloudinaryAsset validatedImageAsset(iuh.fit.se.nextalk_be.entity.MediaAsset asset) {
+        if (asset == null
+                || !"image".equalsIgnoreCase(asset.getResourceType())
+                || asset.getPublicId() == null || asset.getPublicId().isBlank()
+                || asset.getFormat() == null || asset.getFormat().isBlank()) {
+            throw new BadRequestException("The selected attachment is not a valid private image");
         }
-        String expectedPrefix = "/" + cloudinary.config.cloudName + "/image/upload/";
-        if (!"https".equalsIgnoreCase(uri.getScheme())
-                || !"res.cloudinary.com".equalsIgnoreCase(uri.getHost())
-                || !uri.getPath().startsWith(expectedPrefix)) {
-            throw new BadRequestException("Only NexTalk Cloudinary images can be edited");
-        }
-
-        String remainder = uri.getPath().substring(expectedPrefix.length());
-        String version = null;
-        String assetPath = remainder;
-        String[] segments = remainder.split("/");
-        for (int index = 0; index < segments.length; index++) {
-            if (segments[index].matches("v\\d+")) {
-                version = segments[index].substring(1);
-                assetPath = String.join("/", java.util.Arrays.copyOfRange(segments, index + 1, segments.length));
-                break;
-            }
-        }
-        int dot = assetPath.lastIndexOf('.');
-        if (dot <= assetPath.lastIndexOf('/') || dot == assetPath.length() - 1) {
-            throw new BadRequestException("Cloudinary source image format is missing");
-        }
-        String format = assetPath.substring(dot + 1).toLowerCase(Locale.ROOT);
+        String format = asset.getFormat().toLowerCase(Locale.ROOT);
         if (!Set.of("jpg", "jpeg", "png", "webp").contains(format)) {
             throw new BadRequestException("Cloudinary AI chỉ hỗ trợ ảnh JPG, PNG hoặc WebP.");
         }
-        return new CloudinaryAsset(assetPath.substring(0, dot), format, version);
+        return new CloudinaryAsset(asset.getPublicId(), format);
     }
 
     private GeneratedImage downloadWhenReady(URI uri) {
@@ -275,7 +251,7 @@ public class CloudinaryImageEditServiceImpl implements ImageEditService {
         };
     }
 
-    private record CloudinaryAsset(String publicId, String format, String version) {}
+    private record CloudinaryAsset(String publicId, String format) {}
 
     private record GeneratedImage(byte[] bytes, String contentType) {}
 }

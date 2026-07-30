@@ -116,8 +116,8 @@ public class FCMServiceImpl implements FCMService {
                                 .build())
                         .build();
 
-                String response = FirebaseMessaging.getInstance().send(message);
-                log.info("Successfully sent FCM message: {}", response);
+                FirebaseMessaging.getInstance().send(message);
+                log.debug("FCM message accepted");
             } catch (Exception e) {
                 log.error("Failed to send FCM message: {}", e.getMessage());
             }
@@ -167,8 +167,8 @@ public class FCMServiceImpl implements FCMService {
                                         .build())
                                 .build())
                         .build();
-                String response = FirebaseMessaging.getInstance().send(message);
-                log.info("Successfully sent chat FCM message: {}", response);
+                FirebaseMessaging.getInstance().send(message);
+                log.debug("Chat FCM message accepted");
             } catch (FirebaseMessagingException e) {
                 if (e.getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED) {
                     removeInvalidToken(token);
@@ -311,7 +311,7 @@ public class FCMServiceImpl implements FCMService {
             if (response.statusCode() >= 200 && response.statusCode() < 300) {
                 log.info("Successfully sent Expo push message");
             } else {
-                log.warn("Failed to send Expo push message. Status: {}, Body: {}", response.statusCode(), response.body());
+                log.warn("Expo push provider rejected a notification with status {}", response.statusCode());
             }
         } catch (Exception e) {
             log.error("Failed to send Expo push message: {}", e.getMessage());

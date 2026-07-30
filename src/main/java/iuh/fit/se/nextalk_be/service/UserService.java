@@ -38,7 +38,7 @@ public interface UserService {
     public UserProfileResponse updatePresenceStatus(String statusStr);
     public void changePassword(ChangePasswordRequest request);
     public UserProfileResponse setupChatPin(String pin);
-    public UserProfileResponse resetChatPin(String pin);
+    public UserProfileResponse resetChatPin(String pin, String currentPassword);
     public UserProfileResponse mapToProfileResponse(User user);
     ProfileQrResponse getProfileQr();
     ProfileQrResponse rotateProfileQr();

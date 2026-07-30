@@ -97,15 +97,18 @@ public class UserController {
     @PostMapping("/chat-pin/setup")
     @Operation(summary = "Set up a new chat PIN code")
     public ResponseEntity<ApiResponse<UserProfileResponse>> setupChatPin(@Valid @RequestBody ChatPinRequest request) {
+        rateLimitService.check("chat-pin:setup", rateLimitService.currentUserIdentity(), 5, Duration.ofMinutes(15));
         UserProfileResponse response = userService.setupChatPin(request.getPin());
         return ResponseEntity.ok(ApiResponse.success(response, "Chat PIN set up successfully"));
     }
 
     @PostMapping("/chat-pin/reset")
-    @Operation(summary = "Reset chat PIN and clear all hidden conversations history")
-    public ResponseEntity<ApiResponse<UserProfileResponse>> resetChatPin(@RequestBody(required = false) ChatPinRequest request) {
+    @Operation(summary = "Reset chat PIN without deleting hidden conversation history")
+    public ResponseEntity<ApiResponse<UserProfileResponse>> resetChatPin(@Valid @RequestBody ChatPinRequest request) {
+        rateLimitService.check("chat-pin:reset", rateLimitService.currentUserIdentity(), 5, Duration.ofMinutes(15));
         String pin = request != null ? request.getPin() : null;
-        UserProfileResponse response = userService.resetChatPin(pin);
+        String currentPassword = request != null ? request.getCurrentPassword() : null;
+        UserProfileResponse response = userService.resetChatPin(pin, currentPassword);
         return ResponseEntity.ok(ApiResponse.success(response, "Chat PIN reset successfully"));
     }
 }

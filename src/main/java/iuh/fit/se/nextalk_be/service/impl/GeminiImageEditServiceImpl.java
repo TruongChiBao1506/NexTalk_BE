@@ -76,9 +76,8 @@ public class GeminiImageEditServiceImpl implements ImageEditService {
         if (message.isRecalled() || !isImageInMessage(message, request.getSourceUrl())) {
             throw new BadRequestException("The selected image is not available in this message");
         }
-        mediaAuthorizationService.assertCanDownload(request.getSourceUrl());
-
-        SourceImage source = downloadSource(request.getSourceUrl());
+        var authorizedAsset = mediaAuthorizationService.assertCanDownload(request.getSourceUrl());
+        SourceImage source = downloadSource(cloudinaryService.createDownloadUrl(authorizedAsset));
         Map<String, Object> payload = Map.of(
                 "contents", List.of(Map.of(
                         "role", "user",
@@ -151,7 +150,9 @@ public class GeminiImageEditServiceImpl implements ImageEditService {
         String host = uri.getHost();
         if (!"https".equalsIgnoreCase(uri.getScheme())
                 || host == null
-                || !(host.equals("res.cloudinary.com") || host.endsWith(".res.cloudinary.com"))) {
+                || !(host.equals("api.cloudinary.com")
+                || host.equals("res.cloudinary.com")
+                || host.endsWith(".res.cloudinary.com"))) {
             throw new BadRequestException("Only NexTalk Cloudinary images can be edited");
         }
         ResponseEntity<byte[]> response = restTemplate.getForEntity(uri, byte[].class);

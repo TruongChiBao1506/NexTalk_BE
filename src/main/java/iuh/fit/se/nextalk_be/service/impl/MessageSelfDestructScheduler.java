@@ -6,6 +6,7 @@ import iuh.fit.se.nextalk_be.entity.Message;
 import iuh.fit.se.nextalk_be.entity.MessageType;
 import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
+import iuh.fit.se.nextalk_be.service.MediaAuthorizationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -29,6 +30,7 @@ public class MessageSelfDestructScheduler {
     private final MessageRepository messageRepository;
     private final ConversationRepository conversationRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final MediaAuthorizationService mediaAuthorizationService;
 
     @Scheduled(fixedDelay = 2_000L)
     @Transactional
@@ -47,9 +49,24 @@ public class MessageSelfDestructScheduler {
                     continue;
                 }
 
+                List<String> attachmentUrls = message.getAttachments() == null
+                        ? List.of()
+                        : message.getAttachments().stream()
+                                .filter(java.util.Objects::nonNull)
+                                .map(iuh.fit.se.nextalk_be.entity.MessageAttachment::getUrl)
+                                .filter(java.util.Objects::nonNull)
+                                .distinct()
+                                .toList();
                 message.setRecalled(true);
-                message.setContent("Tin nhắn đã bị thu hồi");
+                message.setContent("Tin nhắn tự hủy đã được xóa");
+                message.setAttachments(new java.util.ArrayList<>());
+                message.setMetadata(java.util.Map.of());
+                message.setReactions(new java.util.ArrayList<>());
+                message.setParentId(null);
+                message.setForwardedFromMessageId(null);
+                message.setForwardedFromSenderUsername(null);
                 Message saved = messageRepository.save(message);
+                attachmentUrls.forEach(mediaAuthorizationService::queueDeletionIfUnreferenced);
 
                 // Build a lightweight response to broadcast
                 MessageResponse response = buildRecallResponse(saved);
@@ -94,7 +111,7 @@ public class MessageSelfDestructScheduler {
                 .conversationId(conversationId)
                 .senderId(senderId)
                 .senderUsername(senderUsername)
-                .content("Tin nhắn đã bị thu hồi")
+                .content("Tin nhắn tự hủy đã được xóa")
                 .messageType(message.getMessageType() != null ? message.getMessageType().name() : null)
                 .isRecalled(true)
                 .createdAt(message.getCreatedAt())

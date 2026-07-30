@@ -23,6 +23,7 @@ import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
 import iuh.fit.se.nextalk_be.security.WebSocketSubscriptionAuthorizer;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
+import iuh.fit.se.nextalk_be.service.SessionRevocationService;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.CloseStatus;
@@ -50,8 +51,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final WebSocketSessionRegistry webSocketSessionRegistry;
     private final WebSocketSubscriptionAuthorizer subscriptionAuthorizer;
     private final RateLimitService rateLimitService;
+    private final SessionRevocationService sessionRevocationService;
 
-    @Value("${app.websocket.allowed-origin-patterns:*}")
+    @Value("${app.websocket.allowed-origin-patterns:http://localhost:3000,http://localhost:3001}")
     private String[] webSocketAllowedOriginPatterns;
 
     @Value("${app.websocket.inbound-core-pool-size:4}")
@@ -235,6 +237,15 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         }
 
         UserDetails userDetails = userDetailsService.loadUserByUsername(userEmail);
+        if (!userDetails.isAccountNonLocked()
+                || !userDetails.isAccountNonExpired()
+                || !userDetails.isCredentialsNonExpired()
+                || !userDetails.isEnabled()) {
+            if (userDetails instanceof User user) {
+                sessionRevocationService.revokeAllForUser(user);
+            }
+            throw new org.springframework.messaging.MessageDeliveryException("Account is disabled or locked");
+        }
         if (!jwtService.isTokenValid(jwt, userDetails)) {
             throw new org.springframework.messaging.MessageDeliveryException("Token is invalid or expired");
         }

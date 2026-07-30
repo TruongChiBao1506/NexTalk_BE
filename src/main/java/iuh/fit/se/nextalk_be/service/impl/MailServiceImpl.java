@@ -44,14 +44,10 @@ public class MailServiceImpl implements MailService {
             helper.setSubject(subject);
             helper.setText(htmlContent, true);
             mailSender.send(message);
-            log.info("Password reset email sent successfully to {}", toEmail);
+            log.info("Password reset email accepted by the mail provider");
         } catch (Exception e) {
-            log.error("Failed to send password reset email to {}. Fallback: logging the reset link: {}",
-                    toEmail, resetLink, e);
-            System.out.println("=================================================");
-            System.out.println("PASSWORD RESET LINK FOR " + toEmail + ":");
-            System.out.println(resetLink);
-            System.out.println("=================================================");
+            log.error("Failed to send password reset email; providerErrorType={}",
+                    e.getClass().getSimpleName());
         }
     }
 
@@ -80,15 +76,10 @@ public class MailServiceImpl implements MailService {
             helper.setSubject(subject);
             helper.setText(htmlContent, true);
             mailSender.send(message);
-            log.info("Verification email sent successfully to {}", toEmail);
+            log.info("Verification email accepted by the mail provider");
         } catch (Exception e) {
-            log.error("Failed to send verification email to {}. Fallback: logging the verification link: {}",
-                    toEmail, verificationLink, e);
-            // Fallback for developers who haven't set up the mail server
-            System.out.println("=================================================");
-            System.out.println("VERIFICATION LINK FOR " + toEmail + ":");
-            System.out.println(verificationLink);
-            System.out.println("=================================================");
+            log.error("Failed to send verification email; providerErrorType={}",
+                    e.getClass().getSimpleName());
         }
     }
 }

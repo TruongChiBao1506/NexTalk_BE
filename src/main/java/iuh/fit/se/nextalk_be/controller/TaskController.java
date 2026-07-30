@@ -49,9 +49,10 @@ public class TaskController {
 
     @GetMapping("/conversation/{conversationId}")
     public ResponseEntity<ApiResponse<List<TaskResponse>>> getTasksByConversation(
+            @AuthenticationPrincipal User userDetails,
             @PathVariable String conversationId
     ) {
-        List<TaskResponse> responses = taskService.getTasksByConversation(conversationId);
+        List<TaskResponse> responses = taskService.getTasksByConversation(userDetails.getId(), conversationId);
         return ResponseEntity.ok(ApiResponse.success(responses));
     }
 }

@@ -19,6 +19,9 @@ public class UserReportResponse {
     private String status;
     private String aiVerdict;
     private String aiReasoning;
+    private String finalDecision;
+    private String resolvedById;
+    private LocalDateTime resolvedAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

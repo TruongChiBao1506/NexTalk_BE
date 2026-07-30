@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.service;
 
 import iuh.fit.se.nextalk_be.dto.SummaryMessagePayload;
 import iuh.fit.se.nextalk_be.entity.MediaAsset;
+import iuh.fit.se.nextalk_be.entity.MediaAssetStatus;
 import iuh.fit.se.nextalk_be.entity.MessageAttachment;
 import iuh.fit.se.nextalk_be.repository.MediaAssetRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,22 +24,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 class GeminiMultimodalServiceTest {
 
     private MediaAssetRepository mediaAssetRepository;
     private RestTemplate restTemplate;
+    private CloudinaryService cloudinaryService;
     private GeminiMultimodalService service;
 
     @BeforeEach
     void setUp() {
         mediaAssetRepository = mock(MediaAssetRepository.class);
         restTemplate = mock(RestTemplate.class);
-        service = new GeminiMultimodalService(mediaAssetRepository, restTemplate);
+        cloudinaryService = mock(CloudinaryService.class);
+        when(cloudinaryService.createDownloadUrl(any(MediaAsset.class)))
+                .thenAnswer(invocation -> ((MediaAsset) invocation.getArgument(0)).getUrl());
+        service = new GeminiMultimodalService(mediaAssetRepository, cloudinaryService, restTemplate);
         ReflectionTestUtils.setField(service, "maxImages", 3);
         ReflectionTestUtils.setField(service, "maxImageBytes", 5_242_880L);
         ReflectionTestUtils.setField(service, "maxTotalImageBytes", 10_485_760L);
-        ReflectionTestUtils.setField(service, "allowedHosts", "res.cloudinary.com");
+        ReflectionTestUtils.setField(service, "allowedHosts", "res.cloudinary.com,api.cloudinary.com");
     }
 
     @Test
@@ -55,9 +61,13 @@ class GeminiMultimodalServiceTest {
                 .url(url)
                 .contentType("image/png")
                 .size((long) bytes.length)
+                .status(MediaAssetStatus.CLEAN)
                 .build();
+        String privateUrl =
+                "https://api.cloudinary.com/v1_1/demo/image/download?signature=signed";
         when(mediaAssetRepository.findByUrl(url)).thenReturn(Optional.of(asset));
-        when(restTemplate.getForEntity(URI.create(url), byte[].class))
+        when(cloudinaryService.createDownloadUrl(asset)).thenReturn(privateUrl);
+        when(restTemplate.getForEntity(URI.create(privateUrl), byte[].class))
                 .thenReturn(ResponseEntity.ok()
                         .contentType(MediaType.IMAGE_PNG)
                         .body(bytes));
@@ -110,6 +120,7 @@ class GeminiMultimodalServiceTest {
                 .url(url)
                 .contentType("image/png")
                 .size(100L)
+                .status(MediaAssetStatus.CLEAN)
                 .build()));
 
         List<Map<String, Object>> parts = service.buildParts(

@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.service;
 
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.MediaAsset;
+import iuh.fit.se.nextalk_be.entity.MediaAssetStatus;
 import iuh.fit.se.nextalk_be.entity.MessageAttachment;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
@@ -28,6 +29,7 @@ public class MediaAuthorizationService {
         User user = userService.getCurrentAuthenticatedUser();
         MediaAsset asset = mediaAssets.findByUrl(url)
                 .orElseThrow(() -> new ResourceNotFoundException("Uploaded asset was not registered"));
+        assertClean(asset);
         ensureSets(asset);
         asset.getAllowedUserIds().add(user.getId());
         mediaAssets.save(asset);
@@ -39,6 +41,7 @@ public class MediaAuthorizationService {
             if (attachment == null || attachment.getUrl() == null) continue;
             MediaAsset asset = mediaAssets.findByUrl(attachment.getUrl())
                     .orElseThrow(() -> new BadRequestException("Attachment is not a registered NexTalk upload"));
+            assertClean(asset);
             ensureSets(asset);
             if (!canAccess(asset, user)) throw new BadRequestException("You do not have access to this attachment");
             asset.getAllowedUserIds().add(user.getId());
@@ -47,14 +50,30 @@ public class MediaAuthorizationService {
         }
     }
 
-    public void assertCanDownload(String url) {
+    public MediaAsset assertCanDownload(String url) {
         User user = userService.getCurrentAuthenticatedUser();
         MediaAsset asset = mediaAssets.findByUrl(url)
                 .orElseThrow(() -> new ResourceNotFoundException("File is not registered"));
+        assertClean(asset);
         ensureSets(asset);
         if (!canAccess(asset, user) && !canAccessLegacyMessage(url, user)) {
             throw new BadRequestException("You do not have access to this file");
         }
+        return asset;
+    }
+
+    public MediaAsset assertCanDownloadAsset(String assetId) {
+        MediaAsset asset = mediaAssets.findById(assetId)
+                .orElseThrow(() -> new ResourceNotFoundException("File is not registered"));
+        return assertCanDownload(asset.getUrl());
+    }
+
+    public void queueDeletionIfUnreferenced(String url) {
+        if (url == null || !messages.findByAttachmentUrl(url).isEmpty()) return;
+        mediaAssets.findByUrl(url).ifPresent(asset -> {
+            asset.setStatus(MediaAssetStatus.PENDING_DELETE);
+            mediaAssets.save(asset);
+        });
     }
 
     private boolean canAccess(MediaAsset asset, User user) {
@@ -79,5 +98,11 @@ public class MediaAuthorizationService {
     private void ensureSets(MediaAsset asset) {
         if (asset.getAllowedUserIds() == null) asset.setAllowedUserIds(new HashSet<>());
         if (asset.getConversationIds() == null) asset.setConversationIds(new HashSet<>());
+    }
+
+    private void assertClean(MediaAsset asset) {
+        if (asset.getStatus() == null || !asset.getStatus().isShareable()) {
+            throw new BadRequestException("File is quarantined or was rejected");
+        }
     }
 }

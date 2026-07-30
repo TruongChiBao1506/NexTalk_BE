@@ -3,6 +3,9 @@ package iuh.fit.se.nextalk_be.service.impl;
 import iuh.fit.se.nextalk_be.dto.response.TaskActivityResponse;
 import iuh.fit.se.nextalk_be.entity.*;
 import iuh.fit.se.nextalk_be.repository.*;
+import iuh.fit.se.nextalk_be.exception.BadRequestException;
+import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
+import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
 import iuh.fit.se.nextalk_be.service.ChannelTaskActivityService;
 import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.UserService;
@@ -23,6 +26,8 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
 
     private final ChannelTaskActivityRepository activityRepository;
     private final ChannelTaskRepository taskRepository;
+    private final ChannelRepository channelRepository;
+    private final GroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
     private final UserService userService;
     private final iuh.fit.se.nextalk_be.service.FCMService fcmService;
@@ -32,6 +37,7 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
     @Override
     public List<TaskActivityResponse> getActivities(String groupId, String channelId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
+        requireAccessibleChannel(groupId, channelId, currentUser);
         List<ChannelTaskActivity> activities = activityRepository
                 .findAllByGroupIdAndChannelIdOrderByCreatedAtDesc(groupId, channelId);
 
@@ -90,6 +96,7 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
     @Override
     public void markAllAsRead(String groupId, String channelId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
+        requireAccessibleChannel(groupId, channelId, currentUser);
         List<ChannelTaskActivity> activities = activityRepository
                 .findAllByGroupIdAndChannelIdOrderByCreatedAtDesc(groupId, channelId);
 
@@ -105,6 +112,31 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
 
         if (updated) {
             activityRepository.saveAll(activities);
+        }
+    }
+
+    private void requireAccessibleChannel(String groupId, String channelId, User user) {
+        Group group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new ResourceNotFoundException("Group not found"));
+        Channel channel = channelRepository.findById(channelId)
+                .orElseThrow(() -> new ResourceNotFoundException("Channel not found"));
+        if (channel.getGroup() == null || !groupId.equals(channel.getGroup().getId())) {
+            throw new BadRequestException("Channel does not belong to this group");
+        }
+
+        boolean isOwner = group.getOwner() != null && user.getId().equals(group.getOwner().getId());
+        boolean isMember = groupMemberRepository.existsByGroupIdAndUserId(groupId, user.getId());
+        if (!isOwner && !isMember) {
+            throw new UnauthorizedException("You are not a member of this group");
+        }
+
+        Conversation conversation = channel.getConversation();
+        boolean isPrivateChannelMember = conversation != null
+                && conversation.getMembers() != null
+                && conversation.getMembers().stream()
+                .anyMatch(member -> member != null && user.getId().equals(member.getId()));
+        if (channel.isPrivate() && !isPrivateChannelMember) {
+            throw new UnauthorizedException("You are not a member of this channel");
         }
     }
 

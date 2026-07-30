@@ -9,4 +9,5 @@ import java.util.List;
 @Repository
 public interface UserReportRepository extends MongoRepository<UserReport, String> {
     List<UserReport> findByReportedUserIdOrderByCreatedAtDesc(String reportedUserId);
+    List<UserReport> findByStatusInOrderByCreatedAtAsc(List<String> statuses);
 }

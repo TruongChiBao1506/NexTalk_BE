@@ -25,6 +25,7 @@ import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.service.UserService;
 import iuh.fit.se.nextalk_be.service.ConversationNotificationPreferenceService;
+import iuh.fit.se.nextalk_be.security.ChatPinSecurityService;
 
 
 import iuh.fit.se.nextalk_be.dto.response.ConversationWithPreviewsResponse;
@@ -60,6 +61,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final MessageService messageService;
     private final ConversationNotificationPreferenceService conversationNotificationPreferenceService;
     private final MongoTemplate mongoTemplate;
+    private final ChatPinSecurityService chatPinSecurityService;
 
     @Transactional
     public ConversationResponse getOrCreatePrivateConversation(String friendId) {
@@ -639,10 +641,9 @@ public class ConversationServiceImpl implements ConversationService {
         // Check if query is a PIN match
         boolean isPinMatch = false;
         if (currentUser.getChatPin() != null && trimmedQuery.length() == 4) {
-            if (trimmedQuery.matches("\\d{4}") && passwordEncoder.matches(trimmedQuery, currentUser.getChatPin())) {
+            if (trimmedQuery.matches("\\d{4}")) {
+                chatPinSecurityService.verifyOrThrow(currentUser, trimmedQuery);
                 isPinMatch = true;
-            } else if (trimmedQuery.matches("\\d{4}")) {
-                throw new BadRequestException("Mã PIN không chính xác");
             }
         }
 

@@ -61,6 +61,11 @@ public class User extends BaseEntity implements UserDetails {
 
     private String chatPin;
 
+    @Builder.Default
+    private int chatPinFailedAttempts = 0;
+
+    private java.time.LocalDateTime chatPinLockedUntil;
+
     /** Birthday stored as YYYY-MM-dd (e.g. 2000-07-11) */
     private String birthday;
 
@@ -84,11 +89,15 @@ public class User extends BaseEntity implements UserDetails {
     private boolean isAccountLocked = false;
 
     @Builder.Default
+    private UserRole role = UserRole.USER;
+
+    @Builder.Default
     private List<String> fcmTokens = new java.util.ArrayList<>();
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(new SimpleGrantedAuthority("ROLE_USER"));
+        UserRole effectiveRole = role == null ? UserRole.USER : role;
+        return List.of(new SimpleGrantedAuthority("ROLE_" + effectiveRole.name()));
     }
 
     @Override
