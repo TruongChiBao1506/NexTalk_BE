@@ -35,3 +35,8 @@ build/
 
 # Firebase
 firebase-service-account.json
+
+# Local security and operations guides
+/ops/*.md
+/ops/**/*.md
+/ops/backup/*.ps1

@@ -1,7 +1,10 @@
 package iuh.fit.se.nextalk_be.service.impl;
 
 import iuh.fit.se.nextalk_be.entity.Channel;
+import iuh.fit.se.nextalk_be.entity.ChannelTask;
+import iuh.fit.se.nextalk_be.entity.ChannelTaskStatus;
 import iuh.fit.se.nextalk_be.entity.Group;
+import iuh.fit.se.nextalk_be.entity.TaskActivityType;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
 import iuh.fit.se.nextalk_be.exception.UnauthorizedException;
@@ -19,11 +22,17 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.data.domain.Pageable;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -67,9 +76,9 @@ class ChannelTaskActivityServiceSecurityTest {
         channel = Channel.builder().group(group).name("Protected channel").build();
         channel.setId("channel-1");
 
-        when(userService.getCurrentAuthenticatedUser()).thenReturn(outsider);
-        when(groupRepository.findById(group.getId())).thenReturn(Optional.of(group));
-        when(channelRepository.findById(channel.getId())).thenReturn(Optional.of(channel));
+        lenient().when(userService.getCurrentAuthenticatedUser()).thenReturn(outsider);
+        lenient().when(groupRepository.findById(group.getId())).thenReturn(Optional.of(group));
+        lenient().when(channelRepository.findById(channel.getId())).thenReturn(Optional.of(channel));
     }
 
     @Test
@@ -82,7 +91,9 @@ class ChannelTaskActivityServiceSecurityTest {
                 () -> service.markAllAsRead(group.getId(), channel.getId()));
 
         verify(activityRepository, never())
-                .findAllByGroupIdAndChannelIdOrderByCreatedAtDesc(group.getId(), channel.getId());
+                .findTop200ByGroupIdAndChannelIdOrderByCreatedAtDesc(group.getId(), channel.getId());
+        verify(activityRepository, never())
+                .markAllAsRead(group.getId(), channel.getId(), outsider.getId());
     }
 
     @Test
@@ -93,5 +104,48 @@ class ChannelTaskActivityServiceSecurityTest {
 
         assertThrows(BadRequestException.class,
                 () -> service.getActivities(group.getId(), channel.getId()));
+    }
+
+    @Test
+    void marksActivitiesReadWithOneServerSideUpdate() {
+        group.setOwner(outsider);
+
+        service.markAllAsRead(group.getId(), channel.getId());
+
+        verify(activityRepository).markAllAsRead(group.getId(), channel.getId(), outsider.getId());
+        verify(activityRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void deadlineSchedulerUsesBoundedIndexedCandidatesInsteadOfFullScan() {
+        ChannelTask task = ChannelTask.builder()
+                .title("Internal task")
+                .status(ChannelTaskStatus.TODO)
+                .group(group)
+                .channel(channel)
+                .dueAt(LocalDateTime.now().minusMinutes(1))
+                .build();
+        task.setId("task-1");
+        when(taskRepository.findDeadlineCandidates(
+                any(),
+                any(LocalDateTime.class),
+                any(LocalDateTime.class),
+                any(Pageable.class)
+        )).thenReturn(List.of(task));
+        when(activityRepository.existsByTaskIdAndType(task.getId(), TaskActivityType.TASK_OVERDUE))
+                .thenReturn(true);
+        when(taskRepository.save(task)).thenReturn(task);
+
+        service.scanAndRemindTasks();
+
+        verify(taskRepository, never()).findAll();
+        verify(taskRepository).findDeadlineCandidates(
+                any(),
+                any(LocalDateTime.class),
+                any(LocalDateTime.class),
+                org.mockito.ArgumentMatchers.argThat(pageable ->
+                        pageable.getPageNumber() == 0 && pageable.getPageSize() == 100)
+        );
+        assertTrue(task.isOverdueNotificationSent());
     }
 }

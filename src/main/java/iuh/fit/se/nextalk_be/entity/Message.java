@@ -27,6 +27,7 @@ import java.util.Map;
 @CompoundIndex(name = "msg_conv_created_idx", def = "{'conversation': 1, 'createdAt': -1}")
 @CompoundIndex(name = "msg_conv_created_v2", def = "{'conversationId': 1, 'createdAt': -1}")
 @CompoundIndex(name = "msg_conv_updated_v1", def = "{'conversationId': 1, 'updatedAt': 1}")
+@CompoundIndex(name = "msg_expiry_recall_type_idx", def = "{'isRecalled': 1, 'expiresAt': 1, 'messageType': 1}")
 @CompoundIndex(
         name = "msg_sender_client_id_lookup",
         def = "{'conversationId': 1, 'senderId': 1, 'metadata.clientMessageId': 1}",

@@ -60,6 +60,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.PageImpl;
 import java.util.stream.Collectors;
@@ -107,6 +108,7 @@ public class MessageServiceImpl implements MessageService {
     private final AiBotService aiBotService;
     private final VoiceChannelService voiceChannelService;
     private final MediaAuthorizationService mediaAuthorizationService;
+    private final ThreadPoolTaskExecutor applicationTaskExecutor;
 
     @Value("${app.rate-limit.ai-bot.limit:10}")
     private int aiBotRateLimit;
@@ -477,7 +479,7 @@ public class MessageServiceImpl implements MessageService {
             } catch (Exception e) {
                 log.error("Error processing async notifications for message {}: {}", savedMessage.getId(), e.getMessage());
             }
-        });
+        }, applicationTaskExecutor);
 
         if (triggersAiBot) {
             aiBotService.answerMentionAsync(conversation, savedMessage, currentUser);

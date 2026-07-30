@@ -8,6 +8,7 @@ import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.service.MediaAuthorizationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Map;
@@ -29,7 +30,7 @@ class MessageSelfDestructSchedulerTest {
                 .attachments(List.of(MessageAttachment.builder().url("protected-url").build()))
                 .metadata(Map.of("secret", "value"))
                 .build();
-        when(messages.findExpiredMessages(any())).thenReturn(List.of(message));
+        when(messages.findExpiredMessages(any(), any(Pageable.class))).thenReturn(List.of(message));
         when(messages.save(any(Message.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         new MessageSelfDestructScheduler(messages, conversations, messaging, media)
@@ -41,5 +42,7 @@ class MessageSelfDestructSchedulerTest {
         assertTrue(message.getReactions().isEmpty());
         assertFalse(message.getContent().contains("secret"));
         verify(media).queueDeletionIfUnreferenced("protected-url");
+        verify(messages).findExpiredMessages(any(), argThat(pageable ->
+                pageable.getPageNumber() == 0 && pageable.getPageSize() == 100));
     }
 }

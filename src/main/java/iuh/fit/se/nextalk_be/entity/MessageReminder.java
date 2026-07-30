@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Document(collection = "message_reminders")
 @CompoundIndex(name = "reminder_user_status_time_idx", def = "{'user': 1, 'status': 1, 'remindAt': 1}")
+@CompoundIndex(name = "reminder_dispatch_status_time_idx", def = "{'status': 1, 'remindAt': 1}")
 public class MessageReminder extends BaseEntity {
 
     @DocumentReference(lazy = true)

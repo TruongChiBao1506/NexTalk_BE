@@ -15,18 +15,19 @@ import iuh.fit.se.nextalk_be.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.data.domain.PageRequest;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
-import java.util.Comparator;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class MessageReminderServiceImpl implements MessageReminderService {
+    private static final int DISPATCH_BATCH_SIZE = 100;
 
     private final MessageReminderRepository messageReminderRepository;
     private final MessageRepository messageRepository;
@@ -121,10 +122,11 @@ public class MessageReminderServiceImpl implements MessageReminderService {
     @Override
     public void dispatchDueReminders() {
         List<MessageReminder> dueReminders = messageReminderRepository
-                .findByStatusAndRemindAtLessThanEqual(MessageReminderStatus.PENDING, LocalDateTime.now())
-                .stream()
-                .sorted(Comparator.comparing(MessageReminder::getRemindAt))
-                .toList();
+                .findByStatusAndRemindAtLessThanEqualOrderByRemindAtAsc(
+                        MessageReminderStatus.PENDING,
+                        LocalDateTime.now(),
+                        PageRequest.of(0, DISPATCH_BATCH_SIZE)
+                );
 
         for (MessageReminder reminder : dueReminders) {
             try {

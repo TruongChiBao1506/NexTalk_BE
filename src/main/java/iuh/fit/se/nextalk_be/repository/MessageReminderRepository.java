@@ -3,6 +3,7 @@ package iuh.fit.se.nextalk_be.repository;
 import iuh.fit.se.nextalk_be.entity.MessageReminder;
 import iuh.fit.se.nextalk_be.entity.MessageReminderStatus;
 import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
@@ -12,5 +13,9 @@ import java.util.List;
 public interface MessageReminderRepository extends MongoRepository<MessageReminder, String> {
     List<MessageReminder> findByUserIdOrderByRemindAtAsc(String userId);
 
-    List<MessageReminder> findByStatusAndRemindAtLessThanEqual(MessageReminderStatus status, LocalDateTime remindAt);
+    List<MessageReminder> findByStatusAndRemindAtLessThanEqualOrderByRemindAtAsc(
+            MessageReminderStatus status,
+            LocalDateTime remindAt,
+            Pageable pageable
+    );
 }

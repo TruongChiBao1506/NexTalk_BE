@@ -16,6 +16,9 @@ import java.util.Set;
 @AllArgsConstructor
 @Document(collection = "channel_tasks")
 @CompoundIndex(name = "group_channel_archived_status_due_idx", def = "{'group': 1, 'channel': 1, 'archived': 1, 'status': 1, 'dueAt': 1}")
+@CompoundIndex(name = "task_reminder_scan_idx", def = "{'archived': 1, 'status': 1, 'reminderSent': 1, 'reminderAt': 1}")
+@CompoundIndex(name = "task_overdue_scan_idx", def = "{'archived': 1, 'status': 1, 'overdueNotificationSent': 1, 'dueAt': 1}")
+@CompoundIndex(name = "task_approaching_scan_idx", def = "{'archived': 1, 'status': 1, 'approachingNotificationSent': 1, 'dueAt': 1}")
 public class ChannelTask extends BaseEntity {
 
     private String title;
@@ -58,6 +61,12 @@ public class ChannelTask extends BaseEntity {
 
     @Builder.Default
     private boolean reminderSent = false;
+
+    @Builder.Default
+    private boolean overdueNotificationSent = false;
+
+    @Builder.Default
+    private boolean approachingNotificationSent = false;
 
     @Builder.Default
     private TaskRecurrence recurrence = TaskRecurrence.NONE;

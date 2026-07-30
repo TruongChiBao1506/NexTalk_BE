@@ -73,7 +73,7 @@ public interface MessageRepository extends MongoRepository<Message, String> {
             String clientMessageId
     );
 
-    @Query("{'expiresAt': {'$lte': ?0}, 'isRecalled': false}")
-    List<Message> findExpiredMessages(LocalDateTime now);
+    @Query(value = "{'expiresAt': {'$lte': ?0}, 'isRecalled': false, 'messageType': {'$nin': ['SYSTEM', 'POLL']}}",
+            sort = "{'expiresAt': 1, '_id': 1}")
+    List<Message> findExpiredMessages(LocalDateTime now, Pageable pageable);
 }
-

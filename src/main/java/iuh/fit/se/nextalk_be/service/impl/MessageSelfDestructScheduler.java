@@ -10,9 +10,9 @@ import iuh.fit.se.nextalk_be.service.MediaAuthorizationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -26,6 +26,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @Slf4j
 public class MessageSelfDestructScheduler {
+    private static final int BATCH_SIZE = 100;
 
     private final MessageRepository messageRepository;
     private final ConversationRepository conversationRepository;
@@ -33,11 +34,13 @@ public class MessageSelfDestructScheduler {
     private final MediaAuthorizationService mediaAuthorizationService;
 
     @Scheduled(fixedDelay = 2_000L)
-    @Transactional
     public void recallExpiredMessages() {
         try {
             LocalDateTime now = LocalDateTime.now();
-            List<Message> expired = messageRepository.findExpiredMessages(now);
+            List<Message> expired = messageRepository.findExpiredMessages(
+                    now,
+                    PageRequest.of(0, BATCH_SIZE)
+            );
             if (expired.isEmpty()) return;
 
             log.debug("[SelfDestruct] Recalling {} expired message(s)", expired.size());

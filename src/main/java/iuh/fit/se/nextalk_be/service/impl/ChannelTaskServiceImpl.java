@@ -20,6 +20,7 @@ import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.jsoup.Jsoup;
 
 import java.time.Instant;
@@ -47,6 +48,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
     private final UserService userService;
     private final iuh.fit.se.nextalk_be.service.ChannelTaskActivityService taskActivityService;
     private final NotificationService notificationService;
+    private final ThreadPoolTaskExecutor applicationTaskExecutor;
 
     @Override
     public List<ChannelTaskResponse> getTasks(String groupId, String channelId, boolean archived) {
@@ -281,7 +283,7 @@ public class ChannelTaskServiceImpl implements ChannelTaskService {
                 String msg = nextPinned ? "đã ghim công việc \"" + task.getTitle() + "\"." : "đã bỏ ghim công việc \"" + task.getTitle() + "\".";
                 taskActivityService.logActivity(groupId, channelId, taskId, currentUser, iuh.fit.se.nextalk_be.entity.TaskActivityType.ASSIGNEE_UPDATED, msg);
             } catch (Exception ignored) {}
-        });
+        }, applicationTaskExecutor);
 
         return mapToResponse(saved);
     }

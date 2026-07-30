@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.data.domain.PageRequest;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -23,6 +24,9 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityService {
+    private static final int DEADLINE_BATCH_SIZE = 100;
+    private static final List<ChannelTaskStatus> ACTIVE_STATUSES =
+            List.of(ChannelTaskStatus.TODO, ChannelTaskStatus.IN_PROGRESS);
 
     private final ChannelTaskActivityRepository activityRepository;
     private final ChannelTaskRepository taskRepository;
@@ -39,7 +43,7 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
         User currentUser = userService.getCurrentAuthenticatedUser();
         requireAccessibleChannel(groupId, channelId, currentUser);
         List<ChannelTaskActivity> activities = activityRepository
-                .findAllByGroupIdAndChannelIdOrderByCreatedAtDesc(groupId, channelId);
+                .findTop200ByGroupIdAndChannelIdOrderByCreatedAtDesc(groupId, channelId);
 
         return activities.stream()
                 .map(act -> mapToResponse(act, currentUser.getId()))
@@ -97,22 +101,7 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
     public void markAllAsRead(String groupId, String channelId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         requireAccessibleChannel(groupId, channelId, currentUser);
-        List<ChannelTaskActivity> activities = activityRepository
-                .findAllByGroupIdAndChannelIdOrderByCreatedAtDesc(groupId, channelId);
-
-        boolean updated = false;
-        for (ChannelTaskActivity act : activities) {
-            if (act.getReadByUserIds() == null) {
-                act.setReadByUserIds(new HashSet<>());
-            }
-            if (act.getReadByUserIds().add(currentUser.getId())) {
-                updated = true;
-            }
-        }
-
-        if (updated) {
-            activityRepository.saveAll(activities);
-        }
+        activityRepository.markAllAsRead(groupId, channelId, currentUser.getId());
     }
 
     private void requireAccessibleChannel(String groupId, String channelId, User user) {
@@ -146,10 +135,12 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime oneHourLater = now.plusHours(1);
 
-        List<ChannelTask> activeTasks = taskRepository.findAll().stream()
-                .filter(task -> task.getStatus() != ChannelTaskStatus.DONE && task.getStatus() != ChannelTaskStatus.CANCELLED)
-                .filter(task -> task.getDueAt() != null)
-                .toList();
+        List<ChannelTask> activeTasks = taskRepository.findDeadlineCandidates(
+                ACTIVE_STATUSES,
+                now,
+                oneHourLater,
+                PageRequest.of(0, DEADLINE_BATCH_SIZE)
+        );
 
         for (ChannelTask task : activeTasks) {
             try {
@@ -174,9 +165,7 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
                 // Check if overdue
                 if (task.getDueAt().isBefore(now)) {
                     boolean alreadyOverdueLogged = activityRepository
-                            .findAllByGroupIdAndChannelIdOrderByCreatedAtDesc(groupId, channelId)
-                            .stream()
-                            .anyMatch(a -> task.getId().equals(a.getTaskId()) && a.getType() == TaskActivityType.TASK_OVERDUE);
+                            .existsByTaskIdAndType(task.getId(), TaskActivityType.TASK_OVERDUE);
 
                     if (!alreadyOverdueLogged) {
                         logActivity(
@@ -189,13 +178,14 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
                         );
                         notifyTaskDeadline(task, "Công việc \"" + task.getTitle() + "\" đã quá hạn", NotificationType.TASK_DUE);
                     }
+                    task.setOverdueNotificationSent(true);
+                    task.setUpdatedAt(now);
+                    taskRepository.save(task);
                 }
                 // Check if approaching due date (within 1 hour)
                 else if (task.getDueAt().isBefore(oneHourLater)) {
                     boolean alreadyApproachingLogged = activityRepository
-                            .findAllByGroupIdAndChannelIdOrderByCreatedAtDesc(groupId, channelId)
-                            .stream()
-                            .anyMatch(a -> task.getId().equals(a.getTaskId()) && a.getType() == TaskActivityType.DUE_APPROACHING);
+                            .existsByTaskIdAndType(task.getId(), TaskActivityType.DUE_APPROACHING);
 
                     if (!alreadyApproachingLogged) {
                         logActivity(
@@ -208,6 +198,9 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
                         );
                         notifyTaskDeadline(task, "Công việc \"" + task.getTitle() + "\" sẽ hết hạn trong 1 giờ", NotificationType.TASK_DUE);
                     }
+                    task.setApproachingNotificationSent(true);
+                    task.setUpdatedAt(now);
+                    taskRepository.save(task);
                 }
             } catch (Exception ignored) {
                 // Ignore single task resolution exception

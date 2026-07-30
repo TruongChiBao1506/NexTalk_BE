@@ -15,6 +15,7 @@ import java.util.Set;
 @AllArgsConstructor
 @Document(collection = "channel_task_activities")
 @CompoundIndex(name = "group_channel_idx", def = "{'groupId': 1, 'channelId': 1, 'createdAt': -1}")
+@CompoundIndex(name = "task_activity_type_idx", def = "{'taskId': 1, 'type': 1}")
 public class ChannelTaskActivity extends BaseEntity {
 
     private String groupId;

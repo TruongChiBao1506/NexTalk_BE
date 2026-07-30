@@ -14,6 +14,7 @@ import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.stereotype.Component;
 
@@ -25,6 +26,7 @@ import java.util.stream.Collectors;
 
 @Slf4j
 @Component
+@ConditionalOnProperty(name = "app.migrations.legacy-startup-enabled", havingValue = "true")
 @RequiredArgsConstructor
 public class DataMigrationRunner implements CommandLineRunner {
 
