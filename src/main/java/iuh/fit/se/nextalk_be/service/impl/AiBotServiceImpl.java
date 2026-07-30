@@ -15,6 +15,7 @@ import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.repository.MessageStatusRepository;
+import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.service.AiBotService;
 import iuh.fit.se.nextalk_be.service.ConversationSummaryService;
 import iuh.fit.se.nextalk_be.service.GeminiMultimodalService;
@@ -52,6 +53,9 @@ import java.util.regex.Pattern;
 @Service
 @RequiredArgsConstructor
 public class AiBotServiceImpl implements AiBotService {
+    private static final String BOT_EMAIL = "assistant@nextalk.local";
+    private static final String BOT_NAME = "NexTalk AI";
+    private static final String BOT_AVATAR = "https://res.cloudinary.com/dp5r0dqqh/image/upload/v1783700471/nextalk/nnjdwhw3tfhjjjymbfgj.png";
     private static final Pattern REMINDER_INTENT_PATTERN = Pattern.compile(
             "(?iu)(nhac|nhắc|nho|nhớ|remind|reminder|hen|hẹn|lich|lịch)"
     );
@@ -69,6 +73,7 @@ public class AiBotServiceImpl implements AiBotService {
     private final MessageRepository messageRepository;
     private final ConversationRepository conversationRepository;
     private final MessageStatusRepository messageStatusRepository;
+    private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final RestTemplate restTemplate;
     private final MessageReminderService messageReminderService;
@@ -822,9 +827,12 @@ public class AiBotServiceImpl implements AiBotService {
     }
 
     private void createAndBroadcastBotMessage(Conversation conversation, User requester, String answer, String triggerMessageId, Map<String, Object> extraMetadata) {
+        User bot = getOrCreateAiBot();
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("systemType", "AI_BOT_REPLY");
-        metadata.put("botName", "NexTalk AI");
+        metadata.put("botName", BOT_NAME);
+        metadata.put("botAvatarUrl", BOT_AVATAR);
+        metadata.put("requestedByUserId", requester.getId());
         metadata.put("triggerMessageId", triggerMessageId);
         if (extraMetadata != null) {
             metadata.putAll(extraMetadata);
@@ -832,7 +840,10 @@ public class AiBotServiceImpl implements AiBotService {
 
         Message botMessage = Message.builder()
                 .conversation(conversation)
-                .sender(requester)
+                .conversationId(conversation.getId())
+                .sender(bot)
+                .senderId(bot.getId())
+                .senderUsername(bot.getUsername())
                 .content(answer)
                 .messageType(MessageType.SYSTEM)
                 .parentId(triggerMessageId)
@@ -849,12 +860,41 @@ public class AiBotServiceImpl implements AiBotService {
         }
     }
 
+    private User getOrCreateAiBot() {
+        User bot = userRepository.findByEmail(BOT_EMAIL).orElseGet(() -> {
+            User newBot = User.builder()
+                    .email(BOT_EMAIL)
+                    .username(BOT_NAME)
+                    .password("assistant_hidden_password")
+                    .avatarUrl(BOT_AVATAR)
+                    .status("ONLINE")
+                    .isVerified(true)
+                    .build();
+            return userRepository.save(newBot);
+        });
+
+        boolean changed = false;
+        if (!BOT_NAME.equals(bot.getUsername())) {
+            bot.setUsername(BOT_NAME);
+            changed = true;
+        }
+        if (!BOT_AVATAR.equals(bot.getAvatarUrl())) {
+            bot.setAvatarUrl(BOT_AVATAR);
+            changed = true;
+        }
+        if (!bot.isVerified()) {
+            bot.setVerified(true);
+            changed = true;
+        }
+        return changed ? userRepository.save(bot) : bot;
+    }
+
     private MessageResponse mapBotMessageResponse(Message message) {
         return MessageResponse.builder()
                 .id(message.getId())
-                .conversationId(message.getConversation().getId())
-                .senderId(message.getSender().getId())
-                .senderUsername(message.getSender().getUsername())
+                .conversationId(message.getConversationId() != null ? message.getConversationId() : message.getConversation().getId())
+                .senderId(message.getSenderId() != null ? message.getSenderId() : message.getSender().getId())
+                .senderUsername(message.getSenderUsername() != null ? message.getSenderUsername() : message.getSender().getUsername())
                 .content(message.getContent())
                 .messageType(message.getMessageType().name())
                 .attachments(message.getAttachments() != null ? message.getAttachments() : new ArrayList<>())

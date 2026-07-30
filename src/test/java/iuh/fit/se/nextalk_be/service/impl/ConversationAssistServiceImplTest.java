@@ -101,4 +101,18 @@ class ConversationAssistServiceImplTest {
         assertFalse(response.isHasBirthday());
         assertTrue(response.getTemplates().isEmpty());
     }
+
+    @Test
+    void replySuggestionPromptInfersPronounsWithoutChangingRolesBetweenSuggestions() {
+        String prompt = ConversationAssistServiceImpl.buildReplySuggestionPrompt("""
+                [NGƯỜI DÙNG ĐANG SOẠN - Lan]: Em gửi anh ngay nhé
+                [NGƯỜI THAM GIA - Minh]: Ừ, anh đợi em
+                """);
+
+        assertTrue(prompt.contains("Suy ra cách xưng hô"));
+        assertTrue(prompt.contains("Không mặc định ép về \"tôi/bạn\" hay \"mình/bạn\""));
+        assertTrue(prompt.contains("Cả 3 gợi ý phải dùng hệ xưng hô nhất quán"));
+        assertTrue(prompt.contains("ưu tiên câu trung tính có thể lược đại từ"));
+        assertTrue(prompt.contains("[NGƯỜI DÙNG ĐANG SOẠN - Lan]: Em gửi anh ngay nhé"));
+    }
 }

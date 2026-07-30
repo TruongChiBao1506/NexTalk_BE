@@ -78,7 +78,7 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
     @Value("${app.ai-reply.cache-ttl:10m}")
     private Duration cacheTtl;
 
-    @Value("${app.ai-reply.prompt-version:v1}")
+    @Value("${app.ai-reply.prompt-version:v2-flexible-pronouns}")
     private String promptVersion;
 
     @Value("${app.rate-limit.ai-reply.limit:20}")
@@ -92,7 +92,7 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
         User requester = userService.getCurrentAuthenticatedUser();
         Conversation conversation = requireMember(conversationId, requester);
         Context context = loadContext(conversation, requester);
-        String cacheKey = cacheKey("reply", requester.getId(), conversationId, context.lastMessageId());
+        String cacheKey = cacheKey("reply-flex-pronouns-v2", requester.getId(), conversationId, context.lastMessageId());
 
         List<String> cached = readCache(cacheKey);
         if (!cached.isEmpty()) {
@@ -100,15 +100,7 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
         }
 
         checkRateLimit(requester);
-        String prompt = """
-                Bạn đang hỗ trợ người dùng soạn câu trả lời trong ứng dụng nhắn tin.
-                Dựa trên đoạn hội thoại bên dưới, tạo đúng 3 câu trả lời ngắn bằng ngôn ngữ đang được dùng.
-                Mỗi câu tự nhiên, phù hợp ngữ cảnh, khác sắc thái nhẹ, tối đa 150 ký tự.
-                Không tự nhận là AI, không Markdown, không thêm giải thích.
-                Trả về JSON hợp lệ duy nhất theo dạng {"suggestions":["...","...","..."]}.
-
-                Hội thoại:
-                """ + context.transcript();
+        String prompt = buildReplySuggestionPrompt(context.transcript());
         List<String> suggestions = requestSuggestions(prompt, context.messages());
         writeCache(cacheKey, suggestions);
         return response(suggestions, context.lastMessageId(), false);
@@ -216,11 +208,15 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
             if (content.isBlank() && attachmentDescription.isBlank()) {
                 continue;
             }
-            String sender = Objects.equals(message.getSenderId(), requester.getId())
-                    || (message.getSender() != null && Objects.equals(message.getSender().getId(), requester.getId()))
-                    ? "Tôi"
+            boolean requesterMessage = Objects.equals(message.getSenderId(), requester.getId())
+                    || (message.getSender() != null && Objects.equals(message.getSender().getId(), requester.getId()));
+            String displayName = requesterMessage
+                    ? firstNonBlank(requester.getUsername(), null, "Người dùng")
                     : firstNonBlank(message.getSenderUsername(),
                     message.getSender() == null ? null : message.getSender().getUsername(), "Người khác");
+            String sender = requesterMessage
+                    ? "[NGƯỜI DÙNG ĐANG SOẠN - " + displayName + "]"
+                    : "[NGƯỜI THAM GIA - " + displayName + "]";
             String transcriptContent = content.isBlank()
                     ? attachmentDescription
                     : attachmentDescription.isBlank() ? content : content + " " + attachmentDescription;
@@ -237,6 +233,32 @@ public class ConversationAssistServiceImpl implements ConversationAssistService 
             throw new BadRequestException("Không có nội dung phù hợp để tạo gợi ý");
         }
         return new Context(lastMessageId, String.join("\n", lines), contextMessages);
+    }
+
+    static String buildReplySuggestionPrompt(String transcript) {
+        return """
+                Bạn đang hỗ trợ NGƯỜI DÙNG ĐANG SOẠN viết câu trả lời trong ứng dụng nhắn tin.
+                Dựa trên hội thoại bên dưới, tạo đúng 3 câu trả lời ngắn bằng ngôn ngữ đang được dùng.
+
+                Quy tắc giọng điệu và xưng hô:
+                - Suy ra cách xưng hô từ chính lời của NGƯỜI DÙNG ĐANG SOẠN và cách những người khác gọi họ.
+                - Giữ tự nhiên theo quan hệ và thói quen trong đoạn chat: ví dụ anh/em, chị/em, cô/cháu,
+                  tao/mày, mình/cậu, tôi/bạn, gọi tên, biệt danh hoặc lược chủ ngữ.
+                - Không mặc định ép về "tôi/bạn" hay "mình/bạn" khi lịch sử đang dùng cách khác.
+                - Nếu chưa đủ dữ kiện, ưu tiên câu trung tính có thể lược đại từ; không tự đoán tuổi, giới tính
+                  hay vai vế.
+                - Cả 3 gợi ý phải dùng hệ xưng hô nhất quán. Khác nhau về sắc thái hoặc cách diễn đạt,
+                  không được đổi vai xưng hô giữa các gợi ý.
+                - Bắt nhịp mức độ thân mật, độ dài, emoji, viết tắt và dấu câu của cuộc trò chuyện,
+                  nhưng không bắt chước lỗi gây khó hiểu.
+                - Các nhãn trong ngoặc vuông chỉ mô tả vai trò người gửi, tuyệt đối không chép chúng vào câu trả lời.
+
+                Mỗi câu phù hợp ngữ cảnh, khác sắc thái nhẹ và tối đa 150 ký tự.
+                Không tự nhận là AI, không Markdown, không thêm giải thích.
+                Trả về JSON hợp lệ duy nhất theo dạng {"suggestions":["...","...","..."]}.
+
+                Hội thoại:
+                """ + transcript;
     }
 
     private List<String> requestSuggestions(String prompt, List<SummaryMessagePayload> messages) {
