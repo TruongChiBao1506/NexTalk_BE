@@ -1,5 +1,6 @@
 package iuh.fit.se.nextalk_be.service.impl;
 import iuh.fit.se.nextalk_be.service.FCMService;
+import iuh.fit.se.nextalk_be.service.NotificationAvatarUrlService;
 
 import com.google.auth.oauth2.GoogleCredentials;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,6 +42,7 @@ public class FCMServiceImpl implements FCMService {
     private final HttpClient httpClient = HttpClient.newHttpClient();
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UserRepository userRepository;
+    private final NotificationAvatarUrlService notificationAvatarUrlService;
 
     @PostConstruct
     public void initialize() {
@@ -128,6 +130,7 @@ public class FCMServiceImpl implements FCMService {
     public void sendChatPushNotificationToTokens(List<String> tokens, String conversationId, String conversationName,
                                                   String senderId, String senderName, String senderAvatarUrl, String body) {
         if (tokens == null || tokens.isEmpty() || FirebaseApp.getApps().isEmpty()) return;
+        String pushAvatarUrl = notificationAvatarUrlService.resolve(senderAvatarUrl);
         for (String token : tokens) {
             if (isExpoPushToken(token)) {
                 sendExpoPushNotification(token, senderName, body);
@@ -146,7 +149,7 @@ public class FCMServiceImpl implements FCMService {
                         .putData("conversationName", conversationName != null ? conversationName : "")
                         .putData("senderId", senderId != null ? senderId : "")
                         .putData("senderName", safeSenderName)
-                        .putData("senderAvatarUrl", senderAvatarUrl != null ? senderAvatarUrl : "")
+                        .putData("senderAvatarUrl", pushAvatarUrl)
                         .putData("body", notificationBody)
                         // Android must receive a data-only push so the client can choose
                         // between a system bubble and a regular notification per device.
@@ -199,6 +202,7 @@ public class FCMServiceImpl implements FCMService {
         }
 
         if (FirebaseApp.getApps().isEmpty()) return;
+        String pushCallerAvatar = notificationAvatarUrlService.resolve(callerAvatar);
         List<String> nativeTokens = tokens.stream()
                 .filter(java.util.Objects::nonNull)
                 .filter(token -> !isExpoPushToken(token))
@@ -214,7 +218,7 @@ public class FCMServiceImpl implements FCMService {
                         .putData("conversationId", conversationId != null ? conversationId : "")
                         .putData("callId", callId != null ? callId : "")
                         .putData("callerId", callerId != null ? callerId : "")
-                        .putData("callerAvatar", callerAvatar != null ? callerAvatar : "")
+                        .putData("callerAvatar", pushCallerAvatar)
                         .putData("receiverId", receiverId != null ? receiverId : "")
                         .putData("callType", callType != null ? callType : "VOICE")
                         .putData("groupName", groupName != null ? groupName : "")
