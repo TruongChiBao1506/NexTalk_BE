@@ -28,6 +28,9 @@ public class Group extends BaseEntity {
     @Builder.Default
     private boolean isTaskEnabled = true;
 
+    @Builder.Default
+    private boolean membersCanCreateEvents = false;
+
     @org.springframework.data.mongodb.core.index.Indexed(unique = true, sparse = true)
     private String inviteCode;
 }

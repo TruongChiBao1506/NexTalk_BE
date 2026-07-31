@@ -211,7 +211,8 @@ public class NotificationServiceImpl implements NotificationService {
                 || type == NotificationType.TASK_ASSIGNED
                 || type == NotificationType.TASK_DUE
                 || type == NotificationType.TASK_UPDATED
-                || type == NotificationType.MISSED_CALL;
+                || type == NotificationType.MISSED_CALL
+                || type == NotificationType.GROUP_EVENT_REMINDER;
     }
 
     private NotificationResponse mapToResponse(Notification notification) {

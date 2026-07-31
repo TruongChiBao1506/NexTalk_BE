@@ -24,6 +24,7 @@ public class GroupResponse {
     private List<ChannelResponse> channels;
     private boolean requiresApproval;
     private boolean isTaskEnabled;
+    private boolean membersCanCreateEvents;
     private String inviteCode;
     private int pendingApprovalCount;
     private List<GroupMemberResponse> members;

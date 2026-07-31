@@ -703,6 +703,7 @@ public class GroupServiceImpl implements GroupService {
                 .memberCount(memberResponses.size())
                 .requiresApproval(group.isRequiresApproval())
                 .isTaskEnabled(group.isTaskEnabled())
+                .membersCanCreateEvents(group.isMembersCanCreateEvents())
                 .inviteCode(group.getInviteCode())
                 .pendingApprovalCount(pendingApprovalCount)
                 .createdAt(group.getCreatedAt())

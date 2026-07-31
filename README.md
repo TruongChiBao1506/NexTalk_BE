@@ -60,6 +60,9 @@ MEDIA_PRIVATE_MIGRATION_COMPLETE=false
 # Required for AI image editing
 GEMINI_API_KEY=your-gemini-api-key
 
+# Required for message translation (Cloud Translation Basic v2)
+GOOGLE_TRANSLATE_API_KEY=your-restricted-translation-api-key
+
 # Optional Cloudflare fallback
 CLOUDFLARE_ACCOUNT_ID=your-account-id
 CLOUDFLARE_AI_TOKEN=your-workers-ai-api-token

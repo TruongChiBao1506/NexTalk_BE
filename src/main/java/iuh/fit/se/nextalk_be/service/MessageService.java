@@ -30,6 +30,8 @@ public interface MessageService {
     public void markConversationMessagesAsDelivered(String conversationId, String username);
     public void markConversationMessagesAsSeen(String conversationId, String username);
     public void createAndBroadcastCallHistoryMessage(Conversation conversation, User actor, String content, Map<String, Object> metadata);
+    public MessageResponse createAndBroadcastSystemMessage(Conversation conversation, User actor, String content, Map<String, Object> metadata);
+    public MessageResponse updateAndBroadcastSystemMessage(String messageId, String content, Map<String, Object> metadata);
     public MessageResponse createPoll(CreatePollRequest request);
     public MessageResponse votePoll(String messageId, PollVoteRequest request);
     public MessageResponse addPollOption(String messageId, AddPollOptionRequest request);
@@ -44,6 +46,7 @@ public interface MessageService {
     public MessageResponse reactToMessage(String messageId, ReactMessageRequest request);
     public List<MessageResponse> shareMessage(String messageId, ShareMessageRequest request);
     public List<MessageResponse> searchMessages(String query, String conversationId);
+    public MessageResponse getMessageForCurrentUser(String messageId);
 
     // Batch operations
     public void deleteMessagesForMe(List<String> messageIds);

@@ -1100,6 +1100,47 @@ public class MessageServiceImpl implements MessageService {
         broadcastMessageUpdate(conversation, mapToMessageResponse(savedSystemMessage));
     }
 
+    @Override
+    public MessageResponse createAndBroadcastSystemMessage(
+            Conversation conversation,
+            User actor,
+            String content,
+            Map<String, Object> metadata
+    ) {
+        Message systemMessage = Message.builder()
+                .conversation(conversation)
+                .sender(actor)
+                .content(content)
+                .messageType(MessageType.SYSTEM)
+                .metadata(metadata != null ? metadata : Map.of())
+                .build();
+        Message saved = messageRepository.save(systemMessage);
+        conversation.setUpdatedAt(LocalDateTime.now());
+        conversationRepository.save(conversation);
+        MessageResponse response = mapToMessageResponse(saved);
+        broadcastMessageUpdate(conversation, response);
+        return response;
+    }
+
+    @Override
+    public MessageResponse updateAndBroadcastSystemMessage(
+            String messageId,
+            String content,
+            Map<String, Object> metadata
+    ) {
+        Message message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new ResourceNotFoundException("System message not found"));
+        if (message.getMessageType() != MessageType.SYSTEM) {
+            throw new BadRequestException("Only system messages can be updated");
+        }
+        message.setContent(content);
+        message.setMetadata(metadata != null ? metadata : Map.of());
+        Message saved = messageRepository.save(message);
+        MessageResponse response = mapToMessageResponse(saved);
+        broadcastMessageUpdate(saved.getConversation(), response);
+        return response;
+    }
+
     public MessageResponse createPoll(CreatePollRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Conversation conversation = conversationRepository.findById(request.getConversationId())
@@ -1624,6 +1665,18 @@ public class MessageServiceImpl implements MessageService {
             message.getDeletedByUsers().add(currentUser.getId());
             messageRepository.save(message);
         }
+    }
+
+    @Override
+    public MessageResponse getMessageForCurrentUser(String messageId) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Message message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message not found"));
+        ensureConversationMember(message.getConversation(), currentUser);
+        if (message.getDeletedByUsers() != null && message.getDeletedByUsers().contains(currentUser.getId())) {
+            throw new ResourceNotFoundException("Message not found");
+        }
+        return mapToMessageResponse(message);
     }
 
     // @Transactional

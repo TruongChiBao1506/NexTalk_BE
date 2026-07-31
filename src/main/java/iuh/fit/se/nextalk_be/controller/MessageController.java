@@ -24,6 +24,9 @@ import lombok.RequiredArgsConstructor;
 import iuh.fit.se.nextalk_be.entity.Message;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.MessageService;
+import iuh.fit.se.nextalk_be.service.MessageTranslationService;
+import iuh.fit.se.nextalk_be.dto.request.TranslateMessageRequest;
+import iuh.fit.se.nextalk_be.dto.response.MessageTranslationResponse;
 
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -55,6 +58,7 @@ public class MessageController {
     private final MessageService messageService;
     private final LinkPreviewService linkPreviewService;
     private final RateLimitService rateLimitService;
+    private final MessageTranslationService messageTranslationService;
 
     @PostMapping("/api/messages")
     @Operation(summary = "Send a new message to a conversation (REST API)")
@@ -177,6 +181,15 @@ public class MessageController {
     public ResponseEntity<ApiResponse<MessageResponse>> unpinMessage(@PathVariable("id") String id) {
         MessageResponse response = messageService.pinMessage(id, false);
         return ResponseEntity.ok(ApiResponse.success(response, "Message unpinned successfully"));
+    }
+
+    @PostMapping("/api/messages/{id}/translate")
+    @Operation(summary = "Translate a visible message for the current user")
+    public ResponseEntity<ApiResponse<MessageTranslationResponse>> translateMessage(
+            @PathVariable("id") String id,
+            @Valid @RequestBody TranslateMessageRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                messageTranslationService.translate(id, request), "Message translated successfully"));
     }
 
     @GetMapping("/api/conversations/{conversationId}/pinned")
