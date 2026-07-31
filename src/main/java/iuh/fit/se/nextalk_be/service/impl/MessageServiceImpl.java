@@ -467,6 +467,7 @@ public class MessageServiceImpl implements MessageService {
                         }
                         fcmService.sendChatPushNotificationToTokens(
                                 member.getFcmTokens(),
+                                savedMessage.getId(),
                                 conversation.getId(),
                                 conversation.getName(),
                                 currentUser.getId(),

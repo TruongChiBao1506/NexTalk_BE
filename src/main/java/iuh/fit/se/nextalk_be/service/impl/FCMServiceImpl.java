@@ -127,7 +127,7 @@ public class FCMServiceImpl implements FCMService {
     }
 
     @Override
-    public void sendChatPushNotificationToTokens(List<String> tokens, String conversationId, String conversationName,
+    public void sendChatPushNotificationToTokens(List<String> tokens, String messageId, String conversationId, String conversationName,
                                                   String senderId, String senderName, String senderAvatarUrl, String body) {
         if (tokens == null || tokens.isEmpty() || FirebaseApp.getApps().isEmpty()) return;
         String pushAvatarUrl = notificationAvatarUrlService.resolve(senderAvatarUrl);
@@ -145,6 +145,7 @@ public class FCMServiceImpl implements FCMService {
                 Message message = Message.builder()
                         .setToken(token)
                         .putData("type", "CHAT_MESSAGE")
+                        .putData("messageId", messageId != null ? messageId : "")
                         .putData("conversationId", conversationId != null ? conversationId : "")
                         .putData("conversationName", conversationName != null ? conversationName : "")
                         .putData("senderId", senderId != null ? senderId : "")
@@ -166,6 +167,7 @@ public class FCMServiceImpl implements FCMService {
                                                 .setTitle(notificationTitle)
                                                 .setBody(notificationBody)
                                                 .build())
+                                        .setCategory("chat-message")
                                         .setSound("default")
                                         .build())
                                 .build())
