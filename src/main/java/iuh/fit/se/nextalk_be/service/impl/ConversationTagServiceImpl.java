@@ -114,6 +114,10 @@ public class ConversationTagServiceImpl implements ConversationTagService {
         ConversationTag tag = tagRepository.findByIdAndUser(tagId, currentUser)
                 .orElseThrow(() -> new ResourceNotFoundException("Thẻ phân loại không tồn tại"));
 
+        if (request == null || request.getTargetId() == null || request.getTargetId().isBlank()) {
+            throw new BadRequestException("Target ID không được để trống");
+        }
+
         String targetId = request.getTargetId().trim();
         Optional<ConversationTagMapping> existing = mappingRepository.findByUserAndTagAndTargetId(currentUser, tag, targetId);
         if (existing.isEmpty()) {
@@ -134,6 +138,10 @@ public class ConversationTagServiceImpl implements ConversationTagService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         ConversationTag tag = tagRepository.findByIdAndUser(tagId, currentUser)
                 .orElseThrow(() -> new ResourceNotFoundException("Thẻ phân loại không tồn tại"));
+
+        if (targetId == null || targetId.isBlank()) {
+            throw new BadRequestException("Target ID không được để trống");
+        }
 
         mappingRepository.deleteByUserAndTagAndTargetId(currentUser, tag, targetId.trim());
         return getUserTagData();
