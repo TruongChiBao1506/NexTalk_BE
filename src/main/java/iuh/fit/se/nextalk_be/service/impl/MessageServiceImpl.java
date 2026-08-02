@@ -1979,10 +1979,11 @@ public class MessageServiceImpl implements MessageService {
         }
 
         List<MessageResponse> sharedMessages = new ArrayList<>();
+        String forwardedContent = combineForwardContent(request.getAccompanyingText(), sourceMessage.getContent());
         for (String targetConversationId : targetConversationIds) {
             MessageRequest messageRequest = MessageRequest.builder()
                     .conversationId(targetConversationId)
-                    .content(sourceMessage.getContent())
+                    .content(forwardedContent)
                     .messageType(sourceMessage.getMessageType().name())
                     .attachments(sourceMessage.getAttachments())
                     .build();
@@ -1996,6 +1997,14 @@ public class MessageServiceImpl implements MessageService {
         }
 
         return sharedMessages;
+    }
+
+    static String combineForwardContent(String accompanyingText, String sourceContent) {
+        String note = accompanyingText == null ? "" : accompanyingText.trim();
+        String original = sourceContent == null ? "" : sourceContent.trim();
+        if (note.isEmpty()) return original;
+        if (original.isEmpty()) return note;
+        return note + "\n\n" + original;
     }
 
     // @Transactional(readOnly = true)
