@@ -63,6 +63,31 @@ class LinkPreviewServiceImplTest {
     }
 
     @Test
+    void parseYouTubeOEmbed_UsesThumbnailForShortsUrl() throws Exception {
+        String json = """
+                {
+                  "title": "Shorts test",
+                  "author_name": "Creator",
+                  "thumbnail_url": "https://i.ytimg.com/vi/video-id/hq2.jpg",
+                  "provider_name": "YouTube"
+                }
+                """;
+
+        Optional<LinkPreviewResponse> result = service.parseYouTubeOEmbed(
+                json,
+                "https://www.youtube.com/shorts/video-id"
+        );
+
+        assertTrue(result.isPresent());
+        assertEquals(LinkPreviewType.VIDEO, result.get().getType());
+        assertEquals("YOUTUBE", result.get().getProvider());
+        assertEquals("Shorts test", result.get().getTitle());
+        assertEquals("Tác giả: Creator", result.get().getDescription());
+        assertEquals("https://i.ytimg.com/vi/video-id/hq2.jpg", result.get().getThumbnailUrl());
+        assertEquals("youtube.com", result.get().getDisplayDomain());
+    }
+
+    @Test
     void isTikTokUrl_OnlyAcceptsTikTokHosts() {
         assertTrue(service.isTikTokUrl("https://vt.tiktok.com/example"));
         assertTrue(service.isTikTokUrl("https://www.tiktok.com/@creator/video/123"));

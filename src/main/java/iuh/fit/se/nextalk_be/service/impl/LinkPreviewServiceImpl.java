@@ -38,6 +38,7 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
     private static final Duration CACHE_TTL = Duration.ofMinutes(30);
     private static final int PREVIEW_SCHEMA_VERSION = 2;
     private static final String TIKTOK_OEMBED_ENDPOINT = "https://www.tiktok.com/oembed?url=";
+    private static final String YOUTUBE_OEMBED_ENDPOINT = "https://www.youtube.com/oembed?format=json&url=";
     private static final String PROVIDER_TIKTOK = "TIKTOK";
     private static final String PROVIDER_YOUTUBE = "YOUTUBE";
 
@@ -65,19 +66,17 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
             if (cachedPreview.isPresent()) {
                 return cachedPreview;
             }
-            if (isTikTokUrl(safeUrl)) {
-                Optional<LinkPreviewResponse> tiktokPreview = fetchTikTokOEmbed(safeUrl);
-                if (tiktokPreview.isPresent()) {
-                    return cachePreview(safeUrl, tiktokPreview.get());
-                }
+            Optional<LinkPreviewResponse> providerPreview = fetchProviderOEmbed(safeUrl);
+            if (providerPreview.isPresent()) {
+                return cachePreview(safeUrl, providerPreview.get());
             }
             Document document = fetchDocument(safeUrl);
             String resolvedUrl = isBlank(document.location()) ? safeUrl : resolveSafeUrl(document.location());
 
-            if (isTikTokUrl(resolvedUrl) && !resolvedUrl.equals(safeUrl)) {
-                Optional<LinkPreviewResponse> tiktokPreview = fetchTikTokOEmbed(resolvedUrl);
-                if (tiktokPreview.isPresent()) {
-                    return cachePreview(safeUrl, tiktokPreview.get());
+            if (!resolvedUrl.equals(safeUrl)) {
+                providerPreview = fetchProviderOEmbed(resolvedUrl);
+                if (providerPreview.isPresent()) {
+                    return cachePreview(safeUrl, providerPreview.get());
                 }
             }
 
@@ -151,7 +150,43 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
         }
     }
 
+    private Optional<LinkPreviewResponse> fetchYouTubeOEmbed(String videoUrl) {
+        try {
+            String endpoint = YOUTUBE_OEMBED_ENDPOINT
+                    + URLEncoder.encode(videoUrl, StandardCharsets.UTF_8);
+            String json = fetchJson(endpoint);
+            return parseYouTubeOEmbed(json, videoUrl);
+        } catch (Exception e) {
+            log.debug("YouTube oEmbed preview unavailable ({})", e.getClass().getSimpleName());
+            return Optional.empty();
+        }
+    }
+
+    private Optional<LinkPreviewResponse> fetchProviderOEmbed(String url) {
+        if (isTikTokUrl(url)) {
+            return fetchTikTokOEmbed(url);
+        }
+        if (isYouTubeUrl(url)) {
+            return fetchYouTubeOEmbed(url);
+        }
+        return Optional.empty();
+    }
+
     Optional<LinkPreviewResponse> parseTikTokOEmbed(String json, String videoUrl) throws Exception {
+        return parseVideoOEmbed(json, videoUrl, PROVIDER_TIKTOK, "Video trên TikTok", "TikTok");
+    }
+
+    Optional<LinkPreviewResponse> parseYouTubeOEmbed(String json, String videoUrl) throws Exception {
+        return parseVideoOEmbed(json, videoUrl, PROVIDER_YOUTUBE, "Video trên YouTube", "YouTube");
+    }
+
+    private Optional<LinkPreviewResponse> parseVideoOEmbed(
+            String json,
+            String videoUrl,
+            String provider,
+            String fallbackTitle,
+            String fallbackSiteName
+    ) throws Exception {
         JsonNode root = objectMapper.readTree(json);
         String image = safeHttpUrl(textValue(root, "thumbnail_url"));
         if (isBlank(image)) {
@@ -161,11 +196,11 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
         return Optional.of(buildPreview(
                 videoUrl,
                 LinkPreviewType.VIDEO,
-                PROVIDER_TIKTOK,
-                firstNonBlank(textValue(root, "title"), "Video trên TikTok"),
+                provider,
+                firstNonBlank(textValue(root, "title"), fallbackTitle),
                 isBlank(author) ? null : "Tác giả: " + author,
                 image,
-                firstNonBlank(textValue(root, "provider_name"), "TikTok")
+                firstNonBlank(textValue(root, "provider_name"), fallbackSiteName)
         ));
     }
 
