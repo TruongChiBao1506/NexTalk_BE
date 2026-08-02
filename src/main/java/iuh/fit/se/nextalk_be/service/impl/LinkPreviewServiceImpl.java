@@ -2,7 +2,9 @@ package iuh.fit.se.nextalk_be.service.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import iuh.fit.se.nextalk_be.dto.response.LinkPreviewAction;
 import iuh.fit.se.nextalk_be.dto.response.LinkPreviewResponse;
+import iuh.fit.se.nextalk_be.dto.response.LinkPreviewType;
 import iuh.fit.se.nextalk_be.service.LinkPreviewService;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Connection;
@@ -15,8 +17,12 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -28,9 +34,24 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
     private static final int TIMEOUT_MS = 5000;
     private static final int MAX_BODY_SIZE = 1024 * 512;
     private static final int MAX_REDIRECTS = 5;
+    private static final int MAX_CACHE_ENTRIES = 500;
+    private static final Duration CACHE_TTL = Duration.ofMinutes(30);
+    private static final int PREVIEW_SCHEMA_VERSION = 2;
     private static final String TIKTOK_OEMBED_ENDPOINT = "https://www.tiktok.com/oembed?url=";
+    private static final String PROVIDER_TIKTOK = "TIKTOK";
+    private static final String PROVIDER_YOUTUBE = "YOUTUBE";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Map<String, CachedPreview> previewCache = new ConcurrentHashMap<>();
+    private final Clock clock;
+
+    public LinkPreviewServiceImpl() {
+        this(Clock.systemUTC());
+    }
+
+    LinkPreviewServiceImpl(Clock clock) {
+        this.clock = clock;
+    }
 
     public Optional<LinkPreviewResponse> createPreview(String content) {
         String url = extractFirstUrl(content);
@@ -40,10 +61,14 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
 
         try {
             String safeUrl = resolveSafeUrl(url);
+            Optional<LinkPreviewResponse> cachedPreview = getCachedPreview(safeUrl);
+            if (cachedPreview.isPresent()) {
+                return cachedPreview;
+            }
             if (isTikTokUrl(safeUrl)) {
                 Optional<LinkPreviewResponse> tiktokPreview = fetchTikTokOEmbed(safeUrl);
                 if (tiktokPreview.isPresent()) {
-                    return tiktokPreview;
+                    return cachePreview(safeUrl, tiktokPreview.get());
                 }
             }
             Document document = fetchDocument(safeUrl);
@@ -52,7 +77,7 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
             if (isTikTokUrl(resolvedUrl) && !resolvedUrl.equals(safeUrl)) {
                 Optional<LinkPreviewResponse> tiktokPreview = fetchTikTokOEmbed(resolvedUrl);
                 if (tiktokPreview.isPresent()) {
-                    return tiktokPreview;
+                    return cachePreview(safeUrl, tiktokPreview.get());
                 }
             }
 
@@ -66,10 +91,10 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
                     meta(document, "name", "description"),
                     meta(document, "name", "twitter:description")
             );
-            String image = absoluteUrl(document, firstNonBlank(
+            String image = safeHttpUrl(absoluteUrl(document, firstNonBlank(
                     meta(document, "property", "og:image"),
                     meta(document, "name", "twitter:image")
-            ));
+            )));
             String siteName = firstNonBlank(
                     meta(document, "property", "og:site_name"),
                     URI.create(resolvedUrl).getHost()
@@ -83,13 +108,29 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
                 return Optional.empty();
             }
 
-            return Optional.of(LinkPreviewResponse.builder()
-                    .url(resolvedUrl)
-                    .title(truncate(title, 180))
-                    .description(truncate(description, 260))
-                    .image(image)
-                    .siteName(truncate(siteName, 80))
-                    .build());
+            LinkPreviewType previewType = classifyType(
+                    resolvedUrl,
+                    meta(document, "property", "og:type"),
+                    firstNonBlank(
+                            meta(document, "name", "twitter:card"),
+                            meta(document, "property", "twitter:card")
+                    ),
+                    firstNonBlank(
+                            meta(document, "property", "og:video"),
+                            meta(document, "property", "og:video:url"),
+                            meta(document, "name", "twitter:player")
+                    )
+            );
+
+            return cachePreview(safeUrl, buildPreview(
+                    resolvedUrl,
+                    previewType,
+                    classifyProvider(resolvedUrl),
+                    title,
+                    description,
+                    image,
+                    siteName
+            ));
         } catch (Exception e) {
             // A URL can be private message content. Never include it or exception
             // messages (which may also contain it) in application logs.
@@ -117,13 +158,15 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
             return Optional.empty();
         }
         String author = textValue(root, "author_name");
-        return Optional.of(LinkPreviewResponse.builder()
-                .url(videoUrl)
-                .title(truncate(firstNonBlank(textValue(root, "title"), "Video trên TikTok"), 180))
-                .description(truncate(isBlank(author) ? null : "Tác giả: " + author, 260))
-                .image(image)
-                .siteName(truncate(firstNonBlank(textValue(root, "provider_name"), "TikTok"), 80))
-                .build());
+        return Optional.of(buildPreview(
+                videoUrl,
+                LinkPreviewType.VIDEO,
+                PROVIDER_TIKTOK,
+                firstNonBlank(textValue(root, "title"), "Video trên TikTok"),
+                isBlank(author) ? null : "Tác giả: " + author,
+                image,
+                firstNonBlank(textValue(root, "provider_name"), "TikTok")
+        ));
     }
 
     boolean isTikTokUrl(String url) {
@@ -133,6 +176,119 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
                     || host.toLowerCase(Locale.ROOT).endsWith(".tiktok.com"));
         } catch (Exception ignored) {
             return false;
+        }
+    }
+
+    boolean isYouTubeUrl(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            if (host == null) {
+                return false;
+            }
+            String normalizedHost = host.toLowerCase(Locale.ROOT);
+            return normalizedHost.equals("youtu.be")
+                    || normalizedHost.equals("youtube.com")
+                    || normalizedHost.endsWith(".youtube.com")
+                    || normalizedHost.equals("youtube-nocookie.com")
+                    || normalizedHost.endsWith(".youtube-nocookie.com");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    String classifyProvider(String url) {
+        if (isTikTokUrl(url)) {
+            return PROVIDER_TIKTOK;
+        }
+        if (isYouTubeUrl(url)) {
+            return PROVIDER_YOUTUBE;
+        }
+        return null;
+    }
+
+    LinkPreviewType classifyType(String url, String openGraphType, String twitterCard, String videoUrl) {
+        if (classifyProvider(url) != null) {
+            return LinkPreviewType.VIDEO;
+        }
+
+        String normalizedType = firstNonBlank(openGraphType, "");
+        normalizedType = normalizedType == null ? "" : normalizedType.toLowerCase(Locale.ROOT);
+        String normalizedCard = firstNonBlank(twitterCard, "");
+        normalizedCard = normalizedCard == null ? "" : normalizedCard.toLowerCase(Locale.ROOT);
+
+        if (!isBlank(videoUrl) || normalizedType.startsWith("video") || normalizedCard.equals("player")) {
+            return LinkPreviewType.VIDEO;
+        }
+        if (normalizedType.startsWith("article") || normalizedType.equals("news")) {
+            return LinkPreviewType.ARTICLE;
+        }
+        if (normalizedType.startsWith("music") || normalizedType.startsWith("audio")) {
+            return LinkPreviewType.AUDIO;
+        }
+        if (normalizedType.startsWith("image")) {
+            return LinkPreviewType.IMAGE;
+        }
+        return LinkPreviewType.DEFAULT;
+    }
+
+    private LinkPreviewResponse buildPreview(
+            String url,
+            LinkPreviewType type,
+            String provider,
+            String title,
+            String description,
+            String thumbnailUrl,
+            String siteName
+    ) {
+        return LinkPreviewResponse.builder()
+                .version(PREVIEW_SCHEMA_VERSION)
+                .url(url)
+                .canonicalUrl(url)
+                .type(type == null ? LinkPreviewType.DEFAULT : type)
+                .provider(provider)
+                .title(truncate(title, 180))
+                .description(truncate(description, 260))
+                .image(thumbnailUrl)
+                .thumbnailUrl(thumbnailUrl)
+                .siteName(truncate(siteName, 80))
+                .displayDomain(displayDomain(url))
+                .action(LinkPreviewAction.OPEN_EXTERNAL)
+                .build();
+    }
+
+    Optional<LinkPreviewResponse> getCachedPreview(String safeUrl) {
+        CachedPreview cached = previewCache.get(safeUrl);
+        if (cached == null) {
+            return Optional.empty();
+        }
+        if (cached.expiresAtMillis() <= clock.millis()) {
+            previewCache.remove(safeUrl, cached);
+            return Optional.empty();
+        }
+        return Optional.of(cached.preview());
+    }
+
+    Optional<LinkPreviewResponse> cachePreview(String safeUrl, LinkPreviewResponse preview) {
+        long now = clock.millis();
+        if (previewCache.size() >= MAX_CACHE_ENTRIES) {
+            previewCache.entrySet().removeIf(entry -> entry.getValue().expiresAtMillis() <= now);
+            if (previewCache.size() >= MAX_CACHE_ENTRIES) {
+                previewCache.keySet().stream().findFirst().ifPresent(previewCache::remove);
+            }
+        }
+        previewCache.put(safeUrl, new CachedPreview(preview, now + CACHE_TTL.toMillis()));
+        return Optional.of(preview);
+    }
+
+    private String displayDomain(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            if (host == null) {
+                return null;
+            }
+            return truncate(host.toLowerCase(Locale.ROOT).replaceFirst("^www\\.", ""), 120);
+        } catch (Exception ignored) {
+            return null;
         }
     }
 
@@ -282,5 +438,8 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
             return value;
         }
         return value.substring(0, maxLength - 1).trim() + "...";
+    }
+
+    private record CachedPreview(LinkPreviewResponse preview, long expiresAtMillis) {
     }
 }
