@@ -11,6 +11,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -88,6 +94,49 @@ class LinkPreviewServiceImplTest {
     }
 
     @Test
+    void parseFacebookOEmbed_UsesPublicVideoThumbnailWithoutEmbedHtml() throws Exception {
+        String json = """
+                {
+                  "type": "video",
+                  "title": "Public reel",
+                  "author_name": "Creator",
+                  "thumbnail_url": "https://scontent.example/reel-cover.jpg",
+                  "provider_name": "Facebook",
+                  "html": "<script>untrustedEmbed()</script>"
+                }
+                """;
+
+        Optional<LinkPreviewResponse> result = service.parseFacebookOEmbed(
+                json,
+                "https://www.facebook.com/reel/123"
+        );
+
+        assertTrue(result.isPresent());
+        assertEquals(LinkPreviewType.VIDEO, result.get().getType());
+        assertEquals("FACEBOOK", result.get().getProvider());
+        assertEquals("Public reel", result.get().getTitle());
+        assertEquals("Tác giả: Creator", result.get().getDescription());
+        assertEquals("https://scontent.example/reel-cover.jpg", result.get().getThumbnailUrl());
+        assertEquals("facebook.com", result.get().getDisplayDomain());
+        assertFalse(result.get().toString().contains("untrustedEmbed"));
+    }
+
+    @Test
+    void parseFacebookOEmbed_WithoutSafeThumbnailFallsBackToOpenGraph() throws Exception {
+        String json = """
+                {
+                  "type": "rich",
+                  "author_name": "Creator",
+                  "thumbnail_url": "javascript:alert(1)",
+                  "provider_name": "Facebook",
+                  "html": "<div>Public post</div>"
+                }
+                """;
+
+        assertTrue(service.parseFacebookOEmbed(json, "https://www.facebook.com/posts/123").isEmpty());
+    }
+
+    @Test
     void isTikTokUrl_OnlyAcceptsTikTokHosts() {
         assertTrue(service.isTikTokUrl("https://vt.tiktok.com/example"));
         assertTrue(service.isTikTokUrl("https://www.tiktok.com/@creator/video/123"));
@@ -105,6 +154,17 @@ class LinkPreviewServiceImplTest {
     }
 
     @Test
+    void isFacebookUrl_OnlyAcceptsFacebookHostsAndRecognizesVideoLinks() {
+        assertTrue(service.isFacebookUrl("https://www.facebook.com/share/r/abc"));
+        assertTrue(service.isFacebookUrl("https://fb.watch/abc"));
+        assertTrue(service.isFacebookVideoUrl("https://www.facebook.com/reel/123"));
+        assertTrue(service.isFacebookVideoUrl("https://www.facebook.com/watch/?v=123"));
+        assertFalse(service.isFacebookVideoUrl("https://www.facebook.com/posts/123"));
+        assertFalse(service.isFacebookUrl("https://facebook.com.evil.example/reel/123"));
+        assertFalse(service.isFacebookUrl("https://example.com/?next=facebook.com"));
+    }
+
+    @Test
     void classifyType_UsesMetadataInsteadOfAProviderList() {
         assertEquals(LinkPreviewType.VIDEO, service.classifyType(
                 "https://video.example/watch/123", "video.other", null, null));
@@ -116,14 +176,20 @@ class LinkPreviewServiceImplTest {
                 "https://audio.example/track", "music.song", null, null));
         assertEquals(LinkPreviewType.DEFAULT, service.classifyType(
                 "https://example.com/page", "website", "summary", null));
+        assertEquals(LinkPreviewType.DEFAULT, service.classifyType(
+                "https://www.facebook.com/posts/123", "website", "summary", null));
+        assertEquals(LinkPreviewType.VIDEO, service.classifyType(
+                "https://www.facebook.com/reel/123", "website", "summary", null));
     }
 
     @Test
     void classifyProvider_RejectsLookalikeDomains() {
         assertEquals("YOUTUBE", service.classifyProvider("https://www.youtube.com/watch?v=video-id"));
         assertEquals("TIKTOK", service.classifyProvider("https://vt.tiktok.com/video-id"));
+        assertEquals("FACEBOOK", service.classifyProvider("https://www.facebook.com/reel/video-id"));
         assertEquals(null, service.classifyProvider("https://youtube.com.evil.example/watch?v=video-id"));
         assertEquals(null, service.classifyProvider("https://tiktok.example/video-id"));
+        assertEquals(null, service.classifyProvider("https://facebook.com.evil.example/reel/video-id"));
     }
 
     @Test
@@ -145,6 +211,66 @@ class LinkPreviewServiceImplTest {
         clock.advance(Duration.ofMinutes(31));
 
         assertTrue(cachedService.getCachedPreview(preview.getUrl()).isEmpty());
+    }
+
+    @Test
+    void containsPreviewableUrl_DetectsLinksWithoutFetchingThem() {
+        assertTrue(service.containsPreviewableUrl("Xem https://www.youtube.com/watch?v=video-id"));
+        assertTrue(service.containsPreviewableUrl("Xem example.com/article"));
+        assertFalse(service.containsPreviewableUrl("Tin nhan khong co lien ket"));
+        assertFalse(service.containsPreviewableUrl(null));
+    }
+
+    @Test
+    void coordinatePreviewLoad_CoalescesConcurrentRequestsForTheSameUrl() throws Exception {
+        LinkPreviewServiceImpl coordinatingService = new LinkPreviewServiceImpl();
+        String url = "https://video.example/watch/shared";
+        LinkPreviewResponse preview = LinkPreviewResponse.builder()
+                .version(2)
+                .url(url)
+                .type(LinkPreviewType.VIDEO)
+                .build();
+        AtomicInteger loadCount = new AtomicInteger();
+        CountDownLatch firstLoadStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirstLoad = new CountDownLatch(1);
+        CountDownLatch secondCallStarted = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<Optional<LinkPreviewResponse>> first = executor.submit(() ->
+                    coordinatingService.coordinatePreviewLoad(url, () -> {
+                        loadCount.incrementAndGet();
+                        firstLoadStarted.countDown();
+                        try {
+                            releaseFirstLoad.await(2, TimeUnit.SECONDS);
+                        } catch (InterruptedException exception) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException(exception);
+                        }
+                        return Optional.of(preview);
+                    }));
+
+            assertTrue(firstLoadStarted.await(1, TimeUnit.SECONDS));
+            Future<Optional<LinkPreviewResponse>> second = executor.submit(() -> {
+                secondCallStarted.countDown();
+                return coordinatingService.coordinatePreviewLoad(url, () -> {
+                    loadCount.incrementAndGet();
+                    return Optional.of(preview);
+                });
+            });
+
+            assertTrue(secondCallStarted.await(1, TimeUnit.SECONDS));
+            assertFalse(second.isDone());
+            assertEquals(1, loadCount.get());
+
+            releaseFirstLoad.countDown();
+            assertEquals(preview, first.get(1, TimeUnit.SECONDS).orElseThrow());
+            assertEquals(preview, second.get(1, TimeUnit.SECONDS).orElseThrow());
+            assertEquals(1, loadCount.get());
+        } finally {
+            releaseFirstLoad.countDown();
+            executor.shutdownNow();
+        }
     }
 
     private static final class MutableClock extends Clock {

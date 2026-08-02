@@ -3,6 +3,9 @@ package iuh.fit.se.nextalk_be.message;
 import iuh.fit.se.nextalk_be.dto.request.MessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.MessageStatusUpdateRequest;
 import iuh.fit.se.nextalk_be.dto.response.MessageStatusUpdateResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
+import iuh.fit.se.nextalk_be.dto.response.LinkPreviewResponse;
+import iuh.fit.se.nextalk_be.dto.response.LinkPreviewType;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.ConversationType;
 import iuh.fit.se.nextalk_be.entity.Message;
@@ -13,6 +16,7 @@ import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.repository.MessageStatusRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
+import iuh.fit.se.nextalk_be.service.LinkPreviewService;
 
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,13 +36,20 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Set;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -66,6 +77,9 @@ public class MessageStatusIntegrationTest {
 
     @MockitoBean
     private SimpMessagingTemplate messagingTemplate;
+
+    @MockitoBean
+    private LinkPreviewService linkPreviewService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -237,6 +251,72 @@ public class MessageStatusIntegrationTest {
         assertEquals(conversation.getId(), broadcastResponse.getConversationId());
         assertEquals(receiverUser.getId(), broadcastResponse.getUserId());
         assertEquals("receiveruser", broadcastResponse.getUsername());
+    }
+
+    @Test
+    @WithMockUser(username = "sender@gmail.com")
+    void sendMessage_ReturnsBeforeLinkPreviewFetchCompletesAndEnrichesLater() throws Exception {
+        String content = "https://www.youtube.com/watch?v=async-preview-test";
+        CountDownLatch previewStarted = new CountDownLatch(1);
+        CountDownLatch releasePreview = new CountDownLatch(1);
+        LinkPreviewResponse preview = LinkPreviewResponse.builder()
+                .version(2)
+                .url(content)
+                .type(LinkPreviewType.VIDEO)
+                .title("Preview test")
+                .build();
+        when(linkPreviewService.containsPreviewableUrl(content)).thenReturn(true);
+        when(linkPreviewService.createPreview(content)).thenAnswer(invocation -> {
+            previewStarted.countDown();
+            releasePreview.await(2, TimeUnit.SECONDS);
+            return Optional.of(preview);
+        });
+        MessageRequest request = MessageRequest.builder()
+                .conversationId(conversation.getId())
+                .content(content)
+                .messageType("TEXT")
+                .build();
+
+        try {
+            mockMvc.perform(post("/api/messages")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.metadata.linkPreview").doesNotExist());
+
+            assertTrue(previewStarted.await(1, TimeUnit.SECONDS));
+            Message initialMessage = messageRepository.findAll().get(0);
+            assertFalse(initialMessage.getMetadata().containsKey("linkPreview"));
+
+            releasePreview.countDown();
+            Message enrichedMessage = waitForLinkPreview(initialMessage.getId());
+            assertTrue(enrichedMessage.getMetadata().containsKey("linkPreview"));
+            assertFalse(enrichedMessage.getMetadata().containsKey("realtimeEvent"));
+
+            ArgumentCaptor<MessageResponse> senderEvents = ArgumentCaptor.forClass(MessageResponse.class);
+            verify(messagingTemplate, timeout(2_000).times(2)).convertAndSendToUser(
+                    eq("senderuser"), eq("/queue/private"), senderEvents.capture()
+            );
+            verify(messagingTemplate, timeout(2_000).times(2)).convertAndSendToUser(
+                    eq("receiveruser"), eq("/queue/private"), any()
+            );
+            assertTrue(senderEvents.getAllValues().stream().anyMatch(event ->
+                    event.getMetadata() != null
+                            && "LINK_PREVIEW_UPDATED".equals(event.getMetadata().get("realtimeEvent"))));
+        } finally {
+            releasePreview.countDown();
+        }
+    }
+
+    private Message waitForLinkPreview(String messageId) throws InterruptedException {
+        for (int attempt = 0; attempt < 50; attempt++) {
+            Message message = messageRepository.findById(messageId).orElseThrow();
+            if (message.getMetadata() != null && message.getMetadata().containsKey("linkPreview")) {
+                return message;
+            }
+            Thread.sleep(20);
+        }
+        throw new AssertionError("Link preview enrichment did not complete");
     }
 
     @Test

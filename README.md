@@ -45,6 +45,9 @@ CLOUDINARY_CLOUD_NAME=your-cloud-name
 CLOUDINARY_API_KEY=your-api-key
 CLOUDINARY_API_SECRET=your-api-secret
 
+# Optional: public Facebook post/video link previews
+FACEBOOK_OEMBED_ACCESS_TOKEN=your-meta-oembed-access-token
+
 # Render Free: restricted basic upload mode without antivirus
 MALWARE_SCANNER_ENABLED=false
 ALLOW_BASIC_UNSCANNED_UPLOADS=true
@@ -107,6 +110,8 @@ CLOUDFLARE_AI_MODEL=@cf/black-forest-labs/flux-2-klein-4b
 ```
 
 FCM uses `FIREBASE_CREDENTIALS` (JSON service account directly or Base64 encoded). If this variable is missing, the application will also attempt to read `src/main/resources/firebase-service-account.json`; if both are absent, FCM is safely disabled.
+
+Facebook link previews use `FACEBOOK_OEMBED_ACCESS_TOKEN` only on the backend. When it is absent, invalid, or the shared content is not public, the service falls back to Open Graph metadata and then to the existing compact link card. Never place this token in the web or mobile application. Meta's returned embed HTML is intentionally ignored; NexTalk only accepts safe HTTPS metadata and opens the original Facebook URL externally.
 
 Cloudinary is the default image-editing provider and supports structured remove, replace, recolor, background replace, generative fill, and restore operations. It reuses the existing Cloudinary credentials. Gemini and Cloudflare remain available as fallbacks by setting `IMAGE_AI_PROVIDER=gemini` or `IMAGE_AI_PROVIDER=cloudflare`; Cloudflare's custom token needs both `Workers AI - Read` and `Workers AI - Edit` account permissions. Keep all provider tokens only in the deployment platform's secret manager.
 

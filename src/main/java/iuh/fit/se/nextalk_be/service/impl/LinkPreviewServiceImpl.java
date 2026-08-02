@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.InetAddress;
@@ -22,7 +23,9 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -39,12 +42,19 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
     private static final int PREVIEW_SCHEMA_VERSION = 2;
     private static final String TIKTOK_OEMBED_ENDPOINT = "https://www.tiktok.com/oembed?url=";
     private static final String YOUTUBE_OEMBED_ENDPOINT = "https://www.youtube.com/oembed?format=json&url=";
+    private static final String FACEBOOK_OEMBED_POST_ENDPOINT = "https://graph.facebook.com/oembed_post";
+    private static final String FACEBOOK_OEMBED_VIDEO_ENDPOINT = "https://graph.facebook.com/oembed_video";
     private static final String PROVIDER_TIKTOK = "TIKTOK";
     private static final String PROVIDER_YOUTUBE = "YOUTUBE";
+    private static final String PROVIDER_FACEBOOK = "FACEBOOK";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Map<String, CachedPreview> previewCache = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<Optional<LinkPreviewResponse>>> inFlightPreviews = new ConcurrentHashMap<>();
     private final Clock clock;
+
+    @Value("${app.link-preview.facebook-access-token:}")
+    private String facebookAccessToken;
 
     public LinkPreviewServiceImpl() {
         this(Clock.systemUTC());
@@ -54,6 +64,12 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
         this.clock = clock;
     }
 
+    @Override
+    public boolean containsPreviewableUrl(String content) {
+        return extractFirstUrl(content) != null;
+    }
+
+    @Override
     public Optional<LinkPreviewResponse> createPreview(String content) {
         String url = extractFirstUrl(content);
         if (url == null) {
@@ -62,6 +78,21 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
 
         try {
             String safeUrl = resolveSafeUrl(url);
+            Optional<LinkPreviewResponse> cachedPreview = getCachedPreview(safeUrl);
+            if (cachedPreview.isPresent()) {
+                return cachedPreview;
+            }
+            return coordinatePreviewLoad(safeUrl, () -> createPreviewForSafeUrl(safeUrl));
+        } catch (Exception e) {
+            // A URL can be private message content. Never include it or exception
+            // messages (which may also contain it) in application logs.
+            log.debug("Unable to create link preview ({})", e.getClass().getSimpleName());
+            return Optional.empty();
+        }
+    }
+
+    private Optional<LinkPreviewResponse> createPreviewForSafeUrl(String safeUrl) {
+        try {
             Optional<LinkPreviewResponse> cachedPreview = getCachedPreview(safeUrl);
             if (cachedPreview.isPresent()) {
                 return cachedPreview;
@@ -138,6 +169,35 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
         }
     }
 
+    Optional<LinkPreviewResponse> coordinatePreviewLoad(
+            String safeUrl,
+            Supplier<Optional<LinkPreviewResponse>> loader
+    ) {
+        Optional<LinkPreviewResponse> cachedPreview = getCachedPreview(safeUrl);
+        if (cachedPreview.isPresent()) {
+            return cachedPreview;
+        }
+
+        CompletableFuture<Optional<LinkPreviewResponse>> ownerFuture = new CompletableFuture<>();
+        CompletableFuture<Optional<LinkPreviewResponse>> existingFuture =
+                inFlightPreviews.putIfAbsent(safeUrl, ownerFuture);
+        if (existingFuture != null) {
+            return existingFuture.join();
+        }
+
+        try {
+            Optional<LinkPreviewResponse> result = loader.get();
+            result.ifPresent(preview -> cachePreview(safeUrl, preview));
+            ownerFuture.complete(result);
+            return result;
+        } catch (RuntimeException | Error error) {
+            ownerFuture.completeExceptionally(error);
+            throw error;
+        } finally {
+            inFlightPreviews.remove(safeUrl, ownerFuture);
+        }
+    }
+
     private Optional<LinkPreviewResponse> fetchTikTokOEmbed(String videoUrl) {
         try {
             String endpoint = TIKTOK_OEMBED_ENDPOINT
@@ -162,12 +222,40 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
         }
     }
 
+    private Optional<LinkPreviewResponse> fetchFacebookOEmbed(String facebookUrl) {
+        if (isBlank(facebookAccessToken)) {
+            return Optional.empty();
+        }
+
+        String[] endpoints = isFacebookVideoUrl(facebookUrl)
+                ? new String[]{FACEBOOK_OEMBED_VIDEO_ENDPOINT, FACEBOOK_OEMBED_POST_ENDPOINT}
+                : new String[]{FACEBOOK_OEMBED_POST_ENDPOINT};
+        for (String endpoint : endpoints) {
+            try {
+                String requestUrl = endpoint
+                        + "?omitscript=true&url=" + URLEncoder.encode(facebookUrl, StandardCharsets.UTF_8)
+                        + "&access_token=" + URLEncoder.encode(facebookAccessToken.trim(), StandardCharsets.UTF_8);
+                Optional<LinkPreviewResponse> preview = parseFacebookOEmbed(fetchJson(requestUrl), facebookUrl);
+                if (preview.isPresent()) {
+                    return preview;
+                }
+            } catch (Exception e) {
+                // The access token and private message URL are deliberately omitted.
+                log.debug("Facebook oEmbed preview unavailable ({})", e.getClass().getSimpleName());
+            }
+        }
+        return Optional.empty();
+    }
+
     private Optional<LinkPreviewResponse> fetchProviderOEmbed(String url) {
         if (isTikTokUrl(url)) {
             return fetchTikTokOEmbed(url);
         }
         if (isYouTubeUrl(url)) {
             return fetchYouTubeOEmbed(url);
+        }
+        if (isFacebookUrl(url)) {
+            return fetchFacebookOEmbed(url);
         }
         return Optional.empty();
     }
@@ -178,6 +266,32 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
 
     Optional<LinkPreviewResponse> parseYouTubeOEmbed(String json, String videoUrl) throws Exception {
         return parseVideoOEmbed(json, videoUrl, PROVIDER_YOUTUBE, "Video trên YouTube", "YouTube");
+    }
+
+    Optional<LinkPreviewResponse> parseFacebookOEmbed(String json, String facebookUrl) throws Exception {
+        JsonNode root = objectMapper.readTree(json);
+        String image = safeHttpUrl(textValue(root, "thumbnail_url"));
+        if (isBlank(image)) {
+            // Meta does not guarantee a thumbnail for every public post. Returning
+            // empty lets the normal Open Graph fetch run instead of replacing it
+            // with a poorer text-only provider response.
+            return Optional.empty();
+        }
+
+        String author = textValue(root, "author_name");
+        String oEmbedType = firstNonBlank(textValue(root, "type"), "");
+        LinkPreviewType type = "video".equalsIgnoreCase(oEmbedType) || isFacebookVideoUrl(facebookUrl)
+                ? LinkPreviewType.VIDEO
+                : "photo".equalsIgnoreCase(oEmbedType) ? LinkPreviewType.IMAGE : LinkPreviewType.DEFAULT;
+        return Optional.of(buildPreview(
+                facebookUrl,
+                type,
+                PROVIDER_FACEBOOK,
+                firstNonBlank(textValue(root, "title"), author, "Nội dung trên Facebook"),
+                isBlank(author) ? null : "Tác giả: " + author,
+                image,
+                firstNonBlank(textValue(root, "provider_name"), "Facebook")
+        ));
     }
 
     private Optional<LinkPreviewResponse> parseVideoOEmbed(
@@ -231,6 +345,48 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
         }
     }
 
+    boolean isFacebookUrl(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            if (host == null) {
+                return false;
+            }
+            String normalizedHost = host.toLowerCase(Locale.ROOT);
+            return normalizedHost.equals("facebook.com")
+                    || normalizedHost.endsWith(".facebook.com")
+                    || normalizedHost.equals("fb.watch")
+                    || normalizedHost.endsWith(".fb.watch")
+                    || normalizedHost.equals("fb.me")
+                    || normalizedHost.endsWith(".fb.me");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    boolean isFacebookVideoUrl(String url) {
+        try {
+            URI uri = URI.create(url);
+            if (!isFacebookUrl(url)) {
+                return false;
+            }
+            String host = uri.getHost().toLowerCase(Locale.ROOT);
+            if (host.equals("fb.watch") || host.endsWith(".fb.watch")) {
+                return true;
+            }
+            String path = uri.getPath() == null ? "" : uri.getPath().toLowerCase(Locale.ROOT);
+            String query = uri.getRawQuery() == null ? "" : uri.getRawQuery().toLowerCase(Locale.ROOT);
+            return path.contains("/reel/")
+                    || path.contains("/reels/")
+                    || path.contains("/videos/")
+                    || path.startsWith("/watch/")
+                    || path.startsWith("/share/r/")
+                    || path.startsWith("/share/v/")
+                    || query.matches("(?:^|.*&)v=[^&]+(?:&.*|$)");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     String classifyProvider(String url) {
         if (isTikTokUrl(url)) {
             return PROVIDER_TIKTOK;
@@ -238,11 +394,14 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
         if (isYouTubeUrl(url)) {
             return PROVIDER_YOUTUBE;
         }
+        if (isFacebookUrl(url)) {
+            return PROVIDER_FACEBOOK;
+        }
         return null;
     }
 
     LinkPreviewType classifyType(String url, String openGraphType, String twitterCard, String videoUrl) {
-        if (classifyProvider(url) != null) {
+        if (isTikTokUrl(url) || isYouTubeUrl(url) || isFacebookVideoUrl(url)) {
             return LinkPreviewType.VIDEO;
         }
 

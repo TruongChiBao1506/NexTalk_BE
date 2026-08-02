@@ -89,6 +89,7 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 @Slf4j
 public class MessageServiceImpl implements MessageService {
+    private static final String LINK_PREVIEW_UPDATED_EVENT = "LINK_PREVIEW_UPDATED";
     private static final Pattern QUILL_MENTION_ID_PATTERN = Pattern.compile("data-id=[\"']([^\"']+)[\"']");
     private static final Pattern PLAIN_MENTION_PATTERN = Pattern.compile("(^|\\s)@([\\p{L}\\p{N}_\\.\\-]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern BOT_MENTION_PATTERN = Pattern.compile("(^|\\s)@(bot|nextalk\\s+ai|meta\\s+ai)\\b", Pattern.CASE_INSENSITIVE);
@@ -119,6 +120,8 @@ public class MessageServiceImpl implements MessageService {
     private final PresenceService presenceService;
     private final RateLimitService rateLimitService;
     private final LinkPreviewService linkPreviewService;
+    private final MessageLinkPreviewEnricher messageLinkPreviewEnricher;
+    private final LinkPreviewEnrichmentScheduler linkPreviewEnrichmentScheduler;
     private final AiBotService aiBotService;
     private final VoiceChannelService voiceChannelService;
     private final MediaAuthorizationService mediaAuthorizationService;
@@ -318,10 +321,11 @@ public class MessageServiceImpl implements MessageService {
         if (!mentionTargets.userIds().isEmpty()) {
             metadata.put("mentionedUserIds", new ArrayList<>(mentionTargets.userIds()));
         }
-        if (type == MessageType.TEXT && !content.isBlank() && !Boolean.TRUE.equals(metadata.get("suppressLinkPreview")) && !metadata.containsKey("linkPreview")) {
-            linkPreviewService.createPreview(content)
-                    .ifPresent(preview -> metadata.put("linkPreview", preview));
-        }
+        boolean shouldEnrichLinkPreview = type == MessageType.TEXT
+                && !content.isBlank()
+                && !Boolean.TRUE.equals(metadata.get("suppressLinkPreview"))
+                && !metadata.containsKey("linkPreview")
+                && linkPreviewService.containsPreviewableUrl(content);
 
         Message message = Message.builder()
                 .conversation(conversation)
@@ -388,6 +392,10 @@ public class MessageServiceImpl implements MessageService {
                     "/queue/private",
                     response
             );
+        }
+
+        if (shouldEnrichLinkPreview) {
+            scheduleLinkPreviewEnrichment(savedMessage, content);
         }
 
         // Run secondary notification & FCM push tasks asynchronously in background
@@ -1230,6 +1238,27 @@ public class MessageServiceImpl implements MessageService {
         conversation.setUpdatedAt(LocalDateTime.now());
         conversationRepository.save(conversation);
         broadcastMessageUpdate(conversation, mapToMessageResponse(savedSystemMessage));
+    }
+
+    private void scheduleLinkPreviewEnrichment(Message savedMessage, String expectedContent) {
+        String messageId = savedMessage.getId();
+        linkPreviewEnrichmentScheduler.submit(() -> {
+            try {
+                messageLinkPreviewEnricher.enrich(messageId, expectedContent).ifPresent(enrichedMessage -> {
+                    MessageResponse enrichedResponse = mapToMessageResponse(enrichedMessage);
+                    Map<String, Object> responseMetadata = enrichedResponse.getMetadata() == null
+                            ? new HashMap<>()
+                            : new HashMap<>(enrichedResponse.getMetadata());
+                    responseMetadata.put("realtimeEvent", LINK_PREVIEW_UPDATED_EVENT);
+                    enrichedResponse.setMetadata(responseMetadata);
+                    broadcastMessageUpdate(enrichedMessage.getConversation(), enrichedResponse);
+                });
+            } catch (Exception exception) {
+                // Do not log message content or URL; both are private chat data.
+                log.debug("Link preview enrichment failed messageId={} ({})",
+                        messageId, exception.getClass().getSimpleName());
+            }
+        });
     }
 
     @Override
