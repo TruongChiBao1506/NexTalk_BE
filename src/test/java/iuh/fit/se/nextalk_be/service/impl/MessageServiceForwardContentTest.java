@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.dto.request.ShareMessageRequest;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -36,5 +37,12 @@ class MessageServiceForwardContentTest {
                     .extracting(violation -> violation.getPropertyPath().toString())
                     .contains("accompanyingText");
         }
+    }
+
+    @Test
+    void batchRecallDoesNotRequireMongoTransactions() throws NoSuchMethodException {
+        var method = MessageServiceImpl.class.getMethod("recallMessages", List.class);
+
+        assertThat(method.getAnnotation(Transactional.class)).isNull();
     }
 }

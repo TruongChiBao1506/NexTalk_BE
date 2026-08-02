@@ -2143,7 +2143,6 @@ public class MessageServiceImpl implements MessageService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public List<MessageResponse> recallMessages(List<String> messageIds) {
         if (messageIds == null || messageIds.isEmpty()) return Collections.emptyList();
         List<MessageResponse> responses = new ArrayList<>();
