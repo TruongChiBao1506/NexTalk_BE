@@ -21,6 +21,7 @@ import org.springframework.data.mongodb.core.mapping.DocumentReference;
 @CompoundIndex(name = "user_status_conv_idx", def = "{'userId': 1, 'status': 1, 'conversationId': 1}")
 @CompoundIndex(name = "status_message_user_v2", def = "{'messageId': 1, 'userId': 1}", unique = true, sparse = true)
 @CompoundIndex(name = "status_conv_updated_v1", def = "{'conversationId': 1, 'updatedAt': 1}")
+@CompoundIndex(name = "status_message_state_updated_v1", def = "{'messageId': 1, 'status': 1, 'updatedAt': -1}")
 public class MessageStatus extends BaseEntity {
 
     @DocumentReference(lazy = true)

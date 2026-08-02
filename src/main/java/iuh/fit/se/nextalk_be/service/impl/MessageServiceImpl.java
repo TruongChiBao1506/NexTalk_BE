@@ -11,12 +11,17 @@ import iuh.fit.se.nextalk_be.dto.request.ReactMessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.ShareMessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.TypingIndicatorRequest;
 import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageSearchResponse;
+import iuh.fit.se.nextalk_be.dto.response.ConversationUnreadResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageDeliveryDetailsResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageDeliveryParticipantResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageSyncResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageStatusResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageStatusUpdateResponse;
 import iuh.fit.se.nextalk_be.entity.Channel;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.ConversationType;
+import iuh.fit.se.nextalk_be.entity.ConversationUnreadMarker;
 import iuh.fit.se.nextalk_be.entity.FriendshipStatus;
 import iuh.fit.se.nextalk_be.entity.Group;
 import iuh.fit.se.nextalk_be.entity.GroupRole;
@@ -33,6 +38,7 @@ import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.repository.ChannelRepository;
 import iuh.fit.se.nextalk_be.repository.ChatRequestRepository;
 import iuh.fit.se.nextalk_be.repository.ConversationRepository;
+import iuh.fit.se.nextalk_be.repository.ConversationUnreadMarkerRepository;
 import iuh.fit.se.nextalk_be.repository.FriendshipRepository;
 import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.repository.GroupRepository;
@@ -62,7 +68,13 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import java.util.stream.Collectors;
 import java.util.function.Function;
 
@@ -88,6 +100,8 @@ public class MessageServiceImpl implements MessageService {
     );
 
     private final MessageRepository messageRepository;
+    private final MongoTemplate mongoTemplate;
+    private final ConversationUnreadMarkerRepository conversationUnreadMarkerRepository;
     private final ConversationRepository conversationRepository;
     private final UserService userService;
     private final UserRepository userRepository;
@@ -861,6 +875,8 @@ public class MessageServiceImpl implements MessageService {
             throw new BadRequestException("User is not a member of this conversation");
         }
 
+        conversationUnreadMarkerRepository.deleteByUserIdAndConversationId(user.getId(), conversationId);
+
         List<MessageStatus> statusesToUpdate = messageStatusRepository.findAllByConversationIdAndUserIdAndStatusIn(
                 conversationId, user.getId(), List.of("SENT", "DELIVERED"));
 
@@ -895,12 +911,127 @@ public class MessageServiceImpl implements MessageService {
         User user = userRepository.findByEmail(username)
                 .or(() -> userRepository.findByUsername(username))
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        return messageStatusRepository.countUnreadByConversation(
+        Map<String, Long> counts = messageStatusRepository.countUnreadByConversation(
                         user.getId(), List.of("SENT", "DELIVERED"))
                 .stream()
                 .collect(Collectors.toMap(
                         MessageStatusRepository.UnreadCountResult::conversationId,
                         MessageStatusRepository.UnreadCountResult::count));
+        conversationUnreadMarkerRepository.findAllByUserId(user.getId())
+                .forEach(marker -> counts.merge(marker.getConversationId(), 1L, Math::max));
+        return counts;
+    }
+
+    @Override
+    public ConversationUnreadResponse markConversationAsUnread(String conversationId, String username) {
+        User user = userRepository.findByEmail(username)
+                .or(() -> userRepository.findByUsername(username))
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation not found"));
+        boolean isMember = conversation.getMembers().stream()
+                .anyMatch(member -> member.getId().equals(user.getId()));
+        if (!isMember) {
+            throw new BadRequestException("User is not a member of this conversation");
+        }
+
+        Message latestMessage = messageRepository
+                .findVisibleConversationMessages(conversationId, user.getId(), PageRequest.of(0, 1))
+                .stream()
+                .findFirst()
+                .orElseThrow(() -> new BadRequestException("Conversation has no message to mark as unread"));
+
+        ConversationUnreadMarker marker = conversationUnreadMarkerRepository
+                .findByUserIdAndConversationId(user.getId(), conversationId)
+                .orElseGet(ConversationUnreadMarker::new);
+        marker.setUserId(user.getId());
+        marker.setConversationId(conversationId);
+        marker.setMessageId(latestMessage.getId());
+        marker = conversationUnreadMarkerRepository.save(marker);
+
+        return ConversationUnreadResponse.builder()
+                .conversationId(conversationId)
+                .messageId(marker.getMessageId())
+                .unreadCount(1)
+                .build();
+    }
+
+    @Override
+    public MessageDeliveryDetailsResponse getMessageDeliveryDetails(String messageId, String status, int page, int size) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Message message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message not found"));
+        Conversation conversation = message.getConversation();
+        if (conversation == null && message.getConversationId() != null) {
+            conversation = conversationRepository.findById(message.getConversationId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Conversation not found"));
+        }
+        if (conversation == null || conversation.getMembers().stream().noneMatch(member -> member.getId().equals(currentUser.getId()))) {
+            throw new AccessDeniedException("You are not a member of this conversation");
+        }
+        String senderId = message.getSenderId() != null
+                ? message.getSenderId()
+                : message.getSender() != null ? message.getSender().getId() : null;
+        if (!currentUser.getId().equals(senderId)) {
+            throw new AccessDeniedException("Only the sender can view message delivery details");
+        }
+        if (message.getDeletedByUsers() != null && message.getDeletedByUsers().contains(currentUser.getId())) {
+            throw new ResourceNotFoundException("Message not found");
+        }
+
+        String normalizedStatus = status == null ? "ALL" : status.trim().toUpperCase(Locale.ROOT);
+        if (!Set.of("ALL", "SEEN", "DELIVERED", "SENT").contains(normalizedStatus)) {
+            throw new BadRequestException("Unsupported delivery status filter");
+        }
+        int safePage = Math.max(0, page);
+        int safeSize = Math.min(50, Math.max(1, size));
+        Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "updatedAt"));
+        Page<MessageStatus> statusPage = "ALL".equals(normalizedStatus)
+                ? messageStatusRepository.findByMessageId(messageId, pageable)
+                : messageStatusRepository.findByMessageIdAndStatus(messageId, normalizedStatus, pageable);
+
+        List<String> userIds = statusPage.getContent().stream()
+                .map(record -> record.getUserId() != null
+                        ? record.getUserId()
+                        : record.getUser() != null ? record.getUser().getId() : null)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<String, User> usersById = userRepository.findAllById(userIds).stream()
+                .collect(Collectors.toMap(User::getId, Function.identity()));
+        List<MessageDeliveryParticipantResponse> items = statusPage.getContent().stream()
+                .map(record -> {
+                    String userId = record.getUserId() != null
+                            ? record.getUserId()
+                            : record.getUser() != null ? record.getUser().getId() : null;
+                    User recipient = userId == null ? null : usersById.get(userId);
+                    return MessageDeliveryParticipantResponse.builder()
+                            .userId(userId)
+                            .username(recipient != null
+                                    ? recipient.getUsername()
+                                    : record.getUser() != null ? record.getUser().getUsername() : "Thành viên")
+                            .avatarUrl(recipient != null ? recipient.getAvatarUrl() : null)
+                            .status(record.getStatus())
+                            .updatedAt(record.getUpdatedAt() != null ? record.getUpdatedAt() : record.getCreatedAt())
+                            .build();
+                })
+                .toList();
+
+        long seenCount = messageStatusRepository.countByMessageIdAndStatus(messageId, "SEEN");
+        long deliveredCount = messageStatusRepository.countByMessageIdAndStatus(messageId, "DELIVERED");
+        long sentCount = messageStatusRepository.countByMessageIdAndStatus(messageId, "SENT");
+        return MessageDeliveryDetailsResponse.builder()
+                .messageId(messageId)
+                .seenCount(seenCount)
+                .deliveredCount(deliveredCount)
+                .sentCount(sentCount)
+                .totalRecipients(seenCount + deliveredCount + sentCount)
+                .items(items)
+                .page(safePage)
+                .size(safeSize)
+                .totalElements(statusPage.getTotalElements())
+                .hasMore(statusPage.hasNext())
+                .build();
     }
 
     private MessageResponse mapToMessageResponse(Message message) {
@@ -1874,6 +2005,94 @@ public class MessageServiceImpl implements MessageService {
                 .filter(m -> m.isRecalled() || m.getExpiresAt() == null || m.getExpiresAt().isAfter(LocalDateTime.now()))
                 .toList();
         return mapMessagesToResponses(filtered);
+    }
+
+    @Override
+    public MessageSearchResponse searchMessagesAdvanced(
+            String query,
+            String conversationId,
+            String senderId,
+            MessageType messageType,
+            LocalDateTime from,
+            LocalDateTime to,
+            int page,
+            int size
+    ) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        int safePage = Math.max(0, page);
+        int safeSize = Math.min(50, Math.max(1, size));
+
+        List<String> permittedConversationIds;
+        if (conversationId != null && !conversationId.isBlank()) {
+            Conversation conversation = conversationRepository.findById(conversationId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Conversation not found"));
+            boolean isMember = conversation.getMembers().stream()
+                    .anyMatch(member -> member.getId().equals(currentUser.getId()));
+            if (!isMember) {
+                throw new BadRequestException("You are not a member of this conversation");
+            }
+            permittedConversationIds = List.of(conversationId);
+        } else {
+            permittedConversationIds = conversationRepository
+                    .findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId())
+                    .stream()
+                    .map(Conversation::getId)
+                    .toList();
+        }
+
+        if (permittedConversationIds.isEmpty()) {
+            return MessageSearchResponse.builder()
+                    .items(List.of())
+                    .page(safePage)
+                    .size(safeSize)
+                    .totalElements(0)
+                    .hasMore(false)
+                    .build();
+        }
+
+        List<Criteria> filters = new ArrayList<>();
+        filters.add(new Criteria().orOperator(
+                Criteria.where("conversationId").in(permittedConversationIds),
+                Criteria.where("conversation").in(permittedConversationIds)
+        ));
+        filters.add(Criteria.where("deletedByUsers").ne(currentUser.getId()));
+        filters.add(Criteria.where("isRecalled").ne(true));
+        filters.add(new Criteria().orOperator(
+                Criteria.where("expiresAt").exists(false),
+                Criteria.where("expiresAt").is(null),
+                Criteria.where("expiresAt").gt(LocalDateTime.now())
+        ));
+
+        String trimmedQuery = query == null ? "" : query.trim();
+        if (!trimmedQuery.isEmpty()) {
+            filters.add(Criteria.where("content").regex(Pattern.quote(trimmedQuery), "i"));
+        }
+        if (senderId != null && !senderId.isBlank()) {
+            filters.add(Criteria.where("senderId").is(senderId));
+        }
+        if (messageType != null) {
+            filters.add(Criteria.where("messageType").is(messageType));
+        }
+        if (from != null || to != null) {
+            Criteria createdAt = Criteria.where("createdAt");
+            if (from != null) createdAt = createdAt.gte(from);
+            if (to != null) createdAt = createdAt.lte(to);
+            filters.add(createdAt);
+        }
+
+        Criteria criteria = new Criteria().andOperator(filters.toArray(Criteria[]::new));
+        long total = mongoTemplate.count(new Query(criteria), Message.class);
+        Query resultQuery = new Query(criteria)
+                .with(PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt")));
+        List<MessageResponse> items = mapMessagesToResponses(mongoTemplate.find(resultQuery, Message.class));
+
+        return MessageSearchResponse.builder()
+                .items(items)
+                .page(safePage)
+                .size(safeSize)
+                .totalElements(total)
+                .hasMore((long) (safePage + 1) * safeSize < total)
+                .build();
     }
 
     @Override

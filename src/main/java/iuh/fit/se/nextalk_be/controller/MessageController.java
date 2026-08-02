@@ -12,6 +12,10 @@ import iuh.fit.se.nextalk_be.dto.request.TypingIndicatorRequest;
 import iuh.fit.se.nextalk_be.dto.response.ApiResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageSyncResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageSearchResponse;
+import iuh.fit.se.nextalk_be.dto.response.ConversationUnreadResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageDeliveryDetailsResponse;
+import iuh.fit.se.nextalk_be.entity.MessageType;
 import iuh.fit.se.nextalk_be.entity.Message;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.MessageService;
@@ -37,6 +41,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
+import org.springframework.format.annotation.DateTimeFormat;
+import java.time.LocalDateTime;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.web.bind.annotation.*;
@@ -183,6 +189,28 @@ public class MessageController {
         return ResponseEntity.ok(ApiResponse.success(response, "Message unpinned successfully"));
     }
 
+    @PostMapping("/api/messages/{conversationId}/unread")
+    @Operation(summary = "Mark a conversation as unread for the current user")
+    public ResponseEntity<ApiResponse<ConversationUnreadResponse>> markConversationAsUnread(
+            @PathVariable("conversationId") String conversationId,
+            Principal principal
+    ) {
+        ConversationUnreadResponse response = messageService.markConversationAsUnread(conversationId, principal.getName());
+        return ResponseEntity.ok(ApiResponse.success(response, "Conversation marked as unread"));
+    }
+
+    @GetMapping("/api/messages/{id}/delivery-details")
+    @Operation(summary = "Get paginated recipient delivery details for a sent message")
+    public ResponseEntity<ApiResponse<MessageDeliveryDetailsResponse>> getMessageDeliveryDetails(
+            @PathVariable("id") String id,
+            @RequestParam(value = "status", defaultValue = "ALL") String status,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size
+    ) {
+        MessageDeliveryDetailsResponse response = messageService.getMessageDeliveryDetails(id, status, page, size);
+        return ResponseEntity.ok(ApiResponse.success(response, "Message delivery details retrieved successfully"));
+    }
+
     @PostMapping("/api/messages/{id}/translate")
     @Operation(summary = "Translate a visible message for the current user")
     public ResponseEntity<ApiResponse<MessageTranslationResponse>> translateMessage(
@@ -289,6 +317,24 @@ public class MessageController {
     ) {
         rateLimitService.check("message:search", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(1));
         List<MessageResponse> response = messageService.searchMessages(query, conversationId);
+        return ResponseEntity.ok(ApiResponse.success(response, "Messages search completed successfully"));
+    }
+
+    @GetMapping("/api/messages/search/advanced")
+    @Operation(summary = "Search visible messages with filters and pagination")
+    public ResponseEntity<ApiResponse<MessageSearchResponse>> searchMessagesAdvanced(
+            @RequestParam(value = "query", defaultValue = "") String query,
+            @RequestParam(value = "conversationId", required = false) String conversationId,
+            @RequestParam(value = "senderId", required = false) String senderId,
+            @RequestParam(value = "messageType", required = false) MessageType messageType,
+            @RequestParam(value = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
+            @RequestParam(value = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size
+    ) {
+        rateLimitService.check("message:search", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(1));
+        MessageSearchResponse response = messageService.searchMessagesAdvanced(
+                query, conversationId, senderId, messageType, from, to, page, size);
         return ResponseEntity.ok(ApiResponse.success(response, "Messages search completed successfully"));
     }
 

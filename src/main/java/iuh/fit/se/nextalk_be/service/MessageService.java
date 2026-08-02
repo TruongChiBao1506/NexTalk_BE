@@ -10,6 +10,10 @@ import iuh.fit.se.nextalk_be.dto.request.ShareMessageRequest;
 import iuh.fit.se.nextalk_be.dto.request.TypingIndicatorRequest;
 import iuh.fit.se.nextalk_be.dto.response.MessageResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageSyncResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageSearchResponse;
+import iuh.fit.se.nextalk_be.dto.response.ConversationUnreadResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageDeliveryDetailsResponse;
+import iuh.fit.se.nextalk_be.entity.MessageType;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.User;
 import org.springframework.data.domain.Page;
@@ -27,6 +31,8 @@ public interface MessageService {
     public MessageSyncResponse syncConversationMessages(String conversationId, LocalDateTime since, int limit);
     public List<MessageResponse> getLatestMessages(List<String> conversationIds);
     public Map<String, Long> getUnreadCounts(String username);
+    public ConversationUnreadResponse markConversationAsUnread(String conversationId, String username);
+    public MessageDeliveryDetailsResponse getMessageDeliveryDetails(String messageId, String status, int page, int size);
     public void markConversationMessagesAsDelivered(String conversationId, String username);
     public void markConversationMessagesAsSeen(String conversationId, String username);
     public void createAndBroadcastCallHistoryMessage(Conversation conversation, User actor, String content, Map<String, Object> metadata);
@@ -46,6 +52,16 @@ public interface MessageService {
     public MessageResponse reactToMessage(String messageId, ReactMessageRequest request);
     public List<MessageResponse> shareMessage(String messageId, ShareMessageRequest request);
     public List<MessageResponse> searchMessages(String query, String conversationId);
+    public MessageSearchResponse searchMessagesAdvanced(
+            String query,
+            String conversationId,
+            String senderId,
+            MessageType messageType,
+            LocalDateTime from,
+            LocalDateTime to,
+            int page,
+            int size
+    );
     public MessageResponse getMessageForCurrentUser(String messageId);
 
     // Batch operations

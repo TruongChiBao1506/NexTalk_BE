@@ -1,5 +1,7 @@
 package iuh.fit.se.nextalk_be.service.impl;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import iuh.fit.se.nextalk_be.dto.response.LinkPreviewResponse;
 import iuh.fit.se.nextalk_be.service.LinkPreviewService;
 import lombok.extern.slf4j.Slf4j;
@@ -10,7 +12,10 @@ import org.springframework.stereotype.Service;
 
 import java.net.InetAddress;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -23,6 +28,9 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
     private static final int TIMEOUT_MS = 5000;
     private static final int MAX_BODY_SIZE = 1024 * 512;
     private static final int MAX_REDIRECTS = 5;
+    private static final String TIKTOK_OEMBED_ENDPOINT = "https://www.tiktok.com/oembed?url=";
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public Optional<LinkPreviewResponse> createPreview(String content) {
         String url = extractFirstUrl(content);
@@ -32,7 +40,21 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
 
         try {
             String safeUrl = resolveSafeUrl(url);
+            if (isTikTokUrl(safeUrl)) {
+                Optional<LinkPreviewResponse> tiktokPreview = fetchTikTokOEmbed(safeUrl);
+                if (tiktokPreview.isPresent()) {
+                    return tiktokPreview;
+                }
+            }
             Document document = fetchDocument(safeUrl);
+            String resolvedUrl = isBlank(document.location()) ? safeUrl : resolveSafeUrl(document.location());
+
+            if (isTikTokUrl(resolvedUrl) && !resolvedUrl.equals(safeUrl)) {
+                Optional<LinkPreviewResponse> tiktokPreview = fetchTikTokOEmbed(resolvedUrl);
+                if (tiktokPreview.isPresent()) {
+                    return tiktokPreview;
+                }
+            }
 
             String title = firstNonBlank(
                     meta(document, "property", "og:title"),
@@ -50,11 +72,11 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
             ));
             String siteName = firstNonBlank(
                     meta(document, "property", "og:site_name"),
-                    URI.create(safeUrl).getHost()
+                    URI.create(resolvedUrl).getHost()
             );
 
             if (isBlank(title)) {
-                title = firstNonBlank(siteName, URI.create(safeUrl).getHost(), safeUrl);
+                title = firstNonBlank(siteName, URI.create(resolvedUrl).getHost(), resolvedUrl);
             }
 
             if (isBlank(title) && isBlank(description) && isBlank(image)) {
@@ -62,16 +84,103 @@ public class LinkPreviewServiceImpl implements LinkPreviewService {
             }
 
             return Optional.of(LinkPreviewResponse.builder()
-                    .url(safeUrl)
+                    .url(resolvedUrl)
                     .title(truncate(title, 180))
                     .description(truncate(description, 260))
                     .image(image)
                     .siteName(truncate(siteName, 80))
                     .build());
         } catch (Exception e) {
-            log.debug("Unable to create link preview for URL: {}", url, e);
+            // A URL can be private message content. Never include it or exception
+            // messages (which may also contain it) in application logs.
+            log.debug("Unable to create link preview ({})", e.getClass().getSimpleName());
             return Optional.empty();
         }
+    }
+
+    private Optional<LinkPreviewResponse> fetchTikTokOEmbed(String videoUrl) {
+        try {
+            String endpoint = TIKTOK_OEMBED_ENDPOINT
+                    + URLEncoder.encode(videoUrl, StandardCharsets.UTF_8);
+            String json = fetchJson(endpoint);
+            return parseTikTokOEmbed(json, videoUrl);
+        } catch (Exception e) {
+            log.debug("TikTok oEmbed preview unavailable ({})", e.getClass().getSimpleName());
+            return Optional.empty();
+        }
+    }
+
+    Optional<LinkPreviewResponse> parseTikTokOEmbed(String json, String videoUrl) throws Exception {
+        JsonNode root = objectMapper.readTree(json);
+        String image = safeHttpUrl(textValue(root, "thumbnail_url"));
+        if (isBlank(image)) {
+            return Optional.empty();
+        }
+        String author = textValue(root, "author_name");
+        return Optional.of(LinkPreviewResponse.builder()
+                .url(videoUrl)
+                .title(truncate(firstNonBlank(textValue(root, "title"), "Video trên TikTok"), 180))
+                .description(truncate(isBlank(author) ? null : "Tác giả: " + author, 260))
+                .image(image)
+                .siteName(truncate(firstNonBlank(textValue(root, "provider_name"), "TikTok"), 80))
+                .build());
+    }
+
+    boolean isTikTokUrl(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            return host != null && (host.equalsIgnoreCase("tiktok.com")
+                    || host.toLowerCase(Locale.ROOT).endsWith(".tiktok.com"));
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String fetchJson(String url) throws Exception {
+        String currentUrl = resolveSafeUrl(url);
+        for (int redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
+            Connection.Response response = Jsoup.connect(currentUrl)
+                    .userAgent("NexTalk-LinkPreview/1.0")
+                    .header("Accept", "application/json")
+                    .timeout(TIMEOUT_MS)
+                    .maxBodySize(MAX_BODY_SIZE)
+                    .followRedirects(false)
+                    .ignoreContentType(true)
+                    .ignoreHttpErrors(true)
+                    .execute();
+            int status = response.statusCode();
+            if (status >= 300 && status < 400 && response.header("Location") != null) {
+                currentUrl = resolveSafeUrl(URI.create(currentUrl).resolve(response.header("Location")).toString());
+                continue;
+            }
+            if (status < 200 || status >= 300) {
+                throw new IllegalArgumentException("oEmbed endpoint returned a non-success status");
+            }
+            return response.body();
+        }
+        throw new IllegalArgumentException("Too many redirects");
+    }
+
+    private String textValue(JsonNode root, String fieldName) {
+        JsonNode value = root.get(fieldName);
+        return value != null && value.isTextual() ? value.asText().trim() : null;
+    }
+
+    private String safeHttpUrl(String rawUrl) {
+        if (isBlank(rawUrl)) {
+            return null;
+        }
+        try {
+            URI uri = URI.create(rawUrl).normalize();
+            if ("https".equalsIgnoreCase(uri.getScheme())
+                    && uri.getHost() != null
+                    && uri.getUserInfo() == null) {
+                return uri.toString();
+            }
+        } catch (Exception ignored) {
+            // Invalid thumbnail URL is treated as unavailable metadata.
+        }
+        return null;
     }
 
     private String extractFirstUrl(String content) {
