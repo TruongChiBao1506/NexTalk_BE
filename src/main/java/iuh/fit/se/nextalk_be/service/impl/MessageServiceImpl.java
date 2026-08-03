@@ -421,6 +421,8 @@ public class MessageServiceImpl implements MessageService {
                         contentPreview = "[Tin nhắn thoại]";
                     } else if (savedMessage.getMessageType() == MessageType.FILE) {
                         contentPreview = "[Tệp đính kèm]";
+                    } else if (savedMessage.getMessageType() == MessageType.GIF) {
+                        contentPreview = "Đã gửi một ảnh GIF";
                     } else {
                         contentPreview = savedMessage.getContent();
                         if (contentPreview != null) {
