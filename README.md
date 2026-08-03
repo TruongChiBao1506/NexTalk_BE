@@ -37,6 +37,7 @@ The application reads environment variables directly. You can set them in your t
 ```dotenv
 # Required
 SPRING_DATA_MONGODB_URI=mongodb://localhost:27017/nextalk
+MONGODB_DATABASE=nextalk
 JWT_SECRET=replace-with-a-long-random-secret
 TOKEN_PEPPER=replace-with-a-separate-random-secret-of-at-least-32-bytes
 SPRING_MAIL_USERNAME=your-email@example.com

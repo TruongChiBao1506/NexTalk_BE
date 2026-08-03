@@ -11,6 +11,18 @@ import java.util.List;
 public interface NotificationService {
     NotificationResponse createAndSend(User recipient, NotificationType type, String content, String referenceId);
     NotificationResponse createAndSend(User recipient, NotificationType type, String content, String referenceId, String secondaryReferenceId);
+    NotificationResponse createChatNotification(
+            User recipient,
+            NotificationType type,
+            String content,
+            String messageId,
+            String conversationId,
+            String conversationName,
+            String senderId,
+            String senderName,
+            String senderAvatarUrl,
+            String pushBody
+    );
     List<NotificationResponse> getMyNotifications();
     NotificationResponse markAsRead(String notificationId);
     long countUnread();

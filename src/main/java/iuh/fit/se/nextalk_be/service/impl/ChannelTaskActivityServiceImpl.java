@@ -34,7 +34,6 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
     private final GroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
     private final UserService userService;
-    private final iuh.fit.se.nextalk_be.service.FCMService fcmService;
     private final SimpMessagingTemplate messagingTemplate;
     private final NotificationService notificationService;
 
@@ -77,22 +76,22 @@ public class ChannelTaskActivityServiceImpl implements ChannelTaskActivityServic
             // Ignore socket delivery errors if offline
         }
 
-        // Send FCM Push Notifications to Group members
+        // Persist one outbox-backed notification per recipient. The activity ID
+        // makes retries idempotent and delivery survives a backend restart.
         try {
             List<GroupMember> members = groupMemberRepository.findAllByGroupId(groupId);
             if (members != null && !members.isEmpty()) {
-                List<String> fcmTokens = members.stream()
+                String actorName = actor != null ? actor.getUsername() : "Hệ thống";
+                members.stream()
                         .map(GroupMember::getUser)
                         .filter(u -> u != null && (actor == null || !u.getId().equals(actor.getId())))
-                        .filter(u -> u.getFcmTokens() != null && !u.getFcmTokens().isEmpty())
-                        .flatMap(u -> u.getFcmTokens().stream())
                         .distinct()
-                        .toList();
-
-                if (!fcmTokens.isEmpty()) {
-                    String actorName = actor != null ? actor.getUsername() : "Hệ thống";
-                    fcmService.sendPushNotificationToTokens(fcmTokens, "Thông báo công việc NexTalk", actorName + " " + content);
-                }
+                        .forEach(recipient -> notificationService.createAndSend(
+                                recipient,
+                                NotificationType.TASK_UPDATED,
+                                actorName + " " + content,
+                                channelId,
+                                saved.getId()));
             }
         } catch (Exception ignored) {}
     }

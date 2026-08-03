@@ -33,4 +33,21 @@ public class Notification extends BaseEntity {
     private NotificationActionStatus actionStatus;
 
     private LocalDateTime snoozedUntil;
+
+    private String pushIdempotencyKey;
+
+    @Builder.Default
+    private NotificationDeliveryStatus deliveryStatus = NotificationDeliveryStatus.PENDING;
+
+    @Builder.Default
+    private int deliveryAttempts = 0;
+
+    private LocalDateTime nextDeliveryAttemptAt;
+    private LocalDateTime deliveryLeaseUntil;
+    private String deliveryLeaseId;
+    private LocalDateTime deliveryStartedAt;
+    private LocalDateTime deliveredAt;
+    private LocalDateTime deadLetteredAt;
+    private String lastDeliveryErrorCode;
+    private NotificationPushPayload pushPayload;
 }

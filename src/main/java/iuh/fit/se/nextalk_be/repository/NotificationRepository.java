@@ -7,9 +7,14 @@ import org.springframework.data.mongodb.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface NotificationRepository extends MongoRepository<Notification, String> {
+
+    Optional<Notification> findByPushIdempotencyKey(String pushIdempotencyKey);
+
+    long countByDeliveryStatus(iuh.fit.se.nextalk_be.entity.NotificationDeliveryStatus deliveryStatus);
 
     List<Notification> findByRecipientIdOrderByCreatedAtDesc(String recipientId);
 

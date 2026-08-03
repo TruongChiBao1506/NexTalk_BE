@@ -28,9 +28,9 @@ import iuh.fit.se.nextalk_be.entity.GroupRole;
 import iuh.fit.se.nextalk_be.entity.Message;
 import iuh.fit.se.nextalk_be.entity.MessageAttachment;
 import iuh.fit.se.nextalk_be.entity.MessageReaction;
+import iuh.fit.se.nextalk_be.entity.MessageNotificationDispatchStatus;
 import iuh.fit.se.nextalk_be.entity.MessageStatus;
 import iuh.fit.se.nextalk_be.entity.MessageType;
-import iuh.fit.se.nextalk_be.entity.NotificationType;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.event.TypingIndicatorEvent;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
@@ -48,15 +48,13 @@ import iuh.fit.se.nextalk_be.repository.MessageStatusRepository;
 import iuh.fit.se.nextalk_be.repository.UserBlockRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
-import iuh.fit.se.nextalk_be.service.FCMService;
 import iuh.fit.se.nextalk_be.service.AiBotService;
 import iuh.fit.se.nextalk_be.service.LinkPreviewService;
-import iuh.fit.se.nextalk_be.service.NotificationService;
+import iuh.fit.se.nextalk_be.service.MessageNotificationDispatcher;
 import iuh.fit.se.nextalk_be.service.PresenceService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import iuh.fit.se.nextalk_be.service.VoiceChannelService;
 import iuh.fit.se.nextalk_be.service.MediaAuthorizationService;
-import iuh.fit.se.nextalk_be.service.ConversationNotificationPreferenceService;
 import iuh.fit.se.nextalk_be.service.MessagePayloadValidator;
 
 
@@ -68,7 +66,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.data.domain.PageImpl;
@@ -115,15 +112,13 @@ public class MessageServiceImpl implements MessageService {
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final MessageStatusRepository messageStatusRepository;
-    private final NotificationService notificationService;
-    private final ConversationNotificationPreferenceService conversationNotificationPreferenceService;
+    private final MessageNotificationDispatcher messageNotificationDispatcher;
     private final FriendshipRepository friendshipRepository;
     private final ChatRequestRepository chatRequestRepository;
     private final UserBlockRepository userBlockRepository;
     private final GroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
     private final ChannelRepository channelRepository;
-    private final FCMService fcmService;
     private final PresenceService presenceService;
     private final RateLimitService rateLimitService;
     private final LinkPreviewService linkPreviewService;
@@ -133,7 +128,6 @@ public class MessageServiceImpl implements MessageService {
     private final VoiceChannelService voiceChannelService;
     private final MediaAuthorizationService mediaAuthorizationService;
     private final MessagePayloadValidator messagePayloadValidator;
-    private final ThreadPoolTaskExecutor applicationTaskExecutor;
 
     @Value("${app.rate-limit.ai-bot.limit:10}")
     private int aiBotRateLimit;
@@ -356,6 +350,8 @@ public class MessageServiceImpl implements MessageService {
                 .forwardedFromMessageId(forwardedFromMessageId)
                 .forwardedFromSenderUsername(forwardedFromSenderUsername)
                 .metadata(metadata)
+                .notificationDispatchStatus(MessageNotificationDispatchStatus.PENDING)
+                .notificationDispatchNextAttemptAt(LocalDateTime.now())
                 .build();
         Integer perMessageSelfDestruct = request.getSelfDestructSeconds();
         if (perMessageSelfDestruct == null && request.getMetadata() != null && request.getMetadata().get("selfDestructSeconds") instanceof Number num) {
@@ -426,113 +422,9 @@ public class MessageServiceImpl implements MessageService {
             scheduleLinkPreviewEnrichment(savedMessage, content);
         }
 
-        // Run secondary notification & FCM push tasks asynchronously in background
-        java.util.concurrent.CompletableFuture.runAsync(() -> {
-            try {
-                for (User member : conversation.getMembers()) {
-                    if (member.getId().equals(currentUser.getId())) continue;
-
-                    String contentPreview;
-                    if (savedMessage.getMessageType() == MessageType.IMAGE) {
-                        contentPreview = "[Hình ảnh]";
-                    } else if (savedMessage.getMessageType() == MessageType.VIDEO) {
-                        contentPreview = "[Video]";
-                    } else if (savedMessage.getMessageType() == MessageType.AUDIO) {
-                        contentPreview = "[Tin nhắn thoại]";
-                    } else if (savedMessage.getMessageType() == MessageType.FILE) {
-                        contentPreview = "[Tệp đính kèm]";
-                    } else if (savedMessage.getMessageType() == MessageType.GIF) {
-                        contentPreview = "Đã gửi một ảnh GIF";
-                    } else {
-                        contentPreview = savedMessage.getContent();
-                        if (contentPreview != null) {
-                            contentPreview = contentPreview.replaceAll("<[^>]*>", "");
-                            contentPreview = contentPreview.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">");
-                        }
-                    }
-
-                    String priorityPrefix = "";
-                    String pushTitlePrefix = "";
-                    if (savedMessage.getMetadata() != null && savedMessage.getMetadata().get("priority") != null) {
-                        if ("IMPORTANT".equals(savedMessage.getMetadata().get("priority"))) {
-                            priorityPrefix = "[Quan trọng] ";
-                            pushTitlePrefix = "⚠️ ";
-                        } else if ("URGENT".equals(savedMessage.getMetadata().get("priority"))) {
-                            priorityPrefix = "[Khẩn cấp] ";
-                            pushTitlePrefix = "🚨 ";
-                        }
-                    }
-
-                    boolean isMentioned = isMemberMentioned(savedMessage, member);
-                    boolean mentionsEveryone = savedMessage.getMetadata() != null
-                            && Boolean.TRUE.equals(savedMessage.getMetadata().get("mentionAll"));
-                    String notificationContent;
-                    if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
-                        notificationContent = isMentioned
-                                ? pushTitlePrefix + "Bạn được nhắc trong một cuộc trò chuyện"
-                                : pushTitlePrefix + "Bạn có tin nhắn mới";
-                    } else if (isMentioned) {
-                        String mentionLabel = mentionsEveryone
-                                ? " đã nhắc đến mọi người"
-                                : " đã nhắc đến bạn";
-                        String conversationLabel = conversation.getName() != null
-                                && !conversation.getName().isBlank()
-                                ? " trong " + conversation.getName().trim()
-                                : "";
-                        notificationContent = pushTitlePrefix + currentUser.getUsername()
-                                + mentionLabel + conversationLabel + ": "
-                                + priorityPrefix + (contentPreview != null && contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
-                    } else {
-                        notificationContent = pushTitlePrefix + "Bạn có tin nhắn mới từ " + currentUser.getUsername() + ": " + 
-                                priorityPrefix + (contentPreview != null && contentPreview.length() > 60 ? contentPreview.substring(0, 57) + "..." : contentPreview);
-                    }
-
-                    boolean notificationAllowed = conversationNotificationPreferenceService.shouldNotify(
-                            conversation,
-                            member.getId(),
-                            isMentioned
-                    );
-                    boolean suspiciousStrangerMessage = savedMessage.getMetadata() != null
-                            && Boolean.TRUE.equals(savedMessage.getMetadata().get("strangerMessage"))
-                            && "MEDIUM".equals(savedMessage.getMetadata().get("spamRisk"));
-                    boolean silentMessage = savedMessage.getMetadata() != null
-                            && Boolean.TRUE.equals(savedMessage.getMetadata().get("silent"));
-                    notificationAllowed = notificationAllowed && !suspiciousStrangerMessage && !silentMessage;
-                    if (notificationAllowed) {
-                        notificationService.createAndSend(
-                                member,
-                                isMentioned ? NotificationType.MENTION : NotificationType.NEW_MESSAGE,
-                                notificationContent,
-                                conversation.getId().toString()
-                        );
-                    }
-
-                    if (notificationAllowed && member.getFcmTokens() != null && !member.getFcmTokens().isEmpty()) {
-                        String pushBody = priorityPrefix + (contentPreview != null ? contentPreview : "");
-                        if (isMentioned) {
-                            pushBody = (mentionsEveryone
-                                    ? "Đã nhắc đến mọi người: "
-                                    : "Đã nhắc đến bạn: ") + pushBody;
-                        }
-                        if (conversation.getHiddenByUsers() != null && conversation.getHiddenByUsers().contains(member.getId())) {
-                            pushBody = isMentioned ? "Bạn được nhắc trong một cuộc trò chuyện" : "Bạn có tin nhắn mới";
-                        }
-                        fcmService.sendChatPushNotificationToTokens(
-                                member.getFcmTokens(),
-                                savedMessage.getId(),
-                                conversation.getId(),
-                                conversation.getName(),
-                                currentUser.getId(),
-                                currentUser.getUsername(),
-                                currentUser.getAvatarUrl(),
-                                pushBody
-                        );
-                    }
-                }
-            } catch (Exception e) {
-                log.error("Error processing async notifications for message {}: {}", savedMessage.getId(), e.getMessage());
-            }
-        }, applicationTaskExecutor);
+        // The message save includes a durable PENDING marker. Dispatch immediately
+        // for low latency; an expired lease is resumed after backend restart.
+        messageNotificationDispatcher.dispatchNow(savedMessage.getId());
 
         if (triggersAiBot) {
             aiBotService.answerMentionAsync(conversation, savedMessage, currentUser);

@@ -8,7 +8,6 @@ import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.repository.MessageReminderRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
-import iuh.fit.se.nextalk_be.service.FCMService;
 import iuh.fit.se.nextalk_be.service.MessageReminderService;
 import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.UserService;
@@ -34,7 +33,6 @@ public class MessageReminderServiceImpl implements MessageReminderService {
     private final UserRepository userRepository;
     private final UserService userService;
     private final NotificationService notificationService;
-    private final FCMService fcmService;
 
     @Override
     public List<MessageReminderResponse> getMyReminders() {
@@ -147,12 +145,9 @@ public class MessageReminderServiceImpl implements MessageReminderService {
                 recipient,
                 NotificationType.REMINDER,
                 "NexTalk nhac hen: " + body,
-                reminder.getConversation().getId()
+                reminder.getConversation().getId(),
+                reminder.getId()
         );
-
-        if (recipient.getFcmTokens() != null && !recipient.getFcmTokens().isEmpty()) {
-            fcmService.sendPushNotificationToTokens(recipient.getFcmTokens(), "NexTalk nhac hen", body);
-        }
 
         reminder.setStatus(MessageReminderStatus.FIRED);
         reminder.setFiredAt(LocalDateTime.now());

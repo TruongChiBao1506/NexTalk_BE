@@ -5,7 +5,6 @@ import iuh.fit.se.nextalk_be.entity.NotificationActionStatus;
 import iuh.fit.se.nextalk_be.entity.NotificationType;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.NotificationRepository;
-import iuh.fit.se.nextalk_be.service.FCMService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,14 +28,13 @@ class NotificationServiceImplTest {
     @Mock private NotificationRepository notificationRepository;
     @Mock private UserService userService;
     @Mock private SimpMessagingTemplate messagingTemplate;
-    @Mock private FCMService fcmService;
 
     private NotificationServiceImpl service;
     private User user;
 
     @BeforeEach
     void setUp() {
-        service = new NotificationServiceImpl(notificationRepository, userService, messagingTemplate, fcmService);
+        service = new NotificationServiceImpl(notificationRepository, userService, messagingTemplate);
         user = User.builder().username("member").email("member@example.com").build();
         user.setId("user-1");
         lenient().when(notificationRepository.save(any(Notification.class))).thenAnswer(invocation -> invocation.getArgument(0));

@@ -13,7 +13,6 @@ import iuh.fit.se.nextalk_be.repository.ChannelTaskActivityRepository;
 import iuh.fit.se.nextalk_be.repository.ChannelTaskRepository;
 import iuh.fit.se.nextalk_be.repository.GroupMemberRepository;
 import iuh.fit.se.nextalk_be.repository.GroupRepository;
-import iuh.fit.se.nextalk_be.service.FCMService;
 import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,7 +44,6 @@ class ChannelTaskActivityServiceSecurityTest {
     @Mock private GroupRepository groupRepository;
     @Mock private GroupMemberRepository groupMemberRepository;
     @Mock private UserService userService;
-    @Mock private FCMService fcmService;
     @Mock private SimpMessagingTemplate messagingTemplate;
     @Mock private NotificationService notificationService;
 
@@ -63,7 +61,6 @@ class ChannelTaskActivityServiceSecurityTest {
                 groupRepository,
                 groupMemberRepository,
                 userService,
-                fcmService,
                 messagingTemplate,
                 notificationService);
 

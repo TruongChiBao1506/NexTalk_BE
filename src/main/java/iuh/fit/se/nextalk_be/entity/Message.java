@@ -80,4 +80,12 @@ public class Message extends BaseEntity {
     /** Compare-and-set token for atomic reaction and poll mutations. */
     @Builder.Default
     private long mutationVersion = 0L;
+
+    /** Durable bridge from a saved message to recipient notification outbox rows. */
+    private MessageNotificationDispatchStatus notificationDispatchStatus;
+    private LocalDateTime notificationDispatchNextAttemptAt;
+    private LocalDateTime notificationDispatchLeaseUntil;
+    private String notificationDispatchLeaseId;
+    @Builder.Default
+    private int notificationDispatchAttempts = 0;
 }

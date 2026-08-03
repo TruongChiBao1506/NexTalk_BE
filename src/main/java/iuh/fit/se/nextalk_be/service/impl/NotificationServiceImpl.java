@@ -4,20 +4,27 @@ import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.dto.response.NotificationResponse;
 import iuh.fit.se.nextalk_be.entity.Notification;
 import iuh.fit.se.nextalk_be.entity.NotificationActionStatus;
+import iuh.fit.se.nextalk_be.entity.NotificationDeliveryStatus;
+import iuh.fit.se.nextalk_be.entity.NotificationPushKind;
+import iuh.fit.se.nextalk_be.entity.NotificationPushPayload;
 import iuh.fit.se.nextalk_be.entity.NotificationType;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.repository.NotificationRepository;
-import iuh.fit.se.nextalk_be.service.FCMService;
 import iuh.fit.se.nextalk_be.service.UserService;
 
 
 import lombok.RequiredArgsConstructor;
+import org.bson.types.ObjectId;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 
 @Service
@@ -27,7 +34,6 @@ public class NotificationServiceImpl implements NotificationService {
     private final NotificationRepository notificationRepository;
     private final UserService userService;
     private final SimpMessagingTemplate messagingTemplate;
-    private final FCMService fcmService;
 
     /**
      * Create, persist, and push a notification to a specific recipient via WebSocket.
@@ -45,6 +51,57 @@ public class NotificationServiceImpl implements NotificationService {
             String referenceId,
             String secondaryReferenceId
     ) {
+        String stableSeed = secondaryReferenceId == null ? null : String.join("|",
+                type.name(), recipient.getId(), safe(referenceId), secondaryReferenceId, safe(content));
+        NotificationPushPayload payload = NotificationPushPayload.builder()
+                .kind(NotificationPushKind.GENERIC)
+                .title("NexTalk")
+                .body(content)
+                .build();
+        return createNotification(recipient, type, content, referenceId, secondaryReferenceId, stableSeed, payload);
+    }
+
+    @Override
+    public NotificationResponse createChatNotification(
+            User recipient,
+            NotificationType type,
+            String content,
+            String messageId,
+            String conversationId,
+            String conversationName,
+            String senderId,
+            String senderName,
+            String senderAvatarUrl,
+            String pushBody
+    ) {
+        String stableSeed = String.join("|", "CHAT", safe(messageId), safe(recipient.getId()));
+        NotificationPushPayload payload = NotificationPushPayload.builder()
+                .kind(NotificationPushKind.CHAT)
+                .messageId(messageId)
+                .conversationId(conversationId)
+                .conversationName(conversationName)
+                .senderId(senderId)
+                .senderName(senderName)
+                .senderAvatarUrl(senderAvatarUrl)
+                .body(pushBody)
+                .build();
+        return createNotification(recipient, type, content, conversationId, null, stableSeed, payload);
+    }
+
+    private NotificationResponse createNotification(
+            User recipient,
+            NotificationType type,
+            String content,
+            String referenceId,
+            String secondaryReferenceId,
+            String stableSeed,
+            NotificationPushPayload pushPayload
+    ) {
+        String notificationId = new ObjectId().toHexString();
+        String idempotencyKey = stableSeed == null
+                ? "notification:" + notificationId
+                : "notification:" + sha256(stableSeed);
+        LocalDateTime now = LocalDateTime.now();
         Notification notification = Notification.builder()
                 .recipient(recipient)
                 .type(type)
@@ -53,9 +110,21 @@ public class NotificationServiceImpl implements NotificationService {
                 .secondaryReferenceId(secondaryReferenceId)
                 .isRead(false)
                 .actionStatus(isActionableType(type) ? NotificationActionStatus.PENDING : null)
+                .pushIdempotencyKey(idempotencyKey)
+                .deliveryStatus(NotificationDeliveryStatus.PENDING)
+                .nextDeliveryAttemptAt(now)
+                .pushPayload(pushPayload)
                 .build();
+        notification.setId(notificationId);
 
-        Notification saved = notificationRepository.save(notification);
+        Notification saved;
+        try {
+            saved = notificationRepository.save(notification);
+        } catch (DuplicateKeyException duplicate) {
+            saved = notificationRepository.findByPushIdempotencyKey(idempotencyKey)
+                    .orElseThrow(() -> duplicate);
+            return mapToResponse(saved);
+        }
         NotificationResponse response = mapToResponse(saved);
 
         // Push realtime to recipient's private notification queue
@@ -64,11 +133,6 @@ public class NotificationServiceImpl implements NotificationService {
                 "/queue/notifications",
                 response
         );
-
-        if (shouldSendPush(type)) {
-            fcmService.sendPushNotificationToTokens(recipient.getFcmTokens(), "NexTalk", content);
-        }
-
         return response;
     }
 
@@ -193,15 +257,6 @@ public class NotificationServiceImpl implements NotificationService {
                 .count();
     }
 
-    private boolean shouldSendPush(NotificationType type) {
-        return type != NotificationType.NEW_MESSAGE
-                && type != NotificationType.MENTION
-                && type != NotificationType.REMINDER
-                && type != NotificationType.TASK_ASSIGNED
-                && type != NotificationType.TASK_DUE
-                && type != NotificationType.TASK_UPDATED;
-    }
-
     private boolean isActionableType(NotificationType type) {
         return type == NotificationType.MENTION
                 || type == NotificationType.FRIEND_REQUEST
@@ -227,5 +282,19 @@ public class NotificationServiceImpl implements NotificationService {
                 .snoozedUntil(notification.getSnoozedUntil())
                 .createdAt(notification.getCreatedAt() != null ? notification.getCreatedAt() : LocalDateTime.now())
                 .build();
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static String sha256(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
     }
 }

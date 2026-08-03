@@ -7,7 +7,6 @@ import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.MessageReminderRepository;
 import iuh.fit.se.nextalk_be.repository.MessageRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
-import iuh.fit.se.nextalk_be.service.FCMService;
 import iuh.fit.se.nextalk_be.service.NotificationService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import org.junit.jupiter.api.Test;
@@ -33,7 +32,6 @@ class MessageReminderSchedulerTest {
         UserRepository users = mock(UserRepository.class);
         UserService userService = mock(UserService.class);
         NotificationService notifications = mock(NotificationService.class);
-        FCMService fcm = mock(FCMService.class);
 
         User recipient = User.builder().username("recipient").fcmTokens(List.of()).build();
         recipient.setId("user-1");
@@ -60,8 +58,7 @@ class MessageReminderSchedulerTest {
                 messages,
                 users,
                 userService,
-                notifications,
-                fcm
+                notifications
         ).dispatchDueReminders();
 
         verify(reminders).findByStatusAndRemindAtLessThanEqualOrderByRemindAtAsc(
