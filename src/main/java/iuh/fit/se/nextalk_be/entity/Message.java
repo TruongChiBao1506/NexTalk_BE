@@ -28,11 +28,6 @@ import java.util.Map;
 @CompoundIndex(name = "msg_conv_created_v2", def = "{'conversationId': 1, 'createdAt': -1}")
 @CompoundIndex(name = "msg_conv_updated_v1", def = "{'conversationId': 1, 'updatedAt': 1}")
 @CompoundIndex(name = "msg_expiry_recall_type_idx", def = "{'isRecalled': 1, 'expiresAt': 1, 'messageType': 1}")
-@CompoundIndex(
-        name = "msg_sender_client_id_lookup",
-        def = "{'conversationId': 1, 'senderId': 1, 'metadata.clientMessageId': 1}",
-        partialFilter = "{'metadata.clientMessageId': {'$type': 'string'}}"
-)
 public class Message extends BaseEntity {
 
     @DocumentReference(lazy = true)
@@ -81,4 +76,8 @@ public class Message extends BaseEntity {
 
     @Builder.Default
     private List<String> deletedByUsers = new ArrayList<>();
+
+    /** Compare-and-set token for atomic reaction and poll mutations. */
+    @Builder.Default
+    private long mutationVersion = 0L;
 }

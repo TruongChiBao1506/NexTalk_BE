@@ -10,6 +10,7 @@ import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.repository.ConversationRepository;
 import iuh.fit.se.nextalk_be.repository.ScheduledMessageRepository;
 import iuh.fit.se.nextalk_be.service.MessageService;
+import iuh.fit.se.nextalk_be.service.MessagePayloadValidator;
 import iuh.fit.se.nextalk_be.service.ScheduledMessageService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +46,7 @@ public class ScheduledMessageServiceImpl implements ScheduledMessageService {
     private final ConversationRepository conversationRepository;
     private final UserService userService;
     private final MessageService messageService;
+    private final MessagePayloadValidator messagePayloadValidator;
     private final StringRedisTemplate redisTemplate;
     private final String schedulerInstanceId = UUID.randomUUID().toString();
     private final ScheduledExecutorService schedulerExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -60,6 +62,7 @@ public class ScheduledMessageServiceImpl implements ScheduledMessageService {
     public ScheduledMessageResponse schedule(ScheduleMessageRequest request) {
         User sender = userService.getCurrentAuthenticatedUser();
         MessageRequest payload = request.getMessage();
+        messagePayloadValidator.validate(payload);
         boolean hasContent = payload.getContent() != null && !payload.getContent().trim().isEmpty();
         boolean hasAttachments = payload.getAttachments() != null && !payload.getAttachments().isEmpty();
         if (!hasContent && !hasAttachments) {

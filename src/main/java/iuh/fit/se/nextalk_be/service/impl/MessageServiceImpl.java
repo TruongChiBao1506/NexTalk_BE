@@ -34,6 +34,7 @@ import iuh.fit.se.nextalk_be.entity.NotificationType;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.event.TypingIndicatorEvent;
 import iuh.fit.se.nextalk_be.exception.BadRequestException;
+import iuh.fit.se.nextalk_be.exception.ConflictException;
 import iuh.fit.se.nextalk_be.exception.ResourceNotFoundException;
 import iuh.fit.se.nextalk_be.repository.ChannelRepository;
 import iuh.fit.se.nextalk_be.repository.ChatRequestRepository;
@@ -56,6 +57,7 @@ import iuh.fit.se.nextalk_be.service.UserService;
 import iuh.fit.se.nextalk_be.service.VoiceChannelService;
 import iuh.fit.se.nextalk_be.service.MediaAuthorizationService;
 import iuh.fit.se.nextalk_be.service.ConversationNotificationPreferenceService;
+import iuh.fit.se.nextalk_be.service.MessagePayloadValidator;
 
 
 import lombok.RequiredArgsConstructor;
@@ -72,9 +74,12 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import java.util.stream.Collectors;
 import java.util.function.Function;
 
@@ -89,6 +94,7 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 @Slf4j
 public class MessageServiceImpl implements MessageService {
+    private static final int MAX_ATOMIC_MUTATION_ATTEMPTS = 5;
     private static final String LINK_PREVIEW_UPDATED_EVENT = "LINK_PREVIEW_UPDATED";
     private static final Pattern QUILL_MENTION_ID_PATTERN = Pattern.compile("data-id=[\"']([^\"']+)[\"']");
     private static final Pattern PLAIN_MENTION_PATTERN = Pattern.compile("(^|\\s)@([\\p{L}\\p{N}_\\.\\-]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
@@ -126,6 +132,7 @@ public class MessageServiceImpl implements MessageService {
     private final AiBotService aiBotService;
     private final VoiceChannelService voiceChannelService;
     private final MediaAuthorizationService mediaAuthorizationService;
+    private final MessagePayloadValidator messagePayloadValidator;
     private final ThreadPoolTaskExecutor applicationTaskExecutor;
 
     @Value("${app.rate-limit.ai-bot.limit:10}")
@@ -208,6 +215,7 @@ public class MessageServiceImpl implements MessageService {
             String forwardedFromMessageId,
             String forwardedFromSenderUsername
     ) {
+        messagePayloadValidator.validate(request);
         rateLimitService.check("message:send", currentUser.getId(), 120, Duration.ofMinutes(1));
         Conversation conversation = conversationRepository.findById(request.getConversationId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + request.getConversationId()));
@@ -366,7 +374,19 @@ public class MessageServiceImpl implements MessageService {
                     Duration.ofSeconds(aiBotRateWindowSeconds));
         }
 
-        Message savedMessage = messageRepository.save(message);
+        final Message savedMessage;
+        try {
+            savedMessage = messageRepository.save(message);
+        } catch (DuplicateKeyException duplicate) {
+            if (clientMessageId.isBlank()) {
+                throw duplicate;
+            }
+            Message existingMessage = messageRepository
+                    .findByConversationIdAndSenderIdAndClientMessageId(
+                            conversation.getId(), currentUser.getId(), clientMessageId)
+                    .orElseThrow(() -> duplicate);
+            return mapToMessageResponse(existingMessage);
+        }
 
         // Create initial SENT status for all other conversation members
         List<MessageStatus> initialStatuses = new ArrayList<>();
@@ -1371,100 +1391,115 @@ public class MessageServiceImpl implements MessageService {
 
     public MessageResponse votePoll(String messageId, PollVoteRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
-        Message poll = getPollMessageForMember(messageId, currentUser);
-        Map<String, Object> metadata = mutableMetadata(poll);
-        ensurePollOpen(poll, metadata);
+        for (int attempt = 0; attempt < MAX_ATOMIC_MUTATION_ATTEMPTS; attempt++) {
+            Message poll = getPollMessageForMember(messageId, currentUser);
+            Map<String, Object> metadata = mutableMetadata(poll);
+            ensurePollOpen(poll, metadata);
 
-        boolean allowMultiple = Boolean.TRUE.equals(metadata.get("allowMultiple"));
-        List<Map<String, Object>> options = mutablePollOptions(metadata);
-        Map<String, Object> targetOption = options.stream()
-                .filter(option -> request.getOptionId().equals(option.get("id")))
-                .findFirst()
-                .orElseThrow(() -> new ResourceNotFoundException("Poll option not found"));
+            boolean allowMultiple = Boolean.TRUE.equals(metadata.get("allowMultiple"));
+            List<Map<String, Object>> options = mutablePollOptions(metadata);
+            Map<String, Object> targetOption = options.stream()
+                    .filter(option -> request.getOptionId().equals(option.get("id")))
+                    .findFirst()
+                    .orElseThrow(() -> new ResourceNotFoundException("Poll option not found"));
 
-        boolean alreadyVoted = getVoterIds(targetOption).contains(currentUser.getId());
-        if (!allowMultiple && !alreadyVoted) {
-            for (Map<String, Object> option : options) {
-                removeVoter(option, currentUser.getId());
+            boolean alreadyVoted = getVoterIds(targetOption).contains(currentUser.getId());
+            if (!allowMultiple && !alreadyVoted) {
+                for (Map<String, Object> option : options) {
+                    removeVoter(option, currentUser.getId());
+                }
+            }
+
+            if (alreadyVoted) {
+                removeVoter(targetOption, currentUser.getId());
+            } else {
+                addVoter(targetOption, currentUser);
+            }
+
+            metadata.put("options", options);
+            Message savedPoll = compareAndSetPollMetadata(poll, metadata);
+            if (savedPoll != null) {
+                MessageResponse response = mapToMessageResponse(savedPoll);
+                broadcastMessageUpdate(savedPoll.getConversation(), response);
+                return response;
             }
         }
-
-        if (alreadyVoted) {
-            removeVoter(targetOption, currentUser.getId());
-        } else {
-            addVoter(targetOption, currentUser);
-        }
-
-        metadata.put("options", options);
-        poll.setMetadata(metadata);
-        Message savedPoll = messageRepository.save(poll);
-        MessageResponse response = mapToMessageResponse(savedPoll);
-        broadcastMessageUpdate(poll.getConversation(), response);
-        return response;
+        throw new ConflictException("Poll was updated concurrently; please retry");
     }
 
     public MessageResponse addPollOption(String messageId, AddPollOptionRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
-        Message poll = getPollMessageForMember(messageId, currentUser);
-        Map<String, Object> metadata = mutableMetadata(poll);
-        ensurePollOpen(poll, metadata);
-
-        if (!Boolean.TRUE.equals(metadata.get("allowAddOptions")) && !canManagePoll(poll, currentUser)) {
-            throw new BadRequestException("This poll does not allow members to add options");
-        }
-
         String text = request.getText() != null ? request.getText().trim() : "";
         if (text.isEmpty()) {
             throw new BadRequestException("Option text is required");
         }
+        for (int attempt = 0; attempt < MAX_ATOMIC_MUTATION_ATTEMPTS; attempt++) {
+            Message poll = getPollMessageForMember(messageId, currentUser);
+            Map<String, Object> metadata = mutableMetadata(poll);
+            ensurePollOpen(poll, metadata);
 
-        List<Map<String, Object>> options = mutablePollOptions(metadata);
-        boolean exists = options.stream().anyMatch(option -> text.equalsIgnoreCase(String.valueOf(option.get("text"))));
-        if (exists) {
-            throw new BadRequestException("Poll option already exists");
+            if (!Boolean.TRUE.equals(metadata.get("allowAddOptions")) && !canManagePoll(poll, currentUser)) {
+                throw new BadRequestException("This poll does not allow members to add options");
+            }
+
+            List<Map<String, Object>> options = mutablePollOptions(metadata);
+            boolean exists = options.stream().anyMatch(option -> text.equalsIgnoreCase(String.valueOf(option.get("text"))));
+            if (exists) {
+                throw new BadRequestException("Poll option already exists");
+            }
+
+            options.add(createPollOptionMetadata(text, currentUser));
+            metadata.put("options", options);
+            Message savedPoll = compareAndSetPollMetadata(poll, metadata);
+            if (savedPoll != null) {
+                MessageResponse response = mapToMessageResponse(savedPoll);
+                broadcastMessageUpdate(savedPoll.getConversation(), response);
+                return response;
+            }
         }
-
-        options.add(createPollOptionMetadata(text, currentUser));
-        metadata.put("options", options);
-        poll.setMetadata(metadata);
-        Message savedPoll = messageRepository.save(poll);
-        MessageResponse response = mapToMessageResponse(savedPoll);
-        broadcastMessageUpdate(poll.getConversation(), response);
-        return response;
+        throw new ConflictException("Poll was updated concurrently; please retry");
     }
 
     public MessageResponse lockPoll(String messageId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
-        Message poll = getPollMessageForMember(messageId, currentUser);
-        if (!canManagePoll(poll, currentUser)) {
-            throw new BadRequestException("Only the poll creator or group admins can lock this poll");
+        for (int attempt = 0; attempt < MAX_ATOMIC_MUTATION_ATTEMPTS; attempt++) {
+            Message poll = getPollMessageForMember(messageId, currentUser);
+            if (!canManagePoll(poll, currentUser)) {
+                throw new BadRequestException("Only the poll creator or group admins can lock this poll");
+            }
+            Map<String, Object> metadata = mutableMetadata(poll);
+            metadata.put("locked", true);
+            metadata.put("lockedAt", LocalDateTime.now().toString());
+            Message savedPoll = compareAndSetPollMetadata(poll, metadata);
+            if (savedPoll != null) {
+                MessageResponse response = mapToMessageResponse(savedPoll);
+                broadcastMessageUpdate(savedPoll.getConversation(), response);
+                return response;
+            }
         }
-
-        Map<String, Object> metadata = mutableMetadata(poll);
-        metadata.put("locked", true);
-        metadata.put("lockedAt", LocalDateTime.now().toString());
-        poll.setMetadata(metadata);
-        Message savedPoll = messageRepository.save(poll);
-        MessageResponse response = mapToMessageResponse(savedPoll);
-        broadcastMessageUpdate(poll.getConversation(), response);
-        return response;
+        throw new ConflictException("Poll was updated concurrently; please retry");
     }
 
     public MessageResponse deletePoll(String messageId) {
         User currentUser = userService.getCurrentAuthenticatedUser();
-        Message poll = getPollMessageForMember(messageId, currentUser);
-        if (!canManagePoll(poll, currentUser)) {
-            throw new BadRequestException("Only the poll creator or group admins can delete this poll");
+        for (int attempt = 0; attempt < MAX_ATOMIC_MUTATION_ATTEMPTS; attempt++) {
+            Message poll = getPollMessageForMember(messageId, currentUser);
+            if (!canManagePoll(poll, currentUser)) {
+                throw new BadRequestException("Only the poll creator or group admins can delete this poll");
+            }
+            Update update = new Update()
+                    .set("isRecalled", true)
+                    .set("isPinned", false)
+                    .unset("pinnedAt")
+                    .set("content", "Bình chọn đã bị xóa");
+            Message savedPoll = compareAndSetMutation(poll, update);
+            if (savedPoll != null) {
+                MessageResponse response = mapToMessageResponse(savedPoll);
+                broadcastMessageUpdate(savedPoll.getConversation(), response);
+                return response;
+            }
         }
-
-        poll.setRecalled(true);
-        poll.setPinned(false);
-        poll.setPinnedAt(null);
-        poll.setContent("Binh chon da bi xoa");
-        Message savedPoll = messageRepository.save(poll);
-        MessageResponse response = mapToMessageResponse(savedPoll);
-        broadcastMessageUpdate(poll.getConversation(), response);
-        return response;
+        throw new ConflictException("Poll was updated concurrently; please retry");
     }
 
     private Map<String, Object> createPollOptionMetadata(String text, User creator) {
@@ -1525,7 +1560,7 @@ public class MessageServiceImpl implements MessageService {
         metadata.put("locked", true);
         metadata.put("lockedAt", Instant.now().toString());
         poll.setMetadata(metadata);
-        messageRepository.save(poll);
+        compareAndSetPollMetadata(poll, metadata);
     }
 
     private boolean isPollExpired(Map<String, Object> metadata) {
@@ -1622,6 +1657,28 @@ public class MessageServiceImpl implements MessageService {
 
     private Map<String, Object> mutableMetadata(Message message) {
         return new HashMap<>(message.getMetadata() != null ? message.getMetadata() : Map.of());
+    }
+
+    private Message compareAndSetPollMetadata(Message poll, Map<String, Object> metadata) {
+        return compareAndSetMutation(poll, new Update().set("metadata", metadata));
+    }
+
+    private Message compareAndSetMutation(Message current, Update update) {
+        Criteria versionCriteria = current.getMutationVersion() == 0L
+                ? new Criteria().orOperator(
+                        Criteria.where("mutationVersion").is(0L),
+                        Criteria.where("mutationVersion").exists(false),
+                        Criteria.where("mutationVersion").is(null))
+                : Criteria.where("mutationVersion").is(current.getMutationVersion());
+        Query query = Query.query(new Criteria().andOperator(
+                Criteria.where("_id").is(current.getId()),
+                versionCriteria));
+        update.inc("mutationVersion", 1L).currentDate("updatedAt");
+        return mongoTemplate.findAndModify(
+                query,
+                update,
+                FindAndModifyOptions.options().returnNew(true),
+                Message.class);
     }
 
     @SuppressWarnings("unchecked")
@@ -1904,55 +1961,59 @@ public class MessageServiceImpl implements MessageService {
     // @Transactional
     public MessageResponse reactToMessage(String messageId, ReactMessageRequest request) {
         User currentUser = userService.getCurrentAuthenticatedUser();
-        Message message = messageRepository.findById(messageId)
-                .orElseThrow(() -> new ResourceNotFoundException("Message not found with ID: " + messageId));
+        for (int attempt = 0; attempt < MAX_ATOMIC_MUTATION_ATTEMPTS; attempt++) {
+            Message message = messageRepository.findById(messageId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Message not found with ID: " + messageId));
 
-        boolean isMember = message.getConversation().getMembers().stream()
-                .anyMatch(m -> m.getId().equals(currentUser.getId()));
-        if (!isMember) {
-            throw new BadRequestException("You are not a member of this conversation");
+            ensureConversationMember(message.getConversation(), currentUser);
+            if (message.isRecalled()) {
+                throw new BadRequestException("Cannot react to a recalled message");
+            }
+            if (message.getExpiresAt() != null && !message.getExpiresAt().isAfter(LocalDateTime.now())) {
+                throw new BadRequestException("Cannot react to an expired message");
+            }
+            if (message.getMessageType() == MessageType.SYSTEM || message.getMessageType() == MessageType.POLL) {
+                throw new BadRequestException("Cannot react to this message type");
+            }
+
+            List<MessageReaction> reactions = message.getReactions() == null
+                    ? new ArrayList<>()
+                    : new ArrayList<>(message.getReactions());
+            boolean removeExisting = reactions.stream().anyMatch(reaction ->
+                    currentUser.getId().equals(reaction.getUserId())
+                            && request.getEmoji().equals(reaction.getEmoji()));
+            reactions.removeIf(reaction -> currentUser.getId().equals(reaction.getUserId()));
+            if (!removeExisting) {
+                reactions.add(MessageReaction.builder()
+                        .userId(currentUser.getId())
+                        .username(currentUser.getUsername())
+                        .emoji(request.getEmoji())
+                        .build());
+            }
+
+            Message savedMessage = compareAndSetMutation(message, new Update().set("reactions", reactions));
+            if (savedMessage == null) {
+                continue;
+            }
+
+            boolean reactionAdded = savedMessage.getReactions() != null
+                    && savedMessage.getReactions().stream().anyMatch(reaction ->
+                    currentUser.getId().equals(reaction.getUserId())
+                            && request.getEmoji().equals(reaction.getEmoji()));
+            MessageResponse response = mapToMessageResponse(savedMessage);
+            Map<String, Object> realtimeMetadata = new HashMap<>(
+                    response.getMetadata() == null ? Map.of() : response.getMetadata()
+            );
+            realtimeMetadata.put("realtimeEvent", "REACTION_UPDATED");
+            realtimeMetadata.put("reactionAdded", reactionAdded);
+            realtimeMetadata.put("reactionUserId", currentUser.getId());
+            realtimeMetadata.put("reactionUsername", currentUser.getUsername());
+            realtimeMetadata.put("reactionEmoji", request.getEmoji());
+            response.setMetadata(realtimeMetadata);
+            broadcastMessageUpdate(savedMessage.getConversation(), response);
+            return response;
         }
-        if (message.isRecalled()) {
-            throw new BadRequestException("Cannot react to a recalled message");
-        }
-        if (message.getMessageType() == MessageType.SYSTEM || message.getMessageType() == MessageType.POLL) {
-            throw new BadRequestException("Cannot react to this message type");
-        }
-
-        if (message.getReactions() == null) {
-            message.setReactions(new ArrayList<>());
-        }
-
-        Optional<MessageReaction> existing = message.getReactions().stream()
-                .filter(r -> r.getUserId().equals(currentUser.getId()) && r.getEmoji().equals(request.getEmoji()))
-                .findFirst();
-
-        boolean reactionAdded = existing.isEmpty();
-        if (existing.isPresent()) {
-            message.getReactions().remove(existing.get());
-        } else {
-            message.getReactions().removeIf(r -> r.getUserId().equals(currentUser.getId()));
-            message.getReactions().add(MessageReaction.builder()
-                    .userId(currentUser.getId())
-                    .username(currentUser.getUsername())
-                    .emoji(request.getEmoji())
-                    .build());
-        }
-
-        Message savedMessage = messageRepository.save(message);
-
-        MessageResponse response = mapToMessageResponse(savedMessage);
-        Map<String, Object> realtimeMetadata = new HashMap<>(
-                response.getMetadata() == null ? Map.of() : response.getMetadata()
-        );
-        realtimeMetadata.put("realtimeEvent", "REACTION_UPDATED");
-        realtimeMetadata.put("reactionAdded", reactionAdded);
-        realtimeMetadata.put("reactionUserId", currentUser.getId());
-        realtimeMetadata.put("reactionUsername", currentUser.getUsername());
-        realtimeMetadata.put("reactionEmoji", request.getEmoji());
-        response.setMetadata(realtimeMetadata);
-        broadcastMessageUpdate(message.getConversation(), response);
-        return response;
+        throw new ConflictException("Message reactions changed concurrently; please retry");
     }
 
     // @Transactional
