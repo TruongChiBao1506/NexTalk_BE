@@ -18,6 +18,8 @@ import iuh.fit.se.nextalk_be.dto.response.MessageDeliveryParticipantResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageSyncResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageStatusResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageStatusUpdateResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageAroundResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageCursorPageResponse;
 import iuh.fit.se.nextalk_be.entity.Channel;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.ConversationType;
@@ -51,6 +53,7 @@ import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.service.AiBotService;
 import iuh.fit.se.nextalk_be.service.LinkPreviewService;
 import iuh.fit.se.nextalk_be.service.MessageNotificationDispatcher;
+import iuh.fit.se.nextalk_be.service.MessageCursorCodec;
 import iuh.fit.se.nextalk_be.service.PresenceService;
 import iuh.fit.se.nextalk_be.service.UserService;
 import iuh.fit.se.nextalk_be.service.VoiceChannelService;
@@ -77,6 +80,7 @@ import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
+import org.springframework.data.mongodb.core.query.TextCriteria;
 import java.util.stream.Collectors;
 import java.util.function.Function;
 
@@ -644,6 +648,147 @@ public class MessageServiceImpl implements MessageService {
     }
 
     @Override
+    public MessageCursorPageResponse getConversationMessageHistory(String conversationId, String cursor, int limit) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        ensureConversationMember(conversationId, currentUser);
+        return queryConversationHistory(conversationId, currentUser.getId(), cursor, limit);
+    }
+
+    @Override
+    public MessageAroundResponse getMessagesAround(String conversationId, String messageId, int limit) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        ensureConversationMember(conversationId, currentUser);
+
+        Message anchor = messageRepository.findById(messageId)
+                .filter(message -> conversationId.equals(messageConversationId(message)))
+                .filter(message -> isMessageVisibleTo(message, currentUser.getId(), LocalDateTime.now()))
+                .orElseThrow(() -> new ResourceNotFoundException("Message not found"));
+
+        int safeLimit = Math.min(31, Math.max(5, limit));
+        int olderLimit = safeLimit / 2;
+        int newerLimit = safeLimit - olderLimit - 1;
+        MessageCursorCodec.Cursor anchorCursor = new MessageCursorCodec.Cursor(anchor.getCreatedAt(), anchor.getId());
+        Criteria visibility = visibleConversationCriteria(conversationId, currentUser.getId(), LocalDateTime.now());
+
+        Query olderQuery = new Query(new Criteria().andOperator(
+                visibility,
+                cursorBoundary(anchorCursor, true)))
+                .with(stableMessageSort(Sort.Direction.DESC))
+                .limit(olderLimit + 1);
+        List<Message> older = new ArrayList<>(mongoTemplate.find(olderQuery, Message.class));
+        boolean hasOlder = older.size() > olderLimit;
+        if (hasOlder) older.remove(older.size() - 1);
+
+        Query newerQuery = new Query(new Criteria().andOperator(
+                visibleConversationCriteria(conversationId, currentUser.getId(), LocalDateTime.now()),
+                cursorBoundary(anchorCursor, false)))
+                .with(stableMessageSort(Sort.Direction.ASC))
+                .limit(newerLimit + 1);
+        List<Message> newer = new ArrayList<>(mongoTemplate.find(newerQuery, Message.class));
+        boolean hasNewer = newer.size() > newerLimit;
+        if (hasNewer) newer.remove(newer.size() - 1);
+        Collections.reverse(newer);
+
+        List<Message> window = new ArrayList<>(newer.size() + older.size() + 1);
+        window.addAll(newer);
+        window.add(anchor);
+        window.addAll(older);
+        Message oldest = window.get(window.size() - 1);
+
+        return MessageAroundResponse.builder()
+                .items(mapMessagesToResponses(window))
+                .anchorMessageId(anchor.getId())
+                .nextCursor(hasOlder ? MessageCursorCodec.encode(oldest.getCreatedAt(), oldest.getId()) : null)
+                .hasMore(hasOlder)
+                .hasNewer(hasNewer)
+                .build();
+    }
+
+    private MessageCursorPageResponse queryConversationHistory(
+            String conversationId,
+            String currentUserId,
+            String encodedCursor,
+            int requestedLimit
+    ) {
+        int safeLimit = Math.min(50, Math.max(1, requestedLimit));
+        MessageCursorCodec.Cursor cursor = MessageCursorCodec.decode(encodedCursor);
+        List<Criteria> criteria = new ArrayList<>();
+        criteria.add(visibleConversationCriteria(conversationId, currentUserId, LocalDateTime.now()));
+        if (cursor != null) criteria.add(cursorBoundary(cursor, true));
+
+        Query query = new Query(new Criteria().andOperator(criteria.toArray(Criteria[]::new)))
+                .with(stableMessageSort(Sort.Direction.DESC))
+                .limit(safeLimit + 1);
+        List<Message> messages = new ArrayList<>(mongoTemplate.find(query, Message.class));
+        boolean hasMore = messages.size() > safeLimit;
+        if (hasMore) messages.remove(messages.size() - 1);
+        Message last = messages.isEmpty() ? null : messages.get(messages.size() - 1);
+        return MessageCursorPageResponse.builder()
+                .items(mapMessagesToResponses(messages))
+                .nextCursor(hasMore && last != null
+                        ? MessageCursorCodec.encode(last.getCreatedAt(), last.getId())
+                        : null)
+                .hasMore(hasMore)
+                .build();
+    }
+
+    private void ensureConversationMember(String conversationId, User currentUser) {
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation not found"));
+        boolean member = conversation.getMembers().stream()
+                .anyMatch(candidate -> candidate.getId().equals(currentUser.getId()));
+        if (!member) throw new BadRequestException("You are not a member of this conversation");
+    }
+
+    private Criteria visibleConversationCriteria(String conversationId, String currentUserId, LocalDateTime now) {
+        return new Criteria().andOperator(
+                new Criteria().orOperator(
+                        Criteria.where("conversationId").is(conversationId),
+                        Criteria.where("conversation").is(conversationId)),
+                Criteria.where("deletedByUsers").ne(currentUserId),
+                new Criteria().orOperator(
+                        Criteria.where("isRecalled").is(true),
+                        Criteria.where("expiresAt").exists(false),
+                        Criteria.where("expiresAt").is(null),
+                        Criteria.where("expiresAt").gt(now)));
+    }
+
+    private Criteria cursorBoundary(MessageCursorCodec.Cursor cursor, boolean older) {
+        Criteria timestamp = older
+                ? Criteria.where("createdAt").lt(cursor.createdAt())
+                : Criteria.where("createdAt").gt(cursor.createdAt());
+        Criteria messageId = older
+                ? Criteria.where("_id").lt(cursor.messageId())
+                : Criteria.where("_id").gt(cursor.messageId());
+        return new Criteria().orOperator(
+                timestamp,
+                new Criteria().andOperator(
+                        Criteria.where("createdAt").is(cursor.createdAt()),
+                        messageId));
+    }
+
+    private Sort stableMessageSort(Sort.Direction direction) {
+        return Sort.by(
+                new Sort.Order(direction, "createdAt"),
+                new Sort.Order(direction, "_id"));
+    }
+
+    private String messageConversationId(Message message) {
+        return message.getConversationId() != null
+                ? message.getConversationId()
+                : message.getConversation() != null ? message.getConversation().getId() : null;
+    }
+
+    private boolean isMessageVisibleTo(Message message, String currentUserId, LocalDateTime now) {
+        boolean deleted = message.getDeletedByUsers() != null
+                && message.getDeletedByUsers().contains(currentUserId);
+        boolean available = message.isRecalled()
+                || message.getExpiresAt() == null
+                || message.getExpiresAt().isAfter(now);
+        return !deleted && available;
+    }
+
+    @Override
     public MessageSyncResponse syncConversationMessages(String conversationId, LocalDateTime since, int limit) {
         User currentUser = userService.getCurrentAuthenticatedUser();
         Conversation conversation = conversationRepository.findById(conversationId)
@@ -729,20 +874,15 @@ public class MessageServiceImpl implements MessageService {
             int requestedLimit
     ) {
         int snapshotSize = Math.max(1, Math.min(requestedLimit, 50));
-        Slice<Message> snapshot = messageRepository.findVisibleConversationMessages(
-                conversationId,
-                currentUserId,
-                org.springframework.data.domain.PageRequest.of(0, snapshotSize)
-        );
-        LocalDateTime now = LocalDateTime.now();
-        List<MessageResponse> messages = mapMessagesToResponses(snapshot.getContent()).stream()
-                .filter(message -> message.isRecalled() || message.getExpiresAt() == null || message.getExpiresAt().isAfter(now))
-                .toList();
+        MessageCursorPageResponse history = queryConversationHistory(
+                conversationId, currentUserId, null, snapshotSize);
         return MessageSyncResponse.builder()
-                .messages(messages)
+                .messages(history.getItems())
                 .deletedMessageIds(List.of())
                 .cursor(cursor)
                 .fullSnapshot(true)
+                .historyNextCursor(history.getNextCursor())
+                .historyHasMore(history.isHasMore())
                 .build();
     }
 
@@ -1832,22 +1972,34 @@ public class MessageServiceImpl implements MessageService {
 
     // @Transactional(readOnly = true)
     public List<MessageResponse> getPinnedMessages(String conversationId) {
+        return getPinnedMessages(conversationId, null, 50).getItems();
+    }
+
+    @Override
+    public MessageCursorPageResponse getPinnedMessages(String conversationId, String encodedCursor, int limit) {
         User currentUser = userService.getCurrentAuthenticatedUser();
-        Conversation conversation = conversationRepository.findById(conversationId)
-                .orElseThrow(() -> new ResourceNotFoundException("Conversation not found with ID: " + conversationId));
+        ensureConversationMember(conversationId, currentUser);
+        int safeLimit = Math.min(50, Math.max(1, limit));
+        MessageCursorCodec.Cursor cursor = MessageCursorCodec.decode(encodedCursor);
+        List<Criteria> filters = new ArrayList<>();
+        filters.add(visibleConversationCriteria(conversationId, currentUser.getId(), LocalDateTime.now()));
+        filters.add(Criteria.where("isPinned").is(true));
+        if (cursor != null) filters.add(cursorBoundary(cursor, true));
 
-        boolean isMember = conversation.getMembers().stream()
-                .anyMatch(m -> m.getId().equals(currentUser.getId()));
-        if (!isMember) {
-            throw new BadRequestException("You are not a member of this conversation");
-        }
-
-        List<Message> pinnedMessages = messageRepository.findByConversationIdAndIsPinnedTrue(conversationId);
-        List<Message> filtered = pinnedMessages.stream()
-                .filter(m -> m.getDeletedByUsers() == null || !m.getDeletedByUsers().contains(currentUser.getId()))
-                .filter(m -> m.isRecalled() || m.getExpiresAt() == null || m.getExpiresAt().isAfter(LocalDateTime.now()))
-                .toList();
-        return mapMessagesToResponses(filtered);
+        Query query = new Query(new Criteria().andOperator(filters.toArray(Criteria[]::new)))
+                .with(stableMessageSort(Sort.Direction.DESC))
+                .limit(safeLimit + 1);
+        List<Message> messages = new ArrayList<>(mongoTemplate.find(query, Message.class));
+        boolean hasMore = messages.size() > safeLimit;
+        if (hasMore) messages.remove(messages.size() - 1);
+        Message last = messages.isEmpty() ? null : messages.get(messages.size() - 1);
+        return MessageCursorPageResponse.builder()
+                .items(mapMessagesToResponses(messages))
+                .nextCursor(hasMore && last != null
+                        ? MessageCursorCodec.encode(last.getCreatedAt(), last.getId())
+                        : null)
+                .hasMore(hasMore)
+                .build();
     }
 
     // @Transactional
@@ -1972,40 +2124,11 @@ public class MessageServiceImpl implements MessageService {
 
     // @Transactional(readOnly = true)
     public List<MessageResponse> searchMessages(String query, String conversationId) {
-        User currentUser = userService.getCurrentAuthenticatedUser();
-        String trimmedQuery = query.trim();
-        if (trimmedQuery.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        List<Message> messages;
-        if (conversationId != null) {
-            Conversation conversation = conversationRepository.findById(conversationId)
-                    .orElseThrow(() -> new ResourceNotFoundException("Conversation not found"));
-            boolean isMember = conversation.getMembers().stream()
-                    .anyMatch(m -> m.getId().equals(currentUser.getId()));
-            if (!isMember) {
-                throw new BadRequestException("You are not a member of this conversation");
-            }
-            messages = messageRepository.findByConversationIdAndContentContainingIgnoreCaseAndMessageTypeAndIsRecalledFalse(
-                    conversationId, trimmedQuery, MessageType.TEXT
-            );
-        } else {
-            List<Conversation> userConversations = conversationRepository.findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId());
-            List<String> conversationIds = userConversations.stream().map(Conversation::getId).toList();
-            if (conversationIds.isEmpty()) {
-                return Collections.emptyList();
-            }
-            messages = messageRepository.findByConversationIdInAndContentContainingIgnoreCaseAndMessageTypeAndIsRecalledFalse(
-                    conversationIds, trimmedQuery, MessageType.TEXT
-            );
-        }
-
-        List<Message> filtered = messages.stream()
-                .filter(m -> m.getDeletedByUsers() == null || !m.getDeletedByUsers().contains(currentUser.getId()))
-                .filter(m -> m.isRecalled() || m.getExpiresAt() == null || m.getExpiresAt().isAfter(LocalDateTime.now()))
-                .toList();
-        return mapMessagesToResponses(filtered);
+        String normalizedQuery = query == null ? "" : query.trim();
+        if (normalizedQuery.isEmpty()) return Collections.emptyList();
+        return searchMessagesCursor(
+                normalizedQuery, conversationId, null, MessageType.TEXT,
+                null, null, null, 50).getItems();
     }
 
     @Override
@@ -2022,24 +2145,7 @@ public class MessageServiceImpl implements MessageService {
         User currentUser = userService.getCurrentAuthenticatedUser();
         int safePage = Math.max(0, page);
         int safeSize = Math.min(50, Math.max(1, size));
-
-        List<String> permittedConversationIds;
-        if (conversationId != null && !conversationId.isBlank()) {
-            Conversation conversation = conversationRepository.findById(conversationId)
-                    .orElseThrow(() -> new ResourceNotFoundException("Conversation not found"));
-            boolean isMember = conversation.getMembers().stream()
-                    .anyMatch(member -> member.getId().equals(currentUser.getId()));
-            if (!isMember) {
-                throw new BadRequestException("You are not a member of this conversation");
-            }
-            permittedConversationIds = List.of(conversationId);
-        } else {
-            permittedConversationIds = conversationRepository
-                    .findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId())
-                    .stream()
-                    .map(Conversation::getId)
-                    .toList();
-        }
+        List<String> permittedConversationIds = resolveSearchConversationIds(conversationId, currentUser);
 
         if (permittedConversationIds.isEmpty()) {
             return MessageSearchResponse.builder()
@@ -2050,40 +2156,11 @@ public class MessageServiceImpl implements MessageService {
                     .hasMore(false)
                     .build();
         }
-
-        List<Criteria> filters = new ArrayList<>();
-        filters.add(new Criteria().orOperator(
-                Criteria.where("conversationId").in(permittedConversationIds),
-                Criteria.where("conversation").in(permittedConversationIds)
-        ));
-        filters.add(Criteria.where("deletedByUsers").ne(currentUser.getId()));
-        filters.add(Criteria.where("isRecalled").ne(true));
-        filters.add(new Criteria().orOperator(
-                Criteria.where("expiresAt").exists(false),
-                Criteria.where("expiresAt").is(null),
-                Criteria.where("expiresAt").gt(LocalDateTime.now())
-        ));
-
-        String trimmedQuery = query == null ? "" : query.trim();
-        if (!trimmedQuery.isEmpty()) {
-            filters.add(Criteria.where("content").regex(Pattern.quote(trimmedQuery), "i"));
-        }
-        if (senderId != null && !senderId.isBlank()) {
-            filters.add(Criteria.where("senderId").is(senderId));
-        }
-        if (messageType != null) {
-            filters.add(Criteria.where("messageType").is(messageType));
-        }
-        if (from != null || to != null) {
-            Criteria createdAt = Criteria.where("createdAt");
-            if (from != null) createdAt = createdAt.gte(from);
-            if (to != null) createdAt = createdAt.lte(to);
-            filters.add(createdAt);
-        }
-
-        Criteria criteria = new Criteria().andOperator(filters.toArray(Criteria[]::new));
-        long total = mongoTemplate.count(new Query(criteria), Message.class);
-        Query resultQuery = new Query(criteria)
+        Query countQuery = buildSearchQuery(
+                query, permittedConversationIds, currentUser.getId(), senderId, messageType, from, to, null);
+        long total = mongoTemplate.count(countQuery, Message.class);
+        Query resultQuery = buildSearchQuery(
+                query, permittedConversationIds, currentUser.getId(), senderId, messageType, from, to, null)
                 .with(PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt")));
         List<MessageResponse> items = mapMessagesToResponses(mongoTemplate.find(resultQuery, Message.class));
 
@@ -2094,6 +2171,94 @@ public class MessageServiceImpl implements MessageService {
                 .totalElements(total)
                 .hasMore((long) (safePage + 1) * safeSize < total)
                 .build();
+    }
+
+    @Override
+    public MessageCursorPageResponse searchMessagesCursor(
+            String query,
+            String conversationId,
+            String senderId,
+            MessageType messageType,
+            LocalDateTime from,
+            LocalDateTime to,
+            String encodedCursor,
+            int limit
+    ) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        List<String> permittedConversationIds = resolveSearchConversationIds(conversationId, currentUser);
+        if (permittedConversationIds.isEmpty()) {
+            return MessageCursorPageResponse.builder()
+                    .items(List.of())
+                    .hasMore(false)
+                    .build();
+        }
+
+        int safeLimit = Math.min(50, Math.max(1, limit));
+        MessageCursorCodec.Cursor cursor = MessageCursorCodec.decode(encodedCursor);
+        Query resultQuery = buildSearchQuery(
+                query, permittedConversationIds, currentUser.getId(), senderId, messageType, from, to, cursor)
+                .with(stableMessageSort(Sort.Direction.DESC))
+                .limit(safeLimit + 1);
+        List<Message> messages = new ArrayList<>(mongoTemplate.find(resultQuery, Message.class));
+        boolean hasMore = messages.size() > safeLimit;
+        if (hasMore) messages.remove(messages.size() - 1);
+        Message last = messages.isEmpty() ? null : messages.get(messages.size() - 1);
+        return MessageCursorPageResponse.builder()
+                .items(mapMessagesToResponses(messages))
+                .nextCursor(hasMore && last != null
+                        ? MessageCursorCodec.encode(last.getCreatedAt(), last.getId())
+                        : null)
+                .hasMore(hasMore)
+                .build();
+    }
+
+    private List<String> resolveSearchConversationIds(String conversationId, User currentUser) {
+        if (conversationId != null && !conversationId.isBlank()) {
+            ensureConversationMember(conversationId, currentUser);
+            return List.of(conversationId);
+        }
+        return conversationRepository.findAllByMembersIdOrderByUpdatedAtDesc(currentUser.getId())
+                .stream()
+                .map(Conversation::getId)
+                .toList();
+    }
+
+    private Query buildSearchQuery(
+            String query,
+            List<String> permittedConversationIds,
+            String currentUserId,
+            String senderId,
+            MessageType messageType,
+            LocalDateTime from,
+            LocalDateTime to,
+            MessageCursorCodec.Cursor cursor
+    ) {
+        List<Criteria> filters = new ArrayList<>();
+        filters.add(new Criteria().orOperator(
+                Criteria.where("conversationId").in(permittedConversationIds),
+                Criteria.where("conversation").in(permittedConversationIds)));
+        filters.add(Criteria.where("deletedByUsers").ne(currentUserId));
+        filters.add(Criteria.where("isRecalled").ne(true));
+        filters.add(new Criteria().orOperator(
+                Criteria.where("expiresAt").exists(false),
+                Criteria.where("expiresAt").is(null),
+                Criteria.where("expiresAt").gt(LocalDateTime.now())));
+        if (senderId != null && !senderId.isBlank()) filters.add(Criteria.where("senderId").is(senderId));
+        if (messageType != null) filters.add(Criteria.where("messageType").is(messageType));
+        if (from != null || to != null) {
+            Criteria createdAt = Criteria.where("createdAt");
+            if (from != null) createdAt = createdAt.gte(from);
+            if (to != null) createdAt = createdAt.lte(to);
+            filters.add(createdAt);
+        }
+        if (cursor != null) filters.add(cursorBoundary(cursor, true));
+
+        Query result = new Query(new Criteria().andOperator(filters.toArray(Criteria[]::new)));
+        String normalizedQuery = query == null ? "" : query.trim();
+        if (!normalizedQuery.isEmpty()) {
+            result.addCriteria(TextCriteria.forDefaultLanguage().matching(normalizedQuery));
+        }
+        return result;
     }
 
     @Override

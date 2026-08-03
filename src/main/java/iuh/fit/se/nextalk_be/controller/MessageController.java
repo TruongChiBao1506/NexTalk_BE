@@ -31,6 +31,8 @@ import iuh.fit.se.nextalk_be.service.MessageService;
 import iuh.fit.se.nextalk_be.service.MessageTranslationService;
 import iuh.fit.se.nextalk_be.dto.request.TranslateMessageRequest;
 import iuh.fit.se.nextalk_be.dto.response.MessageTranslationResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageAroundResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageCursorPageResponse;
 
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -91,6 +93,30 @@ public class MessageController {
         Pageable pageable = PageRequest.of(page, size);
         Page<MessageResponse> responsePage = messageService.getConversationMessages(conversationId, pageable);
         return ResponseEntity.ok(ApiResponse.success(responsePage.getContent(), "Messages retrieved successfully"));
+    }
+
+    @GetMapping("/api/messages/{conversationId}/history")
+    @Operation(summary = "Get stable cursor-paginated message history")
+    public ResponseEntity<ApiResponse<MessageCursorPageResponse>> getConversationMessageHistory(
+            @PathVariable("conversationId") String conversationId,
+            @RequestParam(value = "cursor", required = false) String cursor,
+            @RequestParam(value = "limit", defaultValue = "25") int limit
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(
+                messageService.getConversationMessageHistory(conversationId, cursor, limit),
+                "Message history retrieved successfully"));
+    }
+
+    @GetMapping("/api/messages/{conversationId}/around/{messageId}")
+    @Operation(summary = "Get a bounded message window around a visible message")
+    public ResponseEntity<ApiResponse<MessageAroundResponse>> getMessagesAround(
+            @PathVariable("conversationId") String conversationId,
+            @PathVariable("messageId") String messageId,
+            @RequestParam(value = "limit", defaultValue = "25") int limit
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(
+                messageService.getMessagesAround(conversationId, messageId, limit),
+                "Message context retrieved successfully"));
     }
 
     @GetMapping("/api/messages/{conversationId}/sync")
@@ -320,6 +346,18 @@ public class MessageController {
         return ResponseEntity.ok(ApiResponse.success(response, "Messages search completed successfully"));
     }
 
+    @GetMapping("/api/conversations/{conversationId}/pinned/cursor")
+    @Operation(summary = "Get cursor-paginated pinned messages")
+    public ResponseEntity<ApiResponse<MessageCursorPageResponse>> getPinnedMessagesCursor(
+            @PathVariable("conversationId") String conversationId,
+            @RequestParam(value = "cursor", required = false) String cursor,
+            @RequestParam(value = "limit", defaultValue = "25") int limit
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(
+                messageService.getPinnedMessages(conversationId, cursor, limit),
+                "Pinned messages retrieved successfully"));
+    }
+
     @GetMapping("/api/messages/search/advanced")
     @Operation(summary = "Search visible messages with filters and pagination")
     public ResponseEntity<ApiResponse<MessageSearchResponse>> searchMessagesAdvanced(
@@ -336,6 +374,25 @@ public class MessageController {
         MessageSearchResponse response = messageService.searchMessagesAdvanced(
                 query, conversationId, senderId, messageType, from, to, page, size);
         return ResponseEntity.ok(ApiResponse.success(response, "Messages search completed successfully"));
+    }
+
+    @GetMapping("/api/messages/search/cursor")
+    @Operation(summary = "Search visible messages with filters and a stable cursor")
+    public ResponseEntity<ApiResponse<MessageCursorPageResponse>> searchMessagesCursor(
+            @RequestParam(value = "query", defaultValue = "") String query,
+            @RequestParam(value = "conversationId", required = false) String conversationId,
+            @RequestParam(value = "senderId", required = false) String senderId,
+            @RequestParam(value = "messageType", required = false) MessageType messageType,
+            @RequestParam(value = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
+            @RequestParam(value = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
+            @RequestParam(value = "cursor", required = false) String cursor,
+            @RequestParam(value = "limit", defaultValue = "20") int limit
+    ) {
+        rateLimitService.check("message:search", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(1));
+        return ResponseEntity.ok(ApiResponse.success(
+                messageService.searchMessagesCursor(
+                        query, conversationId, senderId, messageType, from, to, cursor, limit),
+                "Messages search completed successfully"));
     }
 
     @MessageMapping("/chat.send")

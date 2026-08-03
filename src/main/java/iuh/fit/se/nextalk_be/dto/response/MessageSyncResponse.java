@@ -19,4 +19,6 @@ public class MessageSyncResponse {
     private List<String> deletedMessageIds;
     private LocalDateTime cursor;
     private boolean fullSnapshot;
+    private String historyNextCursor;
+    private boolean historyHasMore;
 }

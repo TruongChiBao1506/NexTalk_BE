@@ -28,6 +28,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.HashSet;
+import java.util.List;
+import java.time.LocalDateTime;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
@@ -139,6 +142,133 @@ public class MessageControllerTest {
 
     @Test
     @WithMockUser(username = "sender@gmail.com")
+    void cursorHistory_DoesNotDuplicateOrSkipWhenNewMessageArrives() throws Exception {
+        LocalDateTime timestamp = LocalDateTime.of(2026, 1, 1, 10, 0);
+        List<Message> originals = new java.util.ArrayList<>();
+        for (int index = 0; index < 4; index++) {
+            Message message = Message.builder()
+                    .conversation(conversation)
+                    .conversationId(conversation.getId())
+                    .sender(senderUser)
+                    .senderId(senderUser.getId())
+                    .senderUsername(senderUser.getUsername())
+                    .content("History fixture")
+                    .messageType(MessageType.TEXT)
+                    .metadata(Map.of("clientMessageId", "cursor-history-" + index))
+                    .build();
+            message.setCreatedAt(timestamp);
+            originals.add(messageRepository.save(message));
+        }
+
+        String firstPayload = mockMvc.perform(get("/api/messages/" + conversation.getId() + "/history")
+                        .param("limit", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items", hasSize(2)))
+                .andExpect(jsonPath("$.data.hasMore", is(true)))
+                .andExpect(jsonPath("$.data.nextCursor", not(emptyOrNullString())))
+                .andReturn().getResponse().getContentAsString();
+        var firstPage = objectMapper.readTree(firstPayload).at("/data/items");
+        String cursor = objectMapper.readTree(firstPayload).at("/data/nextCursor").asText();
+
+        Message newest = Message.builder()
+                .conversation(conversation)
+                .conversationId(conversation.getId())
+                .sender(senderUser)
+                .senderId(senderUser.getId())
+                .senderUsername(senderUser.getUsername())
+                .content("New history fixture")
+                .messageType(MessageType.TEXT)
+                .metadata(Map.of("clientMessageId", "cursor-history-new"))
+                .build();
+        newest.setCreatedAt(timestamp.plusMinutes(1));
+        messageRepository.save(newest);
+
+        String secondPayload = mockMvc.perform(get("/api/messages/" + conversation.getId() + "/history")
+                        .param("limit", "2")
+                        .param("cursor", cursor))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items", hasSize(2)))
+                .andExpect(jsonPath("$.data.hasMore", is(false)))
+                .andReturn().getResponse().getContentAsString();
+        var secondPage = objectMapper.readTree(secondPayload).at("/data/items");
+
+        Set<String> receivedIds = new HashSet<>();
+        firstPage.forEach(node -> receivedIds.add(node.get("id").asText()));
+        secondPage.forEach(node -> receivedIds.add(node.get("id").asText()));
+        org.junit.jupiter.api.Assertions.assertEquals(4, receivedIds.size());
+        org.junit.jupiter.api.Assertions.assertEquals(
+                originals.stream().map(Message::getId).collect(java.util.stream.Collectors.toSet()),
+                receivedIds);
+    }
+
+    @Test
+    @WithMockUser(username = "sender@gmail.com")
+    void aroundMessage_ReturnsBoundedDirectContext() throws Exception {
+        LocalDateTime base = LocalDateTime.of(2026, 1, 2, 10, 0);
+        Message anchor = null;
+        for (int index = 0; index < 41; index++) {
+            Message message = Message.builder()
+                    .conversation(conversation)
+                    .conversationId(conversation.getId())
+                    .sender(senderUser)
+                    .senderId(senderUser.getId())
+                    .senderUsername(senderUser.getUsername())
+                    .content("Context fixture " + index)
+                    .messageType(MessageType.TEXT)
+                    .metadata(Map.of("clientMessageId", "around-message-" + index))
+                    .build();
+            message.setCreatedAt(base.plusSeconds(index));
+            message = messageRepository.save(message);
+            if (index == 20) anchor = message;
+        }
+
+        mockMvc.perform(get("/api/messages/" + conversation.getId() + "/around/" + anchor.getId())
+                        .param("limit", "25"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items", hasSize(25)))
+                .andExpect(jsonPath("$.data.anchorMessageId", is(anchor.getId())))
+                .andExpect(jsonPath("$.data.hasMore", is(true)))
+                .andExpect(jsonPath("$.data.hasNewer", is(true)));
+    }
+
+    @Test
+    @WithMockUser(username = "sender@gmail.com")
+    void pinnedMessages_UseStableCursorPagination() throws Exception {
+        LocalDateTime base = LocalDateTime.of(2026, 1, 3, 10, 0);
+        for (int index = 0; index < 3; index++) {
+            Message message = Message.builder()
+                    .conversation(conversation)
+                    .conversationId(conversation.getId())
+                    .sender(senderUser)
+                    .senderId(senderUser.getId())
+                    .senderUsername(senderUser.getUsername())
+                    .content("Pinned fixture")
+                    .messageType(MessageType.TEXT)
+                    .isPinned(true)
+                    .metadata(Map.of("clientMessageId", "pinned-cursor-" + index))
+                    .build();
+            message.setCreatedAt(base.plusSeconds(index));
+            messageRepository.save(message);
+        }
+
+        String firstPayload = mockMvc.perform(get("/api/conversations/" + conversation.getId() + "/pinned/cursor")
+                        .param("limit", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items", hasSize(2)))
+                .andExpect(jsonPath("$.data.hasMore", is(true)))
+                .andReturn().getResponse().getContentAsString();
+        String cursor = objectMapper.readTree(firstPayload).at("/data/nextCursor").asText();
+
+        mockMvc.perform(get("/api/conversations/" + conversation.getId() + "/pinned/cursor")
+                        .param("limit", "2")
+                        .param("cursor", cursor))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items", hasSize(1)))
+                .andExpect(jsonPath("$.data.hasMore", is(false)));
+    }
+
+    @Test
+    @WithMockUser(username = "sender@gmail.com")
     void advancedSearch_FiltersAndPaginatesVisibleMessages() throws Exception {
         for (int index = 0; index < 3; index++) {
             messageRepository.save(Message.builder()
@@ -165,6 +295,58 @@ public class MessageControllerTest {
                 .andExpect(jsonPath("$.data.items", hasSize(2)))
                 .andExpect(jsonPath("$.data.totalElements", is(3)))
                 .andExpect(jsonPath("$.data.hasMore", is(true)));
+    }
+
+    @Test
+    @WithMockUser(username = "sender@gmail.com")
+    void cursorSearch_UsesTextIndexAndStableBoundary() throws Exception {
+        LocalDateTime base = LocalDateTime.of(2026, 1, 4, 10, 0);
+        for (int index = 0; index < 3; index++) {
+            Message message = Message.builder()
+                    .conversation(conversation)
+                    .conversationId(conversation.getId())
+                    .sender(senderUser)
+                    .senderId(senderUser.getId())
+                    .senderUsername(senderUser.getUsername())
+                    .content("searchfixture reference")
+                    .messageType(MessageType.TEXT)
+                    .metadata(Map.of("clientMessageId", "search-cursor-" + index))
+                    .build();
+            message.setCreatedAt(base.plusSeconds(index));
+            messageRepository.save(message);
+        }
+
+        String firstPayload = mockMvc.perform(get("/api/messages/search/cursor")
+                        .param("query", "searchfixture")
+                        .param("conversationId", conversation.getId())
+                        .param("limit", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items", hasSize(2)))
+                .andExpect(jsonPath("$.data.hasMore", is(true)))
+                .andReturn().getResponse().getContentAsString();
+        String cursor = objectMapper.readTree(firstPayload).at("/data/nextCursor").asText();
+
+        Message newlyMatched = Message.builder()
+                .conversation(conversation)
+                .conversationId(conversation.getId())
+                .sender(senderUser)
+                .senderId(senderUser.getId())
+                .senderUsername(senderUser.getUsername())
+                .content("searchfixture newly indexed")
+                .messageType(MessageType.TEXT)
+                .metadata(Map.of("clientMessageId", "search-cursor-new"))
+                .build();
+        newlyMatched.setCreatedAt(base.plusMinutes(1));
+        messageRepository.save(newlyMatched);
+
+        mockMvc.perform(get("/api/messages/search/cursor")
+                        .param("query", "searchfixture")
+                        .param("conversationId", conversation.getId())
+                        .param("limit", "2")
+                        .param("cursor", cursor))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items", hasSize(1)))
+                .andExpect(jsonPath("$.data.hasMore", is(false)));
     }
 
     @Test
@@ -215,6 +397,17 @@ public class MessageControllerTest {
                 .isVerified(true)
                 .build());
 
+        Message visibleOnlyToMembers = messageRepository.save(Message.builder()
+                .conversation(conversation)
+                .conversationId(conversation.getId())
+                .sender(senderUser)
+                .senderId(senderUser.getId())
+                .senderUsername(senderUser.getUsername())
+                .content("Access-control fixture")
+                .messageType(MessageType.TEXT)
+                .metadata(Map.of("clientMessageId", "around-access-control"))
+                .build());
+
         mockMvc.perform(get("/api/messages/search/advanced")
                         .param("query", "private")
                         .param("conversationId", conversation.getId()))
@@ -222,6 +415,9 @@ public class MessageControllerTest {
 
         mockMvc.perform(post("/api/messages/" + conversation.getId() + "/unread")
                         .principal(() -> "outsider@gmail.com"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(get("/api/messages/" + conversation.getId() + "/around/" + visibleOnlyToMembers.getId()))
                 .andExpect(status().isBadRequest());
     }
 

@@ -13,6 +13,8 @@ import iuh.fit.se.nextalk_be.dto.response.MessageSyncResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageSearchResponse;
 import iuh.fit.se.nextalk_be.dto.response.ConversationUnreadResponse;
 import iuh.fit.se.nextalk_be.dto.response.MessageDeliveryDetailsResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageAroundResponse;
+import iuh.fit.se.nextalk_be.dto.response.MessageCursorPageResponse;
 import iuh.fit.se.nextalk_be.entity.MessageType;
 import iuh.fit.se.nextalk_be.entity.Conversation;
 import iuh.fit.se.nextalk_be.entity.User;
@@ -28,6 +30,8 @@ public interface MessageService {
     public MessageResponse sendMessage(MessageRequest request, String senderEmail);
     public void broadcastTypingIndicator(TypingIndicatorRequest request, String senderEmail);
     public Page<MessageResponse> getConversationMessages(String conversationId, Pageable pageable);
+    public MessageCursorPageResponse getConversationMessageHistory(String conversationId, String cursor, int limit);
+    public MessageAroundResponse getMessagesAround(String conversationId, String messageId, int limit);
     public MessageSyncResponse syncConversationMessages(String conversationId, LocalDateTime since, int limit);
     public List<MessageResponse> getLatestMessages(List<String> conversationIds);
     public Map<String, Long> getUnreadCounts(String username);
@@ -49,6 +53,7 @@ public interface MessageService {
     public void deleteMessageForMe(String messageId);
     public MessageResponse pinMessage(String messageId, boolean pin);
     public List<MessageResponse> getPinnedMessages(String conversationId);
+    public MessageCursorPageResponse getPinnedMessages(String conversationId, String cursor, int limit);
     public MessageResponse reactToMessage(String messageId, ReactMessageRequest request);
     public List<MessageResponse> shareMessage(String messageId, ShareMessageRequest request);
     public List<MessageResponse> searchMessages(String query, String conversationId);
@@ -61,6 +66,16 @@ public interface MessageService {
             LocalDateTime to,
             int page,
             int size
+    );
+    public MessageCursorPageResponse searchMessagesCursor(
+            String query,
+            String conversationId,
+            String senderId,
+            MessageType messageType,
+            LocalDateTime from,
+            LocalDateTime to,
+            String cursor,
+            int limit
     );
     public MessageResponse getMessageForCurrentUser(String messageId);
 
