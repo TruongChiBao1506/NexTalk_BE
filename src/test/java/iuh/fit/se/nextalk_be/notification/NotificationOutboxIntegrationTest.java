@@ -43,6 +43,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -156,6 +157,43 @@ class NotificationOutboxIntegrationTest {
         assertThat(notificationRepository.findAll()).hasSize(1);
         assertThat(notificationRepository.findAll().get(0).getDeliveryStatus())
                 .isEqualTo(NotificationDeliveryStatus.PENDING);
+    }
+
+    @Test
+    void chatOutboxUsesTheRecipientsCurrentRegisteredToken() {
+        notificationService.createChatNotification(
+                recipient, NotificationType.NEW_MESSAGE, "generic notification",
+                "message-id", "conversation-id", "Conversation",
+                "sender-id", "Sender", "", "generic preview");
+
+        assertThat(outboxWorker.processBatch()).isEqualTo(1);
+
+        Notification delivered = notificationRepository.findAll().get(0);
+        assertThat(delivered.getDeliveryStatus()).isEqualTo(NotificationDeliveryStatus.SENT);
+        verify(fcmService).sendChatPushNotificationToTokens(
+                org.mockito.ArgumentMatchers.eq(List.of("outbox-token")),
+                org.mockito.ArgumentMatchers.eq("message-id"),
+                org.mockito.ArgumentMatchers.eq("conversation-id"),
+                org.mockito.ArgumentMatchers.eq("Conversation"),
+                org.mockito.ArgumentMatchers.eq("sender-id"),
+                org.mockito.ArgumentMatchers.eq("Sender"),
+                org.mockito.ArgumentMatchers.eq(""),
+                org.mockito.ArgumentMatchers.eq("generic preview"));
+    }
+
+    @Test
+    void missingDeviceTokenRetriesInsteadOfReportingFalseSuccess() {
+        recipient.setFcmTokens(List.of());
+        userRepository.save(recipient);
+        Notification notification = saveGenericNotification(NotificationDeliveryStatus.PENDING);
+
+        assertThat(outboxWorker.processBatch()).isEqualTo(1);
+
+        Notification waiting = notificationRepository.findById(notification.getId()).orElseThrow();
+        assertThat(waiting.getDeliveryStatus()).isEqualTo(NotificationDeliveryStatus.PENDING);
+        assertThat(waiting.getLastDeliveryErrorCode()).isEqualTo("NO_REGISTERED_PUSH_TOKEN");
+        assertThat(waiting.getNextDeliveryAttemptAt()).isAfter(LocalDateTime.now());
+        verify(fcmService, never()).sendPushNotificationToTokens(anyList(), anyString(), anyString());
     }
 
     @Test

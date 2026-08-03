@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -128,9 +129,20 @@ public class NotificationOutboxWorker {
             if (payload == null || payload.getKind() == null) {
                 throw PushDeliveryException.permanent("PAYLOAD_INVALID", null);
             }
+            List<String> pushTokens = recipient.getFcmTokens() == null
+                    ? List.of()
+                    : recipient.getFcmTokens().stream()
+                    .filter(token -> token != null && !token.isBlank())
+                    .distinct()
+                    .toList();
+            if (pushTokens.isEmpty()) {
+                // A device can re-register after app startup. Keep the outbox row
+                // retryable instead of falsely marking a notification as SENT.
+                throw PushDeliveryException.retryable("NO_REGISTERED_PUSH_TOKEN", null);
+            }
             if (payload.getKind() == NotificationPushKind.CHAT) {
                 fcmService.sendChatPushNotificationToTokens(
-                        recipient.getFcmTokens(),
+                        pushTokens,
                         payload.getMessageId(),
                         payload.getConversationId(),
                         payload.getConversationName(),
@@ -140,7 +152,7 @@ public class NotificationOutboxWorker {
                         payload.getBody());
             } else {
                 fcmService.sendPushNotificationToTokens(
-                        recipient.getFcmTokens(), payload.getTitle(), payload.getBody());
+                        pushTokens, payload.getTitle(), payload.getBody());
             }
             markSent(notification, LocalDateTime.now());
         } catch (PushDeliveryException failure) {
