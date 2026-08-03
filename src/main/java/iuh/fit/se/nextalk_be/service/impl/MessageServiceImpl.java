@@ -101,6 +101,7 @@ public class MessageServiceImpl implements MessageService {
     );
 
     private final MessageRepository messageRepository;
+    private final GiphyMessageMetadataValidator giphyMessageMetadataValidator;
     private final MongoTemplate mongoTemplate;
     private final ConversationUnreadMarkerRepository conversationUnreadMarkerRepository;
     private final ConversationRepository conversationRepository;
@@ -287,6 +288,9 @@ public class MessageServiceImpl implements MessageService {
         if (type == MessageType.SYSTEM || type == MessageType.POLL) {
             throw new BadRequestException("This message type must be created by its dedicated system flow");
         }
+        if (type == MessageType.GIF && !attachments.isEmpty()) {
+            throw new BadRequestException("GIF messages cannot contain uploaded attachments");
+        }
 
         String parentId = request.getParentId();
         if (parentId != null) {
@@ -303,6 +307,10 @@ public class MessageServiceImpl implements MessageService {
         Map<String, Object> metadata = new HashMap<>();
         if (request.getMetadata() != null && !request.getMetadata().isEmpty()) {
             metadata.putAll(request.getMetadata());
+        }
+        if (type == MessageType.GIF) {
+            metadata.clear();
+            metadata.putAll(giphyMessageMetadataValidator.sanitize(content, request.getMetadata()));
         }
         if (request.getClientMessageId() != null && !request.getClientMessageId().isBlank()) {
             metadata.put("clientMessageId", request.getClientMessageId().trim());

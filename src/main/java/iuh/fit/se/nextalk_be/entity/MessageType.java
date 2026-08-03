@@ -9,5 +9,6 @@ public enum MessageType {
     ALBUM,
     POLL,
     SYSTEM,
-    STICKER
+    STICKER,
+    GIF
 }
