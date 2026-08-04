@@ -157,6 +157,12 @@ public class MessageServiceImpl implements MessageService {
         return mapMessagesToResponses(messageRepository.findLatestVisibleByConversationIds(new ArrayList<>(allowedIds), currentUser.getId()));
     }
 
+    @Override
+    public List<MessageResponse> getLatestMessagesForVerifiedIds(List<String> conversationIds, User currentUser) {
+        if (conversationIds == null || conversationIds.isEmpty()) return List.of();
+        return mapMessagesToResponses(messageRepository.findLatestVisibleByConversationIds(conversationIds, currentUser.getId()));
+    }
+
     // @Transactional
     public MessageResponse sendMessage(MessageRequest request, String senderEmail) {
         User currentUser = userRepository.findByEmail(senderEmail)
@@ -981,6 +987,12 @@ public class MessageServiceImpl implements MessageService {
         User user = userRepository.findByEmail(username)
                 .or(() -> userRepository.findByUsername(username))
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        return getUnreadCounts(user);
+    }
+
+    @Override
+    public Map<String, Long> getUnreadCounts(User user) {
+        if (user == null || user.getId() == null) return Map.of();
         Map<String, Long> counts = messageStatusRepository.countUnreadByConversation(
                         user.getId(), List.of("SENT", "DELIVERED"))
                 .stream()

@@ -251,12 +251,12 @@ public class ConversationServiceImpl implements ConversationService {
 
         List<String> convIds = conversations.stream().map(ConversationResponse::getId).toList();
 
-        List<MessageResponse> latestMsgs = messageService.getLatestMessages(convIds);
+        List<MessageResponse> latestMsgs = messageService.getLatestMessagesForVerifiedIds(convIds, currentUser);
         Map<String, MessageResponse> lastMessages = latestMsgs.stream()
                 .filter(msg -> msg.getConversationId() != null)
                 .collect(Collectors.toMap(MessageResponse::getConversationId, msg -> msg, (a, b) -> a));
 
-        Map<String, Long> unreadCounts = messageService.getUnreadCounts(currentUser.getUsername());
+        Map<String, Long> unreadCounts = messageService.getUnreadCounts(currentUser);
 
         return ConversationWithPreviewsResponse.builder()
                 .conversations(conversations)

@@ -432,18 +432,10 @@ public class GroupServiceImpl implements GroupService {
                 .collect(Collectors.groupingBy(inv -> inv.getGroup().getId(), Collectors.counting()));
 
         return deduplicatedGroups.stream().map(g -> {
-            List<GroupMember> members = membersByGroupId.get(g.getId());
-            if (members == null || members.isEmpty()) {
-                members = groupMemberRepository.findAllByGroupId(g.getId());
-            }
-
-            List<Channel> channels = channelsByGroupId.get(g.getId());
-            if (channels == null || channels.isEmpty()) {
-                channels = channelRepository.findAllByGroupId(g.getId());
-            }
-
+            List<GroupMember> members = membersByGroupId.getOrDefault(g.getId(), Collections.emptyList());
+            List<Channel> channels = channelsByGroupId.getOrDefault(g.getId(), Collections.emptyList());
             Long pendingCountObj = pendingCountsByGroupId.get(g.getId());
-            int pendingCount = pendingCountObj != null ? pendingCountObj.intValue() : groupInvitationRepository.countByGroupIdAndStatus(g.getId(), InvitationStatus.WAITING_APPROVAL);
+            int pendingCount = pendingCountObj != null ? pendingCountObj.intValue() : 0;
 
             return mapToGroupResponse(g, members, channels, pendingCount, currentUser.getId());
         }).collect(Collectors.toList());

@@ -34,7 +34,9 @@ public interface MessageService {
     public MessageAroundResponse getMessagesAround(String conversationId, String messageId, int limit);
     public MessageSyncResponse syncConversationMessages(String conversationId, LocalDateTime since, int limit);
     public List<MessageResponse> getLatestMessages(List<String> conversationIds);
+    public List<MessageResponse> getLatestMessagesForVerifiedIds(List<String> conversationIds, User currentUser);
     public Map<String, Long> getUnreadCounts(String username);
+    public Map<String, Long> getUnreadCounts(User user);
     public ConversationUnreadResponse markConversationAsUnread(String conversationId, String username);
     public MessageDeliveryDetailsResponse getMessageDeliveryDetails(String messageId, String status, int page, int size);
     public void markConversationMessagesAsDelivered(String conversationId, String username);
