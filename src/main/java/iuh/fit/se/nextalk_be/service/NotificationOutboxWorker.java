@@ -20,7 +20,9 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -74,13 +76,14 @@ public class NotificationOutboxWorker {
 
     public int processBatch() {
         int processed = 0;
+        Map<String, User> recipientCache = new HashMap<>();
         try {
             while (processed < batchSize) {
                 Notification claimed = claimNext(LocalDateTime.now());
                 if (claimed == null) {
                     break;
                 }
-                deliver(claimed);
+                deliver(claimed, recipientCache);
                 processed++;
             }
         } finally {
@@ -117,11 +120,15 @@ public class NotificationOutboxWorker {
     }
 
     private void deliver(Notification notification) {
+        deliver(notification, new HashMap<>());
+    }
+
+    private void deliver(Notification notification, Map<String, User> recipientCache) {
         metrics.recordAttempt();
         try {
-            User recipient = notification.getRecipient() == null
-                    ? null
-                    : userRepository.findById(notification.getRecipient().getId()).orElse(null);
+            String recipientId = notification.getRecipient() == null ? null : notification.getRecipient().getId();
+            User recipient = recipientId == null ? null : recipientCache.computeIfAbsent(recipientId,
+                    id -> userRepository.findById(id).orElse(null));
             if (recipient == null) {
                 throw PushDeliveryException.permanent("RECIPIENT_NOT_FOUND", null);
             }

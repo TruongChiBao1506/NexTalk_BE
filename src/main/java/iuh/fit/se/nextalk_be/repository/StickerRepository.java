@@ -11,4 +11,5 @@ import java.util.List;
 @Repository
 public interface StickerRepository extends MongoRepository<Sticker, String> {
     List<Sticker> findByPackId(String packId);
+    List<Sticker> findByPackIdIn(List<String> packIds);
 }

@@ -13,7 +13,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -24,8 +27,16 @@ public class StickerServiceImpl implements StickerService {
 
     public List<StickerPack> getAllPacks() {
         List<StickerPack> packs = packRepository.findAll();
+        if (packs.isEmpty()) {
+            return packs;
+        }
+        List<String> packIds = packs.stream().map(StickerPack::getId).toList();
+        List<Sticker> allStickers = stickerRepository.findByPackIdIn(packIds);
+        Map<String, List<Sticker>> stickersByPackId = allStickers.stream()
+                .collect(Collectors.groupingBy(Sticker::getPackId));
+
         for (StickerPack pack : packs) {
-            pack.setStickers(stickerRepository.findByPackId(pack.getId()));
+            pack.setStickers(stickersByPackId.getOrDefault(pack.getId(), Collections.emptyList()));
         }
         return packs;
     }
