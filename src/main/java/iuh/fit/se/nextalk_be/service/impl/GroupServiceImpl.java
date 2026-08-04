@@ -84,17 +84,25 @@ public class GroupServiceImpl implements GroupService {
                 .role(GroupRole.OWNER)
                 .build());
 
-        if (request.getMemberIds() != null) {
-            for (String memberId : request.getMemberIds()) {
-                if (memberId.equals(currentUser.getId())) continue;
-                User member = userRepository.findById(memberId)
-                        .orElseThrow(() -> new ResourceNotFoundException("User not found: " + memberId));
-                conversationMembers.add(member);
-                groupMembers.add(GroupMember.builder()
-                        .group(savedGroup)
-                        .user(member)
-                        .role(GroupRole.MEMBER)
-                        .build());
+        List<User> addedMembers = new ArrayList<>();
+        if (request.getMemberIds() != null && !request.getMemberIds().isEmpty()) {
+            List<String> targetMemberIds = request.getMemberIds().stream()
+                    .filter(id -> id != null && !id.equals(currentUser.getId()))
+                    .distinct()
+                    .toList();
+            if (!targetMemberIds.isEmpty()) {
+                addedMembers = userRepository.findAllById(targetMemberIds);
+                if (addedMembers.size() != targetMemberIds.size()) {
+                    throw new ResourceNotFoundException("One or more member IDs are invalid");
+                }
+                for (User member : addedMembers) {
+                    conversationMembers.add(member);
+                    groupMembers.add(GroupMember.builder()
+                            .group(savedGroup)
+                            .user(member)
+                            .role(GroupRole.MEMBER)
+                            .build());
+                }
             }
         }
         groupMemberRepository.saveAll(groupMembers);
@@ -118,18 +126,13 @@ public class GroupServiceImpl implements GroupService {
         channelRepository.save(defaultChannel);
 
         // Notify all added members
-        if (request.getMemberIds() != null) {
-            for (String memberId : request.getMemberIds()) {
-                if (memberId.equals(currentUser.getId())) continue;
-                userRepository.findById(memberId).ifPresent(member ->
-                        notificationService.createAndSend(
-                                member,
-                                NotificationType.GROUP_INVITE,
-                                currentUser.getUsername() + " đã thêm bạn vào nhóm " + savedGroup.getName(),
-                                savedGroup.getId().toString()
-                        )
-                );
-            }
+        for (User member : addedMembers) {
+            notificationService.createAndSend(
+                    member,
+                    NotificationType.GROUP_INVITE,
+                    currentUser.getUsername() + " đã thêm bạn vào nhóm " + savedGroup.getName(),
+                    savedGroup.getId().toString()
+            );
         }
 
         return mapToGroupResponse(savedGroup, groupMembers);

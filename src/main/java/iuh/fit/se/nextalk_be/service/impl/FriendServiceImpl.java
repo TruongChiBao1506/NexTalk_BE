@@ -213,6 +213,7 @@ public class FriendServiceImpl implements FriendService {
         List<Friendship> friendships = friendshipRepository.findAllByUserIdAndStatus(currentUser.getId(), FriendshipStatus.ACCEPTED);
 
         return friendships.stream()
+                .limit(500)
                 .map(f -> {
                     User friend = f.getSender().getId().equals(currentUser.getId()) ? f.getReceiver() : f.getSender();
                     return mapToFriendResponse(friend);
@@ -227,6 +228,7 @@ public class FriendServiceImpl implements FriendService {
         List<Friendship> pending = friendshipRepository.findByReceiverIdAndStatus(currentUser.getId(), FriendshipStatus.PENDING);
 
         return pending.stream()
+                .limit(500)
                 .map(f -> mapToFriendResponse(f.getSender()))
                 .collect(Collectors.toList());
     }
