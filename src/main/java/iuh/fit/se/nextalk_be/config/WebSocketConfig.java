@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.config;
 
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
+import iuh.fit.se.nextalk_be.security.CachingUserDetailsService;
 import iuh.fit.se.nextalk_be.security.JwtService;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.security.WebSocketSubscriptionAuthorizer;
@@ -24,7 +25,6 @@ import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
@@ -37,6 +37,8 @@ import org.springframework.web.socket.handler.WebSocketHandlerDecorator;
 import java.time.Duration;
 import java.util.List;
 
+import iuh.fit.se.nextalk_be.security.CachingUserDetailsService;
+
 @Configuration
 @EnableWebSocketMessageBroker
 @RequiredArgsConstructor
@@ -44,7 +46,7 @@ import java.util.List;
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final JwtService jwtService;
-    private final UserDetailsService userDetailsService;
+    private final CachingUserDetailsService cachingUserDetailsService;
     private final RefreshTokenRepository refreshTokenRepository;
     private final WebSocketSessionRegistry webSocketSessionRegistry;
     private final WebSocketSubscriptionAuthorizer subscriptionAuthorizer;
@@ -243,7 +245,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
             throw new org.springframework.messaging.MessageDeliveryException("Token username is null");
         }
 
-        UserDetails userDetails = userDetailsService.loadUserByUsername(userEmail);
+        UserDetails userDetails = cachingUserDetailsService.loadUserByUsername(userEmail);
         if (!userDetails.isAccountNonLocked()
                 || !userDetails.isAccountNonExpired()
                 || !userDetails.isCredentialsNonExpired()

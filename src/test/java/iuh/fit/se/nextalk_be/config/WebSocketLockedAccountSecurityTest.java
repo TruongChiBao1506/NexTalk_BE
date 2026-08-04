@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.config;
 
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
+import iuh.fit.se.nextalk_be.security.CachingUserDetailsService;
 import iuh.fit.se.nextalk_be.security.JwtService;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.security.WebSocketSubscriptionAuthorizer;
@@ -9,7 +10,6 @@ import iuh.fit.se.nextalk_be.service.SessionRevocationService;
 import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.MessageDeliveryException;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -22,7 +22,7 @@ class WebSocketLockedAccountSecurityTest {
     @Test
     void lockedAccountCannotOpenNewStompConnection() {
         JwtService jwtService = mock(JwtService.class);
-        UserDetailsService users = mock(UserDetailsService.class);
+        CachingUserDetailsService users = mock(CachingUserDetailsService.class);
         SessionRevocationService revocations = mock(SessionRevocationService.class);
         WebSocketConfig config = new WebSocketConfig(
                 jwtService,

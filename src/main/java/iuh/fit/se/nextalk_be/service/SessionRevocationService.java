@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.entity.RefreshToken;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
+import iuh.fit.se.nextalk_be.security.CachingUserDetailsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -20,8 +21,12 @@ public class SessionRevocationService {
     private final UserRepository userRepository;
     private final WebSocketSessionRegistry webSocketSessionRegistry;
     private final StringRedisTemplate redisTemplate;
+    private final CachingUserDetailsService cachingUserDetailsService;
 
     public void revokeAllForUser(User user) {
+        if (user.getEmail() != null) {
+            cachingUserDetailsService.evict(user.getEmail());
+        }
         List<RefreshToken> sessions = refreshTokenRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
         List<String> sessionIds = sessions.stream()
                 .map(RefreshToken::getId)

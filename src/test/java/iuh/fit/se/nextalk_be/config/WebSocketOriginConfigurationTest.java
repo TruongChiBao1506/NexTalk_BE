@@ -1,13 +1,13 @@
 package iuh.fit.se.nextalk_be.config;
 
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
+import iuh.fit.se.nextalk_be.security.CachingUserDetailsService;
 import iuh.fit.se.nextalk_be.security.JwtService;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
 import iuh.fit.se.nextalk_be.security.WebSocketSubscriptionAuthorizer;
 import iuh.fit.se.nextalk_be.service.SessionRevocationService;
 import iuh.fit.se.nextalk_be.service.WebSocketSessionRegistry;
 import org.junit.jupiter.api.Test;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -54,7 +54,7 @@ class WebSocketOriginConfigurationTest {
     private WebSocketConfig newConfig() {
         return new WebSocketConfig(
                 mock(JwtService.class),
-                mock(UserDetailsService.class),
+                mock(CachingUserDetailsService.class),
                 mock(RefreshTokenRepository.class),
                 mock(WebSocketSessionRegistry.class),
                 mock(WebSocketSubscriptionAuthorizer.class),

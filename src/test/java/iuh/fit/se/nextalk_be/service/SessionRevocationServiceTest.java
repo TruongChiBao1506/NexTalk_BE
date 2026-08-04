@@ -4,6 +4,7 @@ import iuh.fit.se.nextalk_be.entity.RefreshToken;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.RefreshTokenRepository;
 import iuh.fit.se.nextalk_be.repository.UserRepository;
+import iuh.fit.se.nextalk_be.security.CachingUserDetailsService;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
@@ -23,7 +24,8 @@ class SessionRevocationServiceTest {
         UserRepository users = mock(UserRepository.class);
         WebSocketSessionRegistry sockets = mock(WebSocketSessionRegistry.class);
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
-        SessionRevocationService service = new SessionRevocationService(tokens, users, sockets, redis);
+        CachingUserDetailsService cachingUDS = mock(CachingUserDetailsService.class);
+        SessionRevocationService service = new SessionRevocationService(tokens, users, sockets, redis, cachingUDS);
 
         User user = User.builder()
                 .email("locked@example.test")
@@ -50,7 +52,7 @@ class SessionRevocationServiceTest {
         UserRepository users = mock(UserRepository.class);
         WebSocketSessionRegistry sockets = mock(WebSocketSessionRegistry.class);
         SessionRevocationService service = new SessionRevocationService(
-                tokens, users, sockets, mock(StringRedisTemplate.class));
+                tokens, users, sockets, mock(StringRedisTemplate.class), mock(CachingUserDetailsService.class));
 
         service.closeSessionsFromRemoteEvent("session-1,session-2");
 
