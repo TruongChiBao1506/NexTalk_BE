@@ -28,6 +28,9 @@ import iuh.fit.se.nextalk_be.dto.response.DirectUploadPrepareResponse;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
 import java.net.URI;
@@ -35,6 +38,9 @@ import java.nio.charset.StandardCharsets;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.http.HttpMethod;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+import java.io.InputStream;
 
 @RestController
 @RequestMapping("/api/files")
@@ -118,7 +124,7 @@ public class FileController {
 
     @GetMapping("/download")
     @Operation(summary = "Download an uploaded Cloudinary file with its original name")
-    public ResponseEntity<byte[]> downloadFile(
+    public ResponseEntity<StreamingResponseBody> downloadFile(
             @RequestParam("url") String url,
             @RequestParam("fileName") String fileName) {
         rateLimitService.check("file:download", rateLimitService.currentUserIdentity(), 60, Duration.ofMinutes(10));
@@ -128,13 +134,13 @@ public class FileController {
 
     @GetMapping("/content/{assetId}")
     @Operation(summary = "Read a protected attachment")
-    public ResponseEntity<byte[]> readProtectedAsset(@PathVariable String assetId) {
+    public ResponseEntity<StreamingResponseBody> readProtectedAsset(@PathVariable String assetId) {
         rateLimitService.check("file:content", rateLimitService.currentUserIdentity(), 180, Duration.ofMinutes(10));
         MediaAsset asset = mediaAuthorizationService.assertCanDownloadAsset(assetId);
         return downloadFromStorage(asset, "attachment", false);
     }
 
-    private ResponseEntity<byte[]> downloadFromStorage(MediaAsset asset, String fileName, boolean attachment) {
+    private ResponseEntity<StreamingResponseBody> downloadFromStorage(MediaAsset asset, String fileName, boolean attachment) {
         URI source;
         try {
             source = URI.create(cloudinaryService.createDownloadUrl(asset));
@@ -150,27 +156,35 @@ public class FileController {
             return ResponseEntity.badRequest().build();
         }
 
-        try {
-            ResponseEntity<byte[]> upstream = restTemplate.getForEntity(source, byte[].class);
-            if (!upstream.getStatusCode().is2xxSuccessful() || upstream.getBody() == null) {
-                return ResponseEntity.status(upstream.getStatusCode()).build();
-            }
+        String safeFileName = sanitizeFileName(fileName);
+        MediaType mediaType = (asset != null && asset.getContentType() != null && !asset.getContentType().isBlank())
+                ? MediaType.parseMediaType(asset.getContentType())
+                : MediaType.APPLICATION_OCTET_STREAM;
 
-            String safeFileName = sanitizeFileName(fileName);
-            MediaType contentType = upstream.getHeaders().getContentType();
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(contentType != null ? contentType : MediaType.APPLICATION_OCTET_STREAM);
-            headers.setContentDisposition((attachment
-                    ? ContentDisposition.attachment()
-                    : ContentDisposition.inline())
-                    .filename(safeFileName, StandardCharsets.UTF_8).build());
-            headers.setCacheControl("private, no-store");
-            headers.set("X-Content-Type-Options", "nosniff");
-            headers.setContentLength(upstream.getBody().length);
-            return ResponseEntity.ok().headers(headers).body(upstream.getBody());
-        } catch (Exception exception) {
-            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).build();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(mediaType);
+        headers.setContentDisposition((attachment
+                ? ContentDisposition.attachment()
+                : ContentDisposition.inline())
+                .filename(safeFileName, StandardCharsets.UTF_8).build());
+        headers.setCacheControl("private, no-store");
+        headers.set("X-Content-Type-Options", "nosniff");
+        if (asset != null && asset.getSize() != null && asset.getSize() > 0) {
+            headers.setContentLength(asset.getSize());
         }
+
+        StreamingResponseBody body = outputStream -> {
+            restTemplate.execute(source, HttpMethod.GET, null, clientResponse -> {
+                if (clientResponse.getStatusCode().is2xxSuccessful()) {
+                    try (InputStream inputStream = clientResponse.getBody()) {
+                        inputStream.transferTo(outputStream);
+                    }
+                }
+                return null;
+            });
+        };
+
+        return ResponseEntity.ok().headers(headers).body(body);
     }
 
     private String sanitizeFileName(String fileName) {

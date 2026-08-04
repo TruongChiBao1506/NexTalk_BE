@@ -106,13 +106,26 @@ public class FileControllerTest {
                 .build();
         when(mediaAuthorizationService.assertCanDownloadAsset("asset-hash")).thenReturn(asset);
         when(cloudinaryService.createDownloadUrl(asset)).thenReturn(privateUrl);
-        when(restTemplate.getForEntity(eq(URI.create(privateUrl)), eq(byte[].class)))
-                .thenReturn(ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(content));
+        when(restTemplate.execute(eq(URI.create(privateUrl)), eq(org.springframework.http.HttpMethod.GET), any(), any()))
+                .thenAnswer(invocation -> {
+                    org.springframework.web.client.ResponseExtractor<?> extractor = invocation.getArgument(3);
+                    org.springframework.http.client.ClientHttpResponse response = org.mockito.Mockito.mock(org.springframework.http.client.ClientHttpResponse.class);
+                    org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+                    headers.setContentType(MediaType.IMAGE_PNG);
+                    when(response.getStatusCode()).thenReturn(org.springframework.http.HttpStatus.OK);
+                    when(response.getHeaders()).thenReturn(headers);
+                    when(response.getBody()).thenReturn(new java.io.ByteArrayInputStream(content));
+                    return extractor.extractData(response);
+                });
 
-        mockMvc.perform(get("/api/files/content/asset-hash"))
+        org.springframework.test.web.servlet.MvcResult result = mockMvc.perform(get("/api/files/content/asset-hash"))
                 .andExpect(status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
                         .string("Cache-Control", "private, no-store"))
+                .andReturn();
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch(result))
+                .andExpect(status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
                         .bytes(content));
     }
