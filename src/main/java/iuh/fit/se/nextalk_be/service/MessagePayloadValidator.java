@@ -13,8 +13,15 @@ import java.util.Set;
 @Component
 public class MessagePayloadValidator {
     static final int MAX_METADATA_BYTES = 16 * 1024;
+    static final Set<String> ALLOWED_MESSAGE_EFFECTS = Set.of(
+            "GIFT",
+            "FIRE",
+            "BALLOON",
+            "HEART"
+    );
     static final Set<String> ALLOWED_CLIENT_METADATA_KEYS = Set.of(
             "clientMessageId",
+            "effect",
             "gif",
             "priority",
             "selfDestructSeconds",
@@ -34,6 +41,12 @@ public class MessagePayloadValidator {
         unsupportedKeys.removeAll(ALLOWED_CLIENT_METADATA_KEYS);
         if (!unsupportedKeys.isEmpty()) {
             throw new BadRequestException("Unsupported message metadata fields");
+        }
+
+        Object effect = metadata.get("effect");
+        if (effect != null && (!(effect instanceof String effectName)
+                || !ALLOWED_MESSAGE_EFFECTS.contains(effectName))) {
+            throw new BadRequestException("Unsupported message effect");
         }
 
         try {
