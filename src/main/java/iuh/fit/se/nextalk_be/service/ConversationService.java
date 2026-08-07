@@ -47,4 +47,5 @@ public interface ConversationService {
     );
     public ConversationResponse updateTheme(String id, iuh.fit.se.nextalk_be.dto.request.UpdateThemeRequest request);
     ConversationResponse updateNickname(String id, String userId, String nickname);
+    ConversationResponse updateWordEffects(String id, List<Conversation.WordEffectItem> wordEffects);
 }

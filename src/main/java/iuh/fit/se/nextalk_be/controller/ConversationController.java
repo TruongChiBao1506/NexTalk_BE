@@ -213,4 +213,14 @@ public class ConversationController {
         ConversationResponse response = conversationService.updateNickname(id, userId, request.getNickname());
         return ResponseEntity.ok(ApiResponse.success(response, "Nickname updated successfully"));
     }
+
+    @PutMapping("/{id}/word-effects")
+    @Operation(summary = "Update shared word effects for a conversation")
+    public ResponseEntity<ApiResponse<ConversationResponse>> updateWordEffects(
+            @PathVariable("id") String id,
+            @Valid @RequestBody iuh.fit.se.nextalk_be.dto.request.UpdateWordEffectsRequest request
+    ) {
+        ConversationResponse response = conversationService.updateWordEffects(id, request.getWordEffects());
+        return ResponseEntity.ok(ApiResponse.success(response, "Word effects updated successfully"));
+    }
 }

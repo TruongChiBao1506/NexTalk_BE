@@ -416,6 +416,15 @@ public class ConversationServiceImpl implements ConversationService {
                 .themeColor(conversation.getThemeColor())
                 .wallpaperUrl(conversation.getWallpaperUrl())
                 .nicknames(conversation.getNicknames() != null ? new HashMap<>(conversation.getNicknames()) : new HashMap<>())
+                .wordEffects(conversation.getWordEffects() != null
+                        ? conversation.getWordEffects().stream()
+                                .map(we -> Conversation.WordEffectItem.builder()
+                                        .id(we.getId())
+                                        .keyword(we.getKeyword())
+                                        .emoji(we.getEmoji())
+                                        .build())
+                                .collect(Collectors.toList())
+                        : Collections.emptyList())
                 .members(memberResponses)
                 .createdAt(conversation.getCreatedAt())
                 .updatedAt(conversation.getUpdatedAt())
@@ -774,5 +783,36 @@ public class ConversationServiceImpl implements ConversationService {
         conversation.setWallpaperUrl(request.getWallpaperUrl());
         
         return mapToConversationResponse(conversationRepository.save(conversation));
+    }
+
+    public ConversationResponse updateWordEffects(String id, List<Conversation.WordEffectItem> wordEffects) {
+        User currentUser = userService.getCurrentAuthenticatedUser();
+        Conversation conversation = getConversationForMember(id, currentUser);
+
+        List<Conversation.WordEffectItem> cleaned = new ArrayList<>();
+        if (wordEffects != null) {
+            for (Conversation.WordEffectItem item : wordEffects) {
+                if (item != null && item.getKeyword() != null && !item.getKeyword().isBlank()) {
+                    cleaned.add(Conversation.WordEffectItem.builder()
+                            .id(item.getId() != null && !item.getId().isBlank() ? item.getId() : "we_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().substring(0, 4))
+                            .keyword(item.getKeyword().trim())
+                            .emoji(item.getEmoji() != null && !item.getEmoji().isBlank() ? item.getEmoji().trim() : "✨")
+                            .build());
+                }
+            }
+        }
+
+        conversation.setWordEffects(cleaned);
+        Conversation savedConversation = conversationRepository.save(conversation);
+        ConversationResponse response = mapToConversationResponse(savedConversation);
+
+        Map<String, Object> updateEvent = new HashMap<>();
+        updateEvent.put("type", "CONVERSATION_UPDATE");
+        updateEvent.put("data", response);
+        for (User member : savedConversation.getMembers()) {
+            messagingTemplate.convertAndSendToUser(member.getUsername(), "/queue/private", updateEvent);
+        }
+
+        return response;
     }
 }

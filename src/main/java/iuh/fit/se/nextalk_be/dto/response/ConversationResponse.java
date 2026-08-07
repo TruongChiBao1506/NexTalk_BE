@@ -32,6 +32,7 @@ public class ConversationResponse {
     private String themeColor;
     private String wallpaperUrl;
     private Map<String, String> nicknames;
+    private java.util.List<iuh.fit.se.nextalk_be.entity.Conversation.WordEffectItem> wordEffects;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

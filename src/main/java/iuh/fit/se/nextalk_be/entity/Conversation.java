@@ -54,4 +54,18 @@ public class Conversation extends BaseEntity {
 
     @Builder.Default
     private Map<String, String> nicknames = new HashMap<>();
+
+    @Builder.Default
+    private java.util.List<WordEffectItem> wordEffects = new java.util.ArrayList<>();
+
+    @Getter
+    @Setter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class WordEffectItem {
+        private String id;
+        private String keyword;
+        private String emoji;
+    }
 }

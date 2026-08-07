@@ -62,10 +62,14 @@ public class MessageNotificationDispatcher {
     @Scheduled(fixedDelayString = "${app.message-notification-dispatch.poll-delay-ms:1000}")
     public void runScheduledBatch() {
         if (!schedulerEnabled) return;
-        for (int index = 0; index < batchSize; index++) {
-            Message claimed = claim(new Query(), LocalDateTime.now());
-            if (claimed == null) return;
-            processClaimed(claimed);
+        try {
+            for (int index = 0; index < batchSize; index++) {
+                Message claimed = claim(new Query(), LocalDateTime.now());
+                if (claimed == null) return;
+                processClaimed(claimed);
+            }
+        } catch (Exception e) {
+            log.warn("[NotificationDispatcher] Transient DB error during batch poll: {}", e.getMessage());
         }
     }
 
