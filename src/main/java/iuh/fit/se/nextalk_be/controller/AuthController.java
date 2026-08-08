@@ -124,7 +124,7 @@ public class AuthController {
                                                                       HttpServletRequest httpRequest,
                                                                       @RequestHeader(value = "X-Client-Platform", required = false) String platform) {
         rateLimitService.check("auth:refresh", rateLimitService.clientIdentity(httpRequest), 30, Duration.ofMinutes(1));
-        TokenRefreshRequest resolved = resolveRefreshRequest(request, cookieToken);
+        TokenRefreshRequest resolved = resolveRefreshRequest(request, cookieToken, platform);
         TokenRefreshResponse response = authService.refreshToken(resolved, httpRequest);
         if (isWeb(platform)) {
             String rotatedToken = response.getRefreshToken();
@@ -139,8 +139,9 @@ public class AuthController {
     @PostMapping("/logout")
     @Operation(summary = "Invalidate refresh token and log user out")
     public ResponseEntity<ApiResponse<Void>> logout(@RequestBody(required = false) TokenRefreshRequest request,
-                                                     @CookieValue(value = REFRESH_COOKIE, required = false) String cookieToken) {
-        authService.logout(resolveRefreshRequest(request, cookieToken));
+                                                     @CookieValue(value = REFRESH_COOKIE, required = false) String cookieToken,
+                                                     @RequestHeader(value = "X-Client-Platform", required = false) String platform) {
+        authService.logout(resolveRefreshRequest(request, cookieToken, platform));
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, clearRefreshCookie().toString())
                 .body(ApiResponse.success(null, "Logged out successfully"));
@@ -211,9 +212,16 @@ public class AuthController {
                 .body(ApiResponse.success(response, message));
     }
 
-    private TokenRefreshRequest resolveRefreshRequest(TokenRefreshRequest request, String cookieToken) {
+    private TokenRefreshRequest resolveRefreshRequest(TokenRefreshRequest request, String cookieToken, String platform) {
         String bodyToken = request != null ? request.getRefreshToken() : null;
-        String token = StringUtils.hasText(bodyToken) ? bodyToken : cookieToken;
+        String token;
+        if (isWeb(platform)) {
+            token = cookieToken;
+        } else if ("mobile".equalsIgnoreCase(platform)) {
+            token = bodyToken;
+        } else {
+            token = StringUtils.hasText(bodyToken) ? bodyToken : cookieToken;
+        }
         if (!StringUtils.hasText(token)) throw new iuh.fit.se.nextalk_be.exception.UnauthorizedException("Refresh token is required");
         return TokenRefreshRequest.builder().refreshToken(token).build();
     }

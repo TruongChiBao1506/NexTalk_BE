@@ -2,6 +2,7 @@ package iuh.fit.se.nextalk_be.auth;
 
 import iuh.fit.se.nextalk_be.dto.request.LoginRequest;
 import iuh.fit.se.nextalk_be.dto.request.RegisterRequest;
+import iuh.fit.se.nextalk_be.dto.request.TokenRefreshRequest;
 import iuh.fit.se.nextalk_be.entity.EmailVerification;
 import iuh.fit.se.nextalk_be.entity.User;
 import iuh.fit.se.nextalk_be.repository.EmailVerificationRepository;
@@ -10,7 +11,9 @@ import iuh.fit.se.nextalk_be.repository.UserRepository;
 import iuh.fit.se.nextalk_be.security.SecureTokenService;
 
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +33,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -171,5 +175,55 @@ public class AuthControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.success", is(false)))
                 .andExpect(jsonPath("$.message", is("Account not verified. Please verify your email first.")));
+    }
+
+    @Test
+    void protectedEndpointWithoutAuthentication_ReturnsUnauthorized() throws Exception {
+        mockMvc.perform(get("/api/auth/sessions"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", "Bearer"))
+                .andExpect(jsonPath("$.success", is(false)));
+    }
+
+    @Test
+    void mobileRefresh_DoesNotFallBackToCookieToken() throws Exception {
+        mockMvc.perform(post("/api/auth/refresh")
+                        .header("X-Client-Platform", "mobile")
+                        .cookie(new Cookie("nextalk_refresh", "stale-native-cookie")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message", is("Refresh token is required")));
+    }
+
+    @Test
+    void mobileRefresh_WithBodyToken_ReturnsRotatedTokens() throws Exception {
+        User user = User.builder()
+                .email("refresh@gmail.com")
+                .username("refreshuser")
+                .password(passwordEncoder.encode("password123"))
+                .status("OFFLINE")
+                .isVerified(true)
+                .build();
+        userRepository.save(user);
+
+        String loginResponse = mockMvc.perform(post("/api/auth/login")
+                        .header("X-Client-Platform", "mobile")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new LoginRequest("refresh@gmail.com", "password123"))))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        JsonNode loginJson = objectMapper.readTree(loginResponse);
+        String refreshToken = loginJson.path("data").path("refreshToken").asText();
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .header("X-Client-Platform", "mobile")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                TokenRefreshRequest.builder().refreshToken(refreshToken).build())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accessToken", notNullValue()))
+                .andExpect(jsonPath("$.data.refreshToken", notNullValue()));
     }
 }

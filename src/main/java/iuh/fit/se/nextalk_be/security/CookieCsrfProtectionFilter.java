@@ -49,6 +49,9 @@ public class CookieCsrfProtectionFilter extends OncePerRequestFilter {
         if (!"POST".equalsIgnoreCase(request.getMethod())) {
             return false;
         }
+        if ("mobile".equalsIgnoreCase(request.getHeader("X-Client-Platform"))) {
+            return false;
+        }
         String path = request.getRequestURI();
         return "/api/auth/refresh".equals(path) || "/api/auth/logout".equals(path);
     }

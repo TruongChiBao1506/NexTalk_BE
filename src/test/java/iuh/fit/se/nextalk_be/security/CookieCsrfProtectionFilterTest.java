@@ -43,6 +43,17 @@ class CookieCsrfProtectionFilterTest {
         assertEquals(200, response.getStatus());
     }
 
+    @Test
+    void mobileBodyTokenRefreshIsNotBlockedByStaleNativeCookie() throws Exception {
+        MockHttpServletRequest request = cookieRequest("/api/auth/refresh");
+        request.addHeader("X-Client-Platform", "mobile");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(request, response, new MockFilterChain());
+
+        assertEquals(200, response.getStatus());
+    }
+
     private MockHttpServletRequest cookieRequest(String path) {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", path);
         request.setCookies(new Cookie("nextalk_refresh", "opaque-test-value"));
