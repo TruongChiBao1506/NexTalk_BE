@@ -132,6 +132,46 @@ class CallControllerStateTest {
     }
 
     @Test
+    void inviteReusesValidatedConversationForRealtimeDelivery() {
+        Conversation conversation = conversation("private-fast-invite", ConversationType.PRIVATE,
+                caller, firstResponder);
+        when(conversationRepository.findById(conversation.getId())).thenReturn(Optional.of(conversation));
+
+        controller.inviteCall(
+                invite("fast-invite-call", conversation.getId(), firstResponder.getId()),
+                principal(caller)
+        );
+
+        verify(conversationRepository, times(1)).findById(conversation.getId());
+        verify(messagingTemplate).convertAndSendToUser(
+                eq(firstResponder.getUsername()), eq("/queue/calls"), any(CallSignal.class));
+    }
+
+    @Test
+    void privateRejectIsSignaledBeforeCallHistoryPersistence() {
+        Conversation conversation = conversation("private-fast-reject", ConversationType.PRIVATE,
+                caller, firstResponder);
+        when(conversationRepository.findById(conversation.getId())).thenReturn(Optional.of(conversation));
+        when(userRepository.findById(caller.getId())).thenReturn(Optional.of(caller));
+        when(userRepository.findAllById(any())).thenReturn(List.of(caller, firstResponder));
+
+        controller.inviteCall(
+                invite("fast-reject-call", conversation.getId(), firstResponder.getId()),
+                principal(caller)
+        );
+        clearInvocations(messagingTemplate, messageService);
+
+        CallSignal reject = answer("fast-reject-call", conversation.getId(), false);
+        controller.answerCall(reject, principal(firstResponder));
+
+        InOrder fastPathOrder = inOrder(messagingTemplate, messageService);
+        fastPathOrder.verify(messagingTemplate)
+                .convertAndSendToUser(eq(caller.getUsername()), eq("/queue/calls"), eq(reject));
+        fastPathOrder.verify(messageService)
+                .createAndBroadcastCallHistoryMessage(eq(conversation), eq(caller), anyString(), any());
+    }
+
+    @Test
     void onlyTheDeviceThatClaimedTheCallCanRepeatAnAccept() {
         Conversation conversation = conversation("private-conversation", ConversationType.PRIVATE,
                 caller, firstResponder);

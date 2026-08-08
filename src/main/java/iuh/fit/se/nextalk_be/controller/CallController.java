@@ -32,10 +32,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -309,8 +312,9 @@ public class CallController {
         signal.setCallerAvatar(caller.getAvatarUrl());
         signal.setSignalType("INVITE");
 
-        if (!registerCallInvite(signal, caller)) return;
-        forwardCallSignal(signal, caller.getId());
+        CallInviteRegistration registration = registerCallInvite(signal, caller);
+        if (registration == null) return;
+        forwardCallSignal(signal, caller.getId(), registration.conversation());
     }
 
     @MessageMapping("/call.answer")
@@ -321,8 +325,9 @@ public class CallController {
 
         // Route the reply back to the caller while keeping receiverId as the responder.
         signal.setReceiverId(responder.getId());
-        CallResponseOutcome outcome = registerCallResponse(signal, responder, null);
-        if (outcome != CallResponseOutcome.ACCEPTED && outcome != CallResponseOutcome.DUPLICATE_SAME_DEVICE) return;
+        CallResponseResult result = registerCallResponse(signal, responder, null);
+        if (result.outcome() != CallResponseOutcome.ACCEPTED
+                && result.outcome() != CallResponseOutcome.DUPLICATE_SAME_DEVICE) return;
         String callerUsername = userRepository.findById(signal.getCallerId())
                 .map(User::getUsername)
                 .orElse(null);
@@ -335,6 +340,7 @@ public class CallController {
             );
         }
         notifyOtherResponderDevices(signal, responder, null);
+        archiveCallAfterSignal(result.lifecycleResult());
     }
 
     @MessageMapping("/call.cancel")
@@ -460,19 +466,19 @@ public class CallController {
                 ));
     }
 
-    private boolean registerCallInvite(CallSignal signal, User caller) {
-        if (signal.getCallId() == null || signal.getConversationId() == null) return false;
+    private CallInviteRegistration registerCallInvite(CallSignal signal, User caller) {
+        if (signal.getCallId() == null || signal.getConversationId() == null) return null;
         Long closedUntil = closedCallSessions.get(signal.getCallId());
-        if (closedUntil != null && closedUntil > System.currentTimeMillis()) return false;
-        if (getCallSession(signal.getCallId()) != null) return false;
+        if (closedUntil != null && closedUntil > System.currentTimeMillis()) return null;
+        if (getCallSession(signal.getCallId()) != null) return null;
 
         Conversation conversation = conversationRepository.findById(signal.getConversationId()).orElse(null);
-        if (conversation == null || !isConversationMember(conversation, caller.getId())) return false;
-        if (!isConversationCallAllowed(conversation, caller.getId())) return false;
+        if (conversation == null || !isConversationMember(conversation, caller.getId())) return null;
+        if (!isConversationCallAllowed(conversation, caller.getId())) return null;
 
         if (signal.getReceiverId() != null && conversation.getMembers().stream()
                 .noneMatch(member -> member.getId().equals(signal.getReceiverId()))) {
-            return false;
+            return null;
         }
 
         CallSession session = new CallSession();
@@ -489,9 +495,9 @@ public class CallController {
                 .filter(memberId -> !memberId.equals(caller.getId()))
                 .filter(memberId -> signal.getReceiverId() == null || memberId.equals(signal.getReceiverId()))
                 .forEach(session.invitedResponderIds::add);
-        if (activeCallSessions.putIfAbsent(signal.getCallId(), session) != null) return false;
+        if (activeCallSessions.putIfAbsent(signal.getCallId(), session) != null) return null;
         persistCallSession(session, ringingCallTtl);
-        return true;
+        return new CallInviteRegistration(session, conversation);
     }
 
     private boolean isConversationCallAllowed(Conversation conversation, String userId) {
@@ -513,39 +519,39 @@ public class CallController {
                 .isPresent();
     }
 
-    private CallResponseOutcome registerCallResponse(CallSignal signal, User responder, String responseDeviceKey) {
+    private CallResponseResult registerCallResponse(CallSignal signal, User responder, String responseDeviceKey) {
         if (signal.getCallId() == null || signal.getConversationId() == null
                 || signal.getCallerId() == null || signal.getAccept() == null) {
-            return CallResponseOutcome.INVALID;
+            return CallResponseResult.of(CallResponseOutcome.INVALID);
         }
         CallSession session = getCallSession(signal.getCallId());
         if (session == null
                 || !signal.getConversationId().equals(session.conversationId)
                 || !signal.getCallerId().equals(session.initiatorId)
                 || (signal.getType() != null && session.type != null
-                && !signal.getType().equalsIgnoreCase(session.type))) return CallResponseOutcome.INVALID;
+                && !signal.getType().equalsIgnoreCase(session.type))) return CallResponseResult.of(CallResponseOutcome.INVALID);
 
         Conversation conversation = conversationRepository.findById(session.conversationId).orElse(null);
         if (conversation == null || conversation.getMembers().stream().noneMatch(member -> member.getId().equals(responder.getId()))) {
-            return CallResponseOutcome.INVALID;
+            return CallResponseResult.of(CallResponseOutcome.INVALID);
         }
         if (!session.invitedResponderIds.contains(responder.getId())) {
-            return CallResponseOutcome.INVALID;
+            return CallResponseResult.of(CallResponseOutcome.INVALID);
         }
 
         synchronized (session) {
             if (activeCallSessions.get(signal.getCallId()) != session
                     || closedCallSessions.containsKey(signal.getCallId())) {
-                return CallResponseOutcome.ALREADY_HANDLED;
+                return CallResponseResult.of(CallResponseOutcome.ALREADY_HANDLED);
             }
             if (session.respondedUserIds.contains(responder.getId())) {
                 boolean sameAnswer = Objects.equals(session.responseAcceptedByUser.get(responder.getId()), signal.getAccept());
                 boolean sameDevice = responseDeviceKey != null
                         && responseDeviceKey
                         .equals(session.responseDeviceByUser.get(responder.getId()));
-                return sameAnswer && sameDevice
+                return CallResponseResult.of(sameAnswer && sameDevice
                         ? CallResponseOutcome.DUPLICATE_SAME_DEVICE
-                        : CallResponseOutcome.ALREADY_HANDLED;
+                        : CallResponseOutcome.ALREADY_HANDLED);
             }
 
             session.respondedUserIds.add(responder.getId());
@@ -558,21 +564,24 @@ public class CallController {
                 session.participantIdsSnapshot.add(responder.getId());
                 session.hadAcceptedParticipant = true;
                 if (session.connectedAt == null) session.connectedAt = LocalDateTime.now();
+                persistCallSession(session, connectedCallTtl);
+                return CallResponseResult.of(CallResponseOutcome.ACCEPTED);
             } else {
                 session.rejectedUserIds.add(responder.getId());
+                if ("GROUP".equals(session.scope)) {
+                    persistCallSession(session, ringingCallTtl);
+                    return CallResponseResult.of(CallResponseOutcome.ACCEPTED);
+                }
+                CallSession removed = removeKnownCallSession(signal.getCallId(), session);
+                if (removed == null || removed.hadAcceptedParticipant) {
+                    return CallResponseResult.of(CallResponseOutcome.ALREADY_HANDLED);
+                }
+                String status = "missed".equalsIgnoreCase(signal.getReason()) ? "MISSED" : "REJECTED";
+                return new CallResponseResult(
+                        CallResponseOutcome.ACCEPTED,
+                        CallLifecycleResult.withHistory(removed, status));
             }
-            persistCallSession(session, session.hadAcceptedParticipant ? connectedCallTtl : ringingCallTtl);
         }
-        if (!Boolean.TRUE.equals(signal.getAccept())) handleCallRejected(signal, session);
-        return CallResponseOutcome.ACCEPTED;
-    }
-
-    private void handleCallRejected(CallSignal signal, CallSession session) {
-        if (signal.getCallId() == null || "GROUP".equals(session.scope)) return;
-        CallSession removed = removeKnownCallSession(signal.getCallId(), session);
-        if (removed == null || removed.hadAcceptedParticipant) return;
-        String status = "missed".equalsIgnoreCase(signal.getReason()) ? "MISSED" : "REJECTED";
-        createCallHistory(removed, status, LocalDateTime.now());
     }
 
     private CallLifecycleResult handleCallCancel(CallSignal signal, User caller) {
@@ -636,7 +645,7 @@ public class CallController {
     }
 
     private void archiveCallAfterSignal(CallLifecycleResult result) {
-        if (result.sessionToArchive() == null || result.historyStatus() == null) return;
+        if (result == null || result.sessionToArchive() == null || result.historyStatus() == null) return;
         deletePersistedCallSession(result.sessionToArchive().callId);
         removePersistedCallIndexes(result.sessionToArchive().callId, result.sessionToArchive());
         try {
@@ -723,6 +732,15 @@ public class CallController {
         DUPLICATE_SAME_DEVICE,
         ALREADY_HANDLED,
         INVALID
+    }
+
+    private record CallInviteRegistration(CallSession session, Conversation conversation) {
+    }
+
+    private record CallResponseResult(CallResponseOutcome outcome, CallLifecycleResult lifecycleResult) {
+        private static CallResponseResult of(CallResponseOutcome outcome) {
+            return new CallResponseResult(outcome, null);
+        }
     }
 
     private record CallLifecycleResult(boolean handled, CallSession sessionToArchive, String historyStatus) {
@@ -957,16 +975,21 @@ public class CallController {
 
     private void persistCallSession(CallSession session, Duration ttl) {
         try {
-            redisTemplate.opsForValue().set(
-                    callSessionKey(session.callId),
-                    objectMapper.writeValueAsString(session),
-                    ttl
-            );
-            for (String userId : indexedUserIds(session)) {
-                String indexKey = callUserIndexKey(userId);
-                redisTemplate.opsForSet().add(indexKey, session.callId);
-                redisTemplate.expire(indexKey, ttl);
-            }
+            String serialized = objectMapper.writeValueAsString(session);
+            redisTemplate.executePipelined(new SessionCallback<>() {
+                @Override
+                @SuppressWarnings({"rawtypes", "unchecked"})
+                public <K, V> Object execute(RedisOperations<K, V> operations) {
+                    RedisOperations<String, String> stringOperations = (RedisOperations) operations;
+                    stringOperations.opsForValue().set(callSessionKey(session.callId), serialized, ttl);
+                    for (String userId : indexedUserIds(session)) {
+                        String indexKey = callUserIndexKey(userId);
+                        stringOperations.opsForSet().add(indexKey, session.callId);
+                        stringOperations.expire(indexKey, ttl);
+                    }
+                    return null;
+                }
+            });
         } catch (Exception ignored) {
             // Calls continue in-memory when Redis is temporarily unavailable.
         }
@@ -1001,6 +1024,10 @@ public class CallController {
     }
 
     private User findUserByPrincipal(Principal principal) {
+        if (principal instanceof UsernamePasswordAuthenticationToken authentication
+                && authentication.getPrincipal() instanceof User user) {
+            return user;
+        }
         String name = principal.getName();
         return userRepository.findByEmail(name)
                 .or(() -> userRepository.findByUsername(name))
@@ -1088,9 +1115,10 @@ public class CallController {
 
         signal.setReceiverId(responder.getId());
         signal.setSignalType("ANSWER");
-        CallResponseOutcome outcome = registerCallResponse(
+        CallResponseResult result = registerCallResponse(
                 signal, responder, responseDeviceKey(respondingDeviceId, respondingDeviceToken));
-        if (outcome != CallResponseOutcome.ACCEPTED && outcome != CallResponseOutcome.DUPLICATE_SAME_DEVICE) {
+        if (result.outcome() != CallResponseOutcome.ACCEPTED
+                && result.outcome() != CallResponseOutcome.DUPLICATE_SAME_DEVICE) {
             return ResponseEntity.status(409)
                     .body(ApiResponse.error("Call already handled on another device or expired"));
         }
@@ -1107,7 +1135,8 @@ public class CallController {
             );
         }
         notifyOtherResponderDevices(signal, responder, respondingDeviceToken, respondingDeviceId);
-        return ResponseEntity.ok(ApiResponse.success(null, outcome == CallResponseOutcome.DUPLICATE_SAME_DEVICE
+        archiveCallAfterSignal(result.lifecycleResult());
+        return ResponseEntity.ok(ApiResponse.success(null, result.outcome() == CallResponseOutcome.DUPLICATE_SAME_DEVICE
                 ? "Call response already handled by this device"
                 : "Call response handled"));
     }
@@ -1150,6 +1179,10 @@ public class CallController {
     private void forwardCallSignal(CallSignal signal, String senderId) {
         Conversation conversation = conversationRepository.findById(signal.getConversationId()).orElse(null);
         if (conversation == null) return;
+        forwardCallSignal(signal, senderId, conversation);
+    }
+
+    private void forwardCallSignal(CallSignal signal, String senderId, Conversation conversation) {
 
         List<String> offlineMemberTokens = new ArrayList<>();
 
