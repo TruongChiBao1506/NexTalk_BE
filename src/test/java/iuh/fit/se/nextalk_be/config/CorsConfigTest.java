@@ -63,6 +63,15 @@ class CorsConfigTest {
                 configuration.checkOrigin("https://nextalk.pages.dev"));
     }
 
+    @Test
+    void restApiExposesRetryAfterForRateLimitRecovery() {
+        CorsConfiguration configuration = configurationFor("/api/auth/refresh");
+
+        assertEquals(
+                List.of("Retry-After", "X-Correlation-Id"),
+                configuration.getExposedHeaders());
+    }
+
     private CorsConfiguration configurationFor(String path) {
         HttpServletRequest request = new MockHttpServletRequest("GET", path);
         CorsConfiguration configuration = source.getCorsConfiguration(request);

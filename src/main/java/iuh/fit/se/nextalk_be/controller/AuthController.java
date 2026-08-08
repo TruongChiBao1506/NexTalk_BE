@@ -15,6 +15,7 @@ import iuh.fit.se.nextalk_be.dto.response.RegisterResponse;
 import iuh.fit.se.nextalk_be.dto.response.SessionResponse;
 import iuh.fit.se.nextalk_be.dto.response.TokenRefreshResponse;
 import iuh.fit.se.nextalk_be.security.RateLimitService;
+import iuh.fit.se.nextalk_be.security.SecureTokenService;
 import iuh.fit.se.nextalk_be.service.AuthService;
 
 
@@ -43,6 +44,7 @@ public class AuthController {
 
     private final AuthService authService;
     private final RateLimitService rateLimitService;
+    private final SecureTokenService secureTokenService;
 
     @Value("${app.mobile.reset-return-url:nextalk://reset-password}")
     private String mobileResetReturnUrl;
@@ -123,8 +125,17 @@ public class AuthController {
                                                                       @CookieValue(value = REFRESH_COOKIE, required = false) String cookieToken,
                                                                       HttpServletRequest httpRequest,
                                                                       @RequestHeader(value = "X-Client-Platform", required = false) String platform) {
-        rateLimitService.check("auth:refresh", rateLimitService.clientIdentity(httpRequest), 30, Duration.ofMinutes(1));
         TokenRefreshRequest resolved = resolveRefreshRequest(request, cookieToken, platform);
+        rateLimitService.check(
+                "auth:refresh:token",
+                secureTokenService.digest(resolved.getRefreshToken()),
+                20,
+                Duration.ofMinutes(1));
+        rateLimitService.check(
+                "auth:refresh:client",
+                rateLimitService.clientIdentity(httpRequest),
+                600,
+                Duration.ofMinutes(1));
         TokenRefreshResponse response = authService.refreshToken(resolved, httpRequest);
         if (isWeb(platform)) {
             String rotatedToken = response.getRefreshToken();

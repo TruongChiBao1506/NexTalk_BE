@@ -44,6 +44,7 @@ public class CorsConfig {
                 "X-Requested-With",
                 "X-Client-Platform"
         ));
+        config.setExposedHeaders(List.of("Retry-After", "X-Correlation-Id"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
         return config;
