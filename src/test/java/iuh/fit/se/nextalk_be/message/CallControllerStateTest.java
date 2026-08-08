@@ -26,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -47,7 +48,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -244,6 +247,100 @@ class CallControllerStateTest {
         assertEquals("HANDOFF_ACCEPTED", peerSignal.getValue().getSignalType());
         assertTrue(peerSignal.getValue().getStartedAt() != null);
         assertTrue(peerSignal.getValue().getConnectedAtEpochMs() != null);
+    }
+
+    @Test
+    void privateHangupIsSignaledBeforeCallHistoryPersistence() {
+        Conversation conversation = conversation("private-fast-hangup", ConversationType.PRIVATE,
+                caller, firstResponder);
+        when(conversationRepository.findById(conversation.getId())).thenReturn(Optional.of(conversation));
+        when(userRepository.findById(caller.getId())).thenReturn(Optional.of(caller));
+        when(userRepository.findById(firstResponder.getId())).thenReturn(Optional.of(firstResponder));
+        when(userRepository.findAllById(any())).thenReturn(List.of(caller, firstResponder));
+
+        controller.inviteCall(invite("fast-hangup-call", conversation.getId(), firstResponder.getId()), principal(caller));
+        controller.answerCall(answer("fast-hangup-call", conversation.getId(), true), principal(firstResponder));
+        clearInvocations(messagingTemplate, messageService);
+
+        CallSignal hangup = CallSignal.builder()
+                .callId("fast-hangup-call")
+                .conversationId(conversation.getId())
+                .receiverId(firstResponder.getId())
+                .type("VOICE")
+                .signalType("HANGUP")
+                .build();
+        controller.hangupCall(hangup, principal(caller));
+
+        InOrder fastPathOrder = inOrder(messagingTemplate, messageService);
+        fastPathOrder.verify(messagingTemplate)
+                .convertAndSendToUser(eq(firstResponder.getUsername()), eq("/queue/calls"), eq(hangup));
+        fastPathOrder.verify(messageService)
+                .createAndBroadcastCallHistoryMessage(eq(conversation), eq(caller), anyString(), any());
+    }
+
+    @Test
+    void restHangupFallbackIsIdempotent() {
+        Conversation conversation = conversation("private-rest-hangup", ConversationType.PRIVATE,
+                caller, firstResponder);
+        when(conversationRepository.findById(conversation.getId())).thenReturn(Optional.of(conversation));
+        when(userRepository.findById(caller.getId())).thenReturn(Optional.of(caller));
+        when(userRepository.findById(firstResponder.getId())).thenReturn(Optional.of(firstResponder));
+        when(userRepository.findAllById(any())).thenReturn(List.of(caller, firstResponder));
+
+        controller.inviteCall(invite("rest-hangup-call", conversation.getId(), firstResponder.getId()), principal(caller));
+        controller.answerCall(answer("rest-hangup-call", conversation.getId(), true), principal(firstResponder));
+        clearInvocations(messagingTemplate, messageService);
+
+        CallSignal hangup = CallSignal.builder()
+                .callId("rest-hangup-call")
+                .conversationId(conversation.getId())
+                .receiverId(firstResponder.getId())
+                .type("VOICE")
+                .signalType("HANGUP")
+                .build();
+
+        ResponseEntity<ApiResponse<Void>> first = controller.hangupCallRest(hangup, principal(caller));
+        ResponseEntity<ApiResponse<Void>> retry = controller.hangupCallRest(hangup, principal(caller));
+
+        assertEquals(200, first.getStatusCode().value());
+        assertEquals(200, retry.getStatusCode().value());
+        verify(messagingTemplate, times(1))
+                .convertAndSendToUser(eq(firstResponder.getUsername()), eq("/queue/calls"), eq(hangup));
+        verify(messageService, times(1))
+                .createAndBroadcastCallHistoryMessage(eq(conversation), eq(caller), anyString(), any());
+    }
+
+    @Test
+    void restCancelFallbackSignalsBeforeHistoryAndIsIdempotent() {
+        Conversation conversation = conversation("private-rest-cancel", ConversationType.PRIVATE,
+                caller, firstResponder);
+        when(conversationRepository.findById(conversation.getId())).thenReturn(Optional.of(conversation));
+        when(userRepository.findById(caller.getId())).thenReturn(Optional.of(caller));
+        when(userRepository.findById(firstResponder.getId())).thenReturn(Optional.of(firstResponder));
+        when(userRepository.findAllById(any())).thenReturn(List.of(caller, firstResponder));
+
+        controller.inviteCall(invite("rest-cancel-call", conversation.getId(), firstResponder.getId()), principal(caller));
+        clearInvocations(messagingTemplate, messageService);
+
+        CallSignal cancel = CallSignal.builder()
+                .callId("rest-cancel-call")
+                .conversationId(conversation.getId())
+                .receiverId(firstResponder.getId())
+                .type("VOICE")
+                .signalType("CANCEL")
+                .reason("canceled")
+                .build();
+
+        ResponseEntity<ApiResponse<Void>> first = controller.cancelCallRest(cancel, principal(caller));
+        ResponseEntity<ApiResponse<Void>> retry = controller.cancelCallRest(cancel, principal(caller));
+
+        assertEquals(200, first.getStatusCode().value());
+        assertEquals(200, retry.getStatusCode().value());
+        InOrder fastPathOrder = inOrder(messagingTemplate, messageService);
+        fastPathOrder.verify(messagingTemplate)
+                .convertAndSendToUser(eq(firstResponder.getUsername()), eq("/queue/calls"), eq(cancel));
+        fastPathOrder.verify(messageService)
+                .createAndBroadcastCallHistoryMessage(eq(conversation), eq(caller), anyString(), any());
     }
 
     @Test

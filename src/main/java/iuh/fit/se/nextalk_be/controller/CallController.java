@@ -341,13 +341,12 @@ public class CallController {
     public void cancelCall(@Payload CallSignal signal, Principal principal) {
         if (principal == null) return;
         User caller = findUserByPrincipal(principal);
-        if (caller != null) {
-            signal.setCallerId(caller.getId());
-            signal.setCallerName(caller.getUsername());
-            signal.setCallerAvatar(caller.getAvatarUrl());
-        }
-        if (!handleCallCancel(signal, caller)) return;
+        if (caller == null) return;
+        populateSignalActor(signal, caller);
+        CallLifecycleResult result = handleCallCancel(signal, caller);
+        if (!result.handled()) return;
         forwardToTarget(signal);
+        archiveCallAfterSignal(result);
     }
 
     @MessageMapping("/call.hangup")
@@ -355,17 +354,65 @@ public class CallController {
         if (principal == null) return;
         User caller = findUserByPrincipal(principal);
         if (caller == null) return;
-        signal.setCallerId(caller.getId());
-        signal.setCallerName(caller.getUsername());
-        signal.setCallerAvatar(caller.getAvatarUrl());
-        boolean handled = false;
+        populateSignalActor(signal, caller);
+        CallLifecycleResult result = CallLifecycleResult.notHandled();
         if ("LEAVE".equalsIgnoreCase(signal.getSignalType())) {
-            handled = handleGroupCallLeave(signal, caller);
+            result = handleGroupCallLeave(signal, caller);
         } else if ("HANGUP".equalsIgnoreCase(signal.getSignalType())) {
-            handled = handlePrivateCallHangup(signal, caller);
+            result = handlePrivateCallHangup(signal, caller);
         }
-        if (!handled) return;
+        if (!result.handled()) return;
         forwardToTarget(signal);
+        archiveCallAfterSignal(result);
+    }
+
+    @PostMapping("/cancel")
+    public ResponseEntity<ApiResponse<Void>> cancelCallRest(
+            @RequestBody CallSignal signal,
+            Principal principal
+    ) {
+        if (principal == null) return ResponseEntity.badRequest().build();
+        User caller = findUserByPrincipal(principal);
+        if (caller == null) return ResponseEntity.badRequest().build();
+        signal.setSignalType("CANCEL");
+        populateSignalActor(signal, caller);
+        CallLifecycleResult result = handleCallCancel(signal, caller);
+        if (!result.handled()) return callAlreadyClosedResponse(signal.getCallId());
+        forwardToTarget(signal);
+        archiveCallAfterSignal(result);
+        return ResponseEntity.ok(ApiResponse.success(null, "Call canceled"));
+    }
+
+    @PostMapping("/hangup")
+    public ResponseEntity<ApiResponse<Void>> hangupCallRest(
+            @RequestBody CallSignal signal,
+            Principal principal
+    ) {
+        if (principal == null) return ResponseEntity.badRequest().build();
+        User caller = findUserByPrincipal(principal);
+        if (caller == null) return ResponseEntity.badRequest().build();
+        populateSignalActor(signal, caller);
+        CallLifecycleResult result = "LEAVE".equalsIgnoreCase(signal.getSignalType())
+                ? handleGroupCallLeave(signal, caller)
+                : handlePrivateCallHangup(signal, caller);
+        if (!result.handled()) return callAlreadyClosedResponse(signal.getCallId());
+        forwardToTarget(signal);
+        archiveCallAfterSignal(result);
+        return ResponseEntity.ok(ApiResponse.success(null, "Call ended"));
+    }
+
+    private void populateSignalActor(CallSignal signal, User actor) {
+        signal.setCallerId(actor.getId());
+        signal.setCallerName(actor.getUsername());
+        signal.setCallerAvatar(actor.getAvatarUrl());
+    }
+
+    private ResponseEntity<ApiResponse<Void>> callAlreadyClosedResponse(String callId) {
+        Long closedUntil = callId == null ? null : closedCallSessions.get(callId);
+        if (closedUntil != null && closedUntil > System.currentTimeMillis()) {
+            return ResponseEntity.ok(ApiResponse.success(null, "Call already closed"));
+        }
+        return ResponseEntity.status(409).body(ApiResponse.error("Call is no longer active"));
     }
 
     @MessageMapping("/call.handoff")
@@ -528,34 +575,33 @@ public class CallController {
         createCallHistory(removed, status, LocalDateTime.now());
     }
 
-    private boolean handleCallCancel(CallSignal signal, User caller) {
-        if (signal.getCallId() == null) return false;
+    private CallLifecycleResult handleCallCancel(CallSignal signal, User caller) {
+        if (signal.getCallId() == null) return CallLifecycleResult.notHandled();
         CallSession current = getCallSession(signal.getCallId());
-        if (current == null) return false;
+        if (current == null) return CallLifecycleResult.notHandled();
         CallSession session;
         synchronized (current) {
             if (!current.initiatorId.equals(caller.getId())
                     || !current.conversationId.equals(signal.getConversationId())
-                    || current.hadAcceptedParticipant) return false;
+                    || current.hadAcceptedParticipant) return CallLifecycleResult.notHandled();
             session = removeKnownCallSession(signal.getCallId(), current);
         }
-        if (session == null) return false;
+        if (session == null) return CallLifecycleResult.notHandled();
         String status = "timeout".equalsIgnoreCase(signal.getReason()) ? "MISSED" : "CANCELED";
-        createCallHistory(session, status, LocalDateTime.now());
-        return true;
+        return CallLifecycleResult.withHistory(session, status);
     }
 
-    private boolean handleGroupCallLeave(CallSignal signal, User leaver) {
-        if (signal.getReceiverId() != null || signal.getCallId() == null) return false;
+    private CallLifecycleResult handleGroupCallLeave(CallSignal signal, User leaver) {
+        if (signal.getReceiverId() != null || signal.getCallId() == null) return CallLifecycleResult.notHandled();
         CallSession session = getCallSession(signal.getCallId());
-        if (session == null) return false;
+        if (session == null) return CallLifecycleResult.notHandled();
 
         CallSession removed = null;
         synchronized (session) {
             if (activeCallSessions.get(signal.getCallId()) != session
                     || !"GROUP".equals(session.scope)
                     || !session.conversationId.equals(signal.getConversationId())
-                    || !session.participantIds.contains(leaver.getId())) return false;
+                    || !session.participantIds.contains(leaver.getId())) return CallLifecycleResult.notHandled();
             session.participantIdsSnapshot.add(leaver.getId());
             session.participantIds.remove(leaver.getId());
             session.hadAcceptedParticipant = session.hadAcceptedParticipant || !session.initiatorId.equals(leaver.getId());
@@ -565,28 +611,40 @@ public class CallController {
                 persistCallSession(session, connectedCallTtl);
             }
         }
-        if (removed != null) createCallHistory(removed, removed.hadAcceptedParticipant ? "ENDED" : "MISSED", LocalDateTime.now());
-        return true;
+        return removed == null
+                ? CallLifecycleResult.handledWithoutHistory()
+                : CallLifecycleResult.withHistory(removed, removed.hadAcceptedParticipant ? "ENDED" : "MISSED");
     }
 
-    private boolean handlePrivateCallHangup(CallSignal signal, User leaver) {
-        if (signal.getCallId() == null) return false;
+    private CallLifecycleResult handlePrivateCallHangup(CallSignal signal, User leaver) {
+        if (signal.getCallId() == null) return CallLifecycleResult.notHandled();
         CallSession current = getCallSession(signal.getCallId());
-        if (current == null) return false;
+        if (current == null) return CallLifecycleResult.notHandled();
         CallSession session;
         synchronized (current) {
             if (activeCallSessions.get(signal.getCallId()) != current
                     || !"PRIVATE".equals(current.scope)
                     || !current.conversationId.equals(signal.getConversationId())
-                    || !current.participantIds.contains(leaver.getId())) return false;
+                    || !current.participantIds.contains(leaver.getId())) return CallLifecycleResult.notHandled();
             session = removeKnownCallSession(signal.getCallId(), current);
         }
-        if (session == null) return false;
+        if (session == null) return CallLifecycleResult.notHandled();
 
         session.participantIdsSnapshot.add(leaver.getId());
         session.participantIds.remove(leaver.getId());
-        createCallHistory(session, session.hadAcceptedParticipant ? "ENDED" : "MISSED", LocalDateTime.now());
-        return true;
+        return CallLifecycleResult.withHistory(session, session.hadAcceptedParticipant ? "ENDED" : "MISSED");
+    }
+
+    private void archiveCallAfterSignal(CallLifecycleResult result) {
+        if (result.sessionToArchive() == null || result.historyStatus() == null) return;
+        deletePersistedCallSession(result.sessionToArchive().callId);
+        removePersistedCallIndexes(result.sessionToArchive().callId, result.sessionToArchive());
+        try {
+            createCallHistory(result.sessionToArchive(), result.historyStatus(), LocalDateTime.now());
+        } catch (RuntimeException exception) {
+            log.warn("Call history persistence failed after lifecycle signal; errorCode={}",
+                    exception.getClass().getSimpleName());
+        }
     }
 
     private void createCallHistory(CallSession session, String status, LocalDateTime endedAt) {
@@ -665,6 +723,20 @@ public class CallController {
         DUPLICATE_SAME_DEVICE,
         ALREADY_HANDLED,
         INVALID
+    }
+
+    private record CallLifecycleResult(boolean handled, CallSession sessionToArchive, String historyStatus) {
+        private static CallLifecycleResult notHandled() {
+            return new CallLifecycleResult(false, null, null);
+        }
+
+        private static CallLifecycleResult handledWithoutHistory() {
+            return new CallLifecycleResult(true, null, null);
+        }
+
+        private static CallLifecycleResult withHistory(CallSession session, String status) {
+            return new CallLifecycleResult(true, session, status);
+        }
     }
 
     @lombok.Getter
@@ -902,8 +974,6 @@ public class CallController {
 
     private CallSession removeKnownCallSession(String callId, CallSession session) {
         markCallSessionClosed(callId);
-        deletePersistedCallSession(callId);
-        removePersistedCallIndexes(callId, session);
         if (!activeCallSessions.remove(callId, session)) return null;
         return session;
     }
