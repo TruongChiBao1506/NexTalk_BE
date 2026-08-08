@@ -33,6 +33,8 @@ public class RefreshToken extends BaseEntity {
     @Builder.Default
     private List<String> usedTokenDigests = new ArrayList<>();
 
+    private String previousTokenDigest;
+
     @Indexed(expireAfter = "0s")
     private LocalDateTime expiresAt;
 

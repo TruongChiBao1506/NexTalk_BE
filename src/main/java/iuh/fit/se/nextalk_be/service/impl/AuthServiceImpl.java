@@ -59,6 +59,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.Map;
+import java.util.Objects;
 
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -66,6 +67,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 @Service
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
+    private static final Duration CONCURRENT_REFRESH_GRACE = Duration.ofSeconds(10);
 
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
@@ -185,8 +187,10 @@ public class AuthServiceImpl implements AuthService {
         String requestRefreshToken = request.getRefreshToken();
         String requestTokenDigest = secureTokenService.digest(requestRefreshToken);
 
-        RefreshToken token = refreshTokenRepository.findByToken(requestTokenDigest)
-                .orElseGet(() -> handleMissingRefreshToken(requestTokenDigest));
+        RefreshToken token = refreshTokenRepository.findByToken(requestTokenDigest).orElse(null);
+        if (token == null) {
+            return handleMissingRefreshToken(requestTokenDigest, httpRequest);
+        }
 
         if (token.getExpiresAt().isBefore(LocalDateTime.now())) {
             refreshTokenRepository.delete(token);
@@ -205,7 +209,10 @@ public class AuthServiceImpl implements AuthService {
                         now,
                         resolveIpAddress(httpRequest),
                         resolveUserAgent(httpRequest))
-                .orElseGet(() -> handleMissingRefreshToken(requestTokenDigest));
+                .orElse(null);
+        if (rotated == null) {
+            return handleMissingRefreshToken(requestTokenDigest, httpRequest);
+        }
         String newAccessToken = jwtService.generateAccessToken(user, rotated.getId());
 
         return TokenRefreshResponse.builder()
@@ -246,10 +253,44 @@ public class AuthServiceImpl implements AuthService {
         return LocalDateTime.now().plus(Duration.ofMillis(jwtService.getRefreshExpirationMs()));
     }
 
-    private RefreshToken handleMissingRefreshToken(String requestTokenDigest) {
-        refreshTokenRepository.findByUsedTokenDigestsContaining(requestTokenDigest)
-                .ifPresent(reused -> sessionRevocationService.revokeAllForUser(reused.getUser()));
+    private TokenRefreshResponse handleMissingRefreshToken(
+            String requestTokenDigest,
+            HttpServletRequest httpRequest) {
+        RefreshToken reused = refreshTokenRepository.findByUsedTokenDigestsContaining(requestTokenDigest)
+                .orElse(null);
+        if (isConcurrentRefreshRetry(reused, requestTokenDigest, httpRequest)) {
+            User user = reused.getUser();
+            ensureAccountUsable(user);
+            return TokenRefreshResponse.builder()
+                    .accessToken(jwtService.generateAccessToken(user, reused.getId()))
+                    .refreshToken(null)
+                    .build();
+        }
+        if (reused != null) {
+            sessionRevocationService.revokeAllForUser(reused.getUser());
+        }
         throw new UnauthorizedException("Refresh token was reused or revoked. Please sign in again.");
+    }
+
+    private boolean isConcurrentRefreshRetry(
+            RefreshToken session,
+            String requestTokenDigest,
+            HttpServletRequest httpRequest) {
+        if (session == null
+                || session.getId() == null
+                || session.getExpiresAt() == null
+                || session.getExpiresAt().isBefore(LocalDateTime.now())
+                || session.getLastUsedAt() == null
+                || !requestTokenDigest.equals(session.getPreviousTokenDigest())) {
+            return false;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (session.getLastUsedAt().isBefore(now.minus(CONCURRENT_REFRESH_GRACE))
+                || session.getLastUsedAt().isAfter(now.plusSeconds(1))) {
+            return false;
+        }
+        return Objects.equals(session.getIpAddress(), resolveIpAddress(httpRequest))
+                && Objects.equals(session.getUserAgent(), resolveUserAgent(httpRequest));
     }
 
     public void forgotPassword(ForgotPasswordRequest request) {

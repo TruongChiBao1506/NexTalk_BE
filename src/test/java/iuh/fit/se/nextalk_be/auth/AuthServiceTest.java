@@ -5,6 +5,7 @@ import iuh.fit.se.nextalk_be.dto.request.RegisterRequest;
 import iuh.fit.se.nextalk_be.dto.request.TokenRefreshRequest;
 import iuh.fit.se.nextalk_be.dto.response.LoginResponse;
 import iuh.fit.se.nextalk_be.dto.response.RegisterResponse;
+import iuh.fit.se.nextalk_be.dto.response.TokenRefreshResponse;
 import iuh.fit.se.nextalk_be.dto.response.UserProfileResponse;
 import iuh.fit.se.nextalk_be.entity.EmailVerification;
 import iuh.fit.se.nextalk_be.entity.RefreshToken;
@@ -242,11 +243,50 @@ public class AuthServiceTest {
     }
 
     @Test
-    void refresh_ReusedTokenRevokesAllUserSessions() {
-        RefreshToken reused = RefreshToken.builder().user(user).build();
+    void refresh_ConcurrentRetryFromSameClientReturnsAccessTokenWithoutRotatingAgain() {
+        RefreshToken reused = RefreshToken.builder()
+                .user(user)
+                .token("hash-current-token")
+                .previousTokenDigest("hash-previous-token")
+                .usedTokenDigests(List.of("hash-previous-token"))
+                .expiresAt(LocalDateTime.now().plusHours(1))
+                .lastUsedAt(LocalDateTime.now())
+                .ipAddress("client-a")
+                .userAgent("JUnit Browser")
+                .build();
+        reused.setId("session-a");
+        when(refreshTokenRepository.findByToken("hash-previous-token")).thenReturn(Optional.empty());
+        when(refreshTokenRepository.findByUsedTokenDigestsContaining("hash-previous-token"))
+                .thenReturn(Optional.of(reused));
+        when(rateLimitService.clientIdentity(httpRequest)).thenReturn("client-a");
+        when(httpRequest.getHeader("User-Agent")).thenReturn("JUnit Browser");
+        when(jwtService.generateAccessToken(user, "session-a")).thenReturn("retry-access-token");
+
+        TokenRefreshResponse response = authService.refreshToken(
+                TokenRefreshRequest.builder().refreshToken("previous-token").build(),
+                httpRequest);
+
+        assertEquals("retry-access-token", response.getAccessToken());
+        assertNull(response.getRefreshToken());
+        verify(sessionRevocationService, never()).revokeAllForUser(any());
+        verify(atomicTokenStore, never()).rotateRefreshToken(anyString(), anyString(), anyString(), any(), any(), anyString(), anyString());
+    }
+
+    @Test
+    void refresh_ReusedTokenFromDifferentClientRevokesAllUserSessions() {
+        RefreshToken reused = RefreshToken.builder()
+                .user(user)
+                .previousTokenDigest("hash-stolen-old-token")
+                .expiresAt(LocalDateTime.now().plusHours(1))
+                .lastUsedAt(LocalDateTime.now())
+                .ipAddress("original-client")
+                .userAgent("Original Browser")
+                .build();
+        reused.setId("session-a");
         when(refreshTokenRepository.findByToken("hash-stolen-old-token")).thenReturn(Optional.empty());
         when(refreshTokenRepository.findByUsedTokenDigestsContaining("hash-stolen-old-token"))
                 .thenReturn(Optional.of(reused));
+        when(rateLimitService.clientIdentity(httpRequest)).thenReturn("different-client");
 
         assertThrows(
                 iuh.fit.se.nextalk_be.exception.UnauthorizedException.class,

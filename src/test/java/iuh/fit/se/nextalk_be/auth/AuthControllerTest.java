@@ -20,16 +20,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.net.HttpCookie;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -225,5 +228,96 @@ public class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.accessToken", notNullValue()))
                 .andExpect(jsonPath("$.data.refreshToken", notNullValue()));
+    }
+
+    @Test
+    void mobileRefresh_ConcurrentRetryReturnsAccessWithoutInvalidatingSession() throws Exception {
+        User user = User.builder()
+                .email("concurrent-refresh@gmail.com")
+                .username("concurrentrefresh")
+                .password(passwordEncoder.encode("password123"))
+                .status("OFFLINE")
+                .isVerified(true)
+                .build();
+        userRepository.save(user);
+
+        String loginResponse = mockMvc.perform(post("/api/auth/login")
+                        .header("X-Client-Platform", "mobile")
+                        .header("User-Agent", "Concurrent Mobile")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new LoginRequest("concurrent-refresh@gmail.com", "password123"))))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String originalRefreshToken = objectMapper.readTree(loginResponse)
+                .path("data").path("refreshToken").asText();
+        String refreshBody = objectMapper.writeValueAsString(
+                TokenRefreshRequest.builder().refreshToken(originalRefreshToken).build());
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .header("X-Client-Platform", "mobile")
+                        .header("User-Agent", "Concurrent Mobile")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(refreshBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.refreshToken", notNullValue()));
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .header("X-Client-Platform", "mobile")
+                        .header("User-Agent", "Concurrent Mobile")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(refreshBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accessToken", notNullValue()))
+                .andExpect(jsonPath("$.data.refreshToken", nullValue()));
+    }
+
+    @Test
+    void webRefresh_ConcurrentRetryKeepsTheRotatedCookie() throws Exception {
+        User user = User.builder()
+                .email("web-concurrent-refresh@gmail.com")
+                .username("webconcurrentrefresh")
+                .password(passwordEncoder.encode("password123"))
+                .status("OFFLINE")
+                .isVerified(true)
+                .build();
+        userRepository.save(user);
+
+        String loginCookieHeader = mockMvc.perform(post("/api/auth/login")
+                        .header("X-Client-Platform", "web")
+                        .header("User-Agent", "Concurrent Web")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new LoginRequest("web-concurrent-refresh@gmail.com", "password123"))))
+                .andExpect(status().isOk())
+                .andExpect(header().exists(HttpHeaders.SET_COOKIE))
+                .andReturn()
+                .getResponse()
+                .getHeader(HttpHeaders.SET_COOKIE);
+        String originalRefreshToken = HttpCookie.parse(loginCookieHeader).get(0).getValue();
+        Cookie originalCookie = new Cookie("nextalk_refresh", originalRefreshToken);
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .header("X-Client-Platform", "web")
+                        .header("Origin", "http://localhost:3000")
+                        .header("User-Agent", "Concurrent Web")
+                        .cookie(originalCookie)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(header().exists(HttpHeaders.SET_COOKIE));
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .header("X-Client-Platform", "web")
+                        .header("Origin", "http://localhost:3000")
+                        .header("User-Agent", "Concurrent Web")
+                        .cookie(originalCookie)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE))
+                .andExpect(jsonPath("$.data.accessToken", notNullValue()));
     }
 }

@@ -76,6 +76,7 @@ public class AtomicTokenStore {
                 .and("token").is(expectedDigest)
                 .and("expiresAt").gt(now));
         Update update = new Update()
+                .set("previousTokenDigest", expectedDigest)
                 .set("token", replacementDigest)
                 .set("expiresAt", replacementExpiry)
                 .set("lastUsedAt", now)

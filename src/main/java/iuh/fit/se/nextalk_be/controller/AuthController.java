@@ -129,6 +129,9 @@ public class AuthController {
         if (isWeb(platform)) {
             String rotatedToken = response.getRefreshToken();
             response.setRefreshToken(null);
+            if (!StringUtils.hasText(rotatedToken)) {
+                return ResponseEntity.ok(ApiResponse.success(response, "Token refreshed successfully"));
+            }
             return ResponseEntity.ok()
                     .header(HttpHeaders.SET_COOKIE, refreshCookie(rotatedToken).toString())
                     .body(ApiResponse.success(response, "Token refreshed successfully"));
